@@ -1,0 +1,104 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* === YOUR MINI MOS CUSTOM CSS === */
+.neural-bg {
+    background: linear-gradient(-45deg, #09090b, #18181b, #082f49, #000000);
+    background-size: 400% 400%;
+    animation: gradientBG 15s ease infinite;
+}
+@keyframes gradientBG {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+.glass-input {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(34, 211, 238, 0.2);
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+}
+.glass-input:focus {
+    border-color: #22d3ee;
+    box-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
+    transform: translateX(10px);
+}
+
+.mos-image {
+    width: 100px;
+    border-radius: 12px;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.5), 0 0 10px rgba(34, 211, 238, 0.1);
+    transition: all 0.3s;
+    border: 2px solid rgba(255,255,255,0.1);
+}
+.mos-image:hover {
+    transform: scale(1.1);
+    box-shadow: 0 0 25px rgba(34, 211, 238, 0.5);
+    cursor: pointer;
+}
+
+@keyframes talkingGlow {
+    0% { box-shadow: 0 0 10px rgba(34, 211, 238, 0.1); border-color: rgba(255,255,255,0.1); }
+    50% { box-shadow: 0 0 30px rgba(34, 211, 238, 0.8); border-color: #22d3ee; }
+    100% { box-shadow: 0 0 10px rgba(34, 211, 238, 0.1); border-color: rgba(255,255,255,0.1); }
+}
+.is-talking { animation: talkingGlow 0.8s ease-in-out infinite; }
+
+@keyframes gestureGuide {
+    0% { transform: translateY(-20px); }
+    70% { transform: translateY(5px); }
+    100% { transform: translateY(0); }
+}
+.anim-guide { animation: gestureGuide 0.5s ease-out; }
+
+@keyframes gestureWarning {
+    0%, 100% { transform: translateX(0); }
+    10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+    20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+.anim-warning { animation: gestureWarning 0.4s ease-in-out; }
+
+@keyframes gestureSuccess {
+    0%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-25px); }
+    50% { transform: translateY(5px); }
+    70% { transform: translateY(-10px); }
+}
+.anim-success { animation: gestureSuccess 0.7s ease-out; }
+
+.msg-mos {
+    background: #0891b2;
+    border-radius: 15px 15px 15px 2px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    display: inline-block;
+    max-width: 90%;
+    animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+@keyframes popIn {
+    from { opacity: 0; transform: scale(0.8) translateY(10px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+    animation: fadeInUp 0.4s ease-out forwards;
+}
