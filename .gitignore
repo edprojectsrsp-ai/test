@@ -1,0 +1,65 @@
+# OS / Editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.code-workspace
+
+# Environment files (keep examples)
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Node / Next.js (Project-brain)
+Project-brain/node_modules/
+Project-brain/.next/
+Project-brain/out/
+Project-brain/.turbo/
+Project-brain/.swc/
+Project-brain/.vercel/
+Project-brain/next-env.d.ts
+
+# Python virtual environments (backend + ai_service)
+project-brain-backend/.venv/
+project-brain-backend/venv/
+ai_service/venv/
+ai_service/.venv/
+
+# Python caches
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Build / dist artifacts
+**/dist/
+**/build/
+**/.cache/
+
+# Local uploads (runtime files)
+project-brain-backend/uploads/*
+!project-brain-backend/uploads/.gitkeep
+
+# Dumps / backups
+*.dump
+*.sql
+*.sqlite
+*.sqlite3
+*backup*
+
+# Misc local scratch
+New Text Document.txt

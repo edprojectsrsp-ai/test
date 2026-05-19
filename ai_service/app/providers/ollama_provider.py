@@ -22,6 +22,8 @@ class OllamaProvider(LLMProvider):
         super().__init__(api_key=api_key, **kw)
         self.base_url = base_url.rstrip("/")
         self.model_id = model
+        # Tool-calling support varies by model. Only enable tools for known-good models.
+        self._tools_enabled = self.model_id in {"qwen3:8b"}
 
     def _convert_messages(self, messages: list[ChatMessage]) -> list[dict]:
         out = []
@@ -44,7 +46,7 @@ class OllamaProvider(LLMProvider):
             "stream": False,
             "options": {"temperature": temperature, "num_predict": max_tokens},
         }
-        if tools:
+        if tools and self._tools_enabled:
             payload["tools"] = normalize_tools_to_openai_schema(tools)
 
         try:
@@ -85,7 +87,7 @@ class OllamaProvider(LLMProvider):
             "model": self.model_id, "messages": self._convert_messages(messages),
             "stream": True, "options": {"temperature": temperature, "num_predict": max_tokens},
         }
-        if tools:
+        if tools and self._tools_enabled:
             payload["tools"] = normalize_tools_to_openai_schema(tools)
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as r:

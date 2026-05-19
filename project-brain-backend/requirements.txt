@@ -5,9 +5,12 @@ passlib[bcrypt]
 sqlalchemy
 psycopg2-binary
 python-dotenv
+email-validator
 pydantic-settings
 bcrypt<4.1
 python-multipart
 google-genai
 openai
 pandas
+httpx
+python-dotenv
