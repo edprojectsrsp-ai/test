@@ -46,6 +46,13 @@ def _safe_dict(obj, fields):
     return out
 
 
+def _table_exists(db: Session, table_name: str) -> bool:
+    """True if a relation exists (table or view) in public schema."""
+    return bool(
+        db.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f"public.{table_name}"}).scalar()
+    )
+
+
 # ============================================================================
 # 1) GET /all  → list view (unchanged)
 # ============================================================================
@@ -59,14 +66,15 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 sm.amr_no, sm.wbs_element, sm.has_multiple_packages,
                 sm.scheme_owner_name, sm.created_at,
                 COUNT(DISTINCT p.package_id) AS package_count,
-                COALESCE(SUM(c.contract_cost_net_itc_cr), 0) AS total_contract_value_cr,
+                COALESCE(SUM(c.contract_value_cr), 0) AS total_contract_value_cr,
                 MIN(c.effective_date) AS earliest_effective_date,
-                MAX(c.scheduled_completion_date) AS latest_scheduled_completion,
-                MAX(c.likely_completion_date) AS latest_likely_completion
+                MAX(c.schedule_completion_date) AS latest_scheduled_completion,
+                NULL::date AS latest_likely_completion
             FROM public.scheme_master sm
             LEFT JOIN public.packages p
               ON p.scheme_id = sm.scheme_id AND p.is_deleted = FALSE
-            LEFT JOIN public.contracts c ON c.package_id = p.package_id
+            LEFT JOIN public.contracts c
+              ON c.package_id = p.package_id AND c.is_deleted = FALSE
             WHERE sm.is_deleted = FALSE
             GROUP BY sm.scheme_id
             ORDER BY
@@ -105,7 +113,9 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 "package_count": r.package_count or 0,
                 "total_contract_value_cr": _num(r.total_contract_value_cr) or 0.0,
                 "scheduled_completion": r.latest_scheduled_completion.strftime("%d %b %Y") if r.latest_scheduled_completion else "TBD",
-                "expected_completion": r.latest_likely_completion.strftime("%d %b %Y") if r.latest_likely_completion else "TBD",
+                "expected_completion": r.latest_likely_completion.strftime("%d %b %Y") if r.latest_likely_completion else (
+                    r.latest_scheduled_completion.strftime("%d %b %Y") if r.latest_scheduled_completion else "TBD"
+                ),
                 "effective_date": r.earliest_effective_date.strftime("%d %b %Y") if r.earliest_effective_date else "TBD",
                 "delay_status": delay_status,
                 "delay_days": delay_days,
@@ -227,6 +237,8 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
     contracts_data = []
     completion_data = []
 
+    has_completion = _table_exists(db, "completion_details")
+
     for p in pkgs:
         packages_data.append({
             "package_id": p.package_id,
@@ -297,24 +309,21 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
                 "loa_date": _date(c.loa_date),
                 "contractor_name": c.contractor_name,
                 "contract_no": c.contract_no,
-                "contract_signing_date": _date(c.contract_signing_date),
                 "effective_date": _date(c.effective_date),
-                "scheduled_completion_date": _date(c.scheduled_completion_date),
-                "contract_cost_net_itc_cr": _num(c.contract_cost_net_itc_cr),
-                "contract_cost_gross_cr": _num(c.contract_cost_gross_cr),
-                "likely_completion_date": _date(c.likely_completion_date),
-                "delay_reason": c.delay_reason,
-                "remarks": c.remarks,
+                "schedule_completion_date": _date(getattr(c, "schedule_completion_date", None)),
+                "contract_value_cr": _num(getattr(c, "contract_value_cr", None)),
+                "contract_duration_months": getattr(c, "contract_duration_months", None),
+                "is_active": getattr(c, "is_active", True),
+                "is_deleted": getattr(c, "is_deleted", False),
                 "extra_fields": c.extra_fields or {},
                 "amendments": [_safe_dict(a, [
-                    "amendment_id", "amendment_no", "amendment_date", "description",
-                    "cost_change_cr", "new_cost_net_itc_cr", "new_completion_date",
-                    "approval_ref"
+                    "amendment_id", "amendment_no", "amendment_date",
+                    "value_change_cr", "new_completion_date", "reason"
                 ]) for a in c.amendments],
             })
 
         # --- 8. COMPLETION (one per package) ---
-        if p.completion:
+        if has_completion and p.completion:
             comp = p.completion
             completion_data.append({
                 "completion_id": comp.completion_id,
@@ -333,19 +342,22 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
             })
 
     # --- 9. MONITORING LOG ---
-    logs = db.query(MonitoringLog).filter(
-        MonitoringLog.scheme_id == scheme_id
-    ).order_by(MonitoringLog.log_date.desc()).limit(50).all()
-    monitoring_data = [{
-        "log_id": l.log_id,
-        "log_date": _date(l.log_date),
-        "package_id": l.package_id,
-        "reason_for_delay": l.reason_for_delay,
-        "issues": l.issues,
-        "action_taken": l.action_taken,
-        "progress_status": l.progress_status,
-        "extra_fields": l.extra_fields or {},
-    } for l in logs]
+    try:
+        logs = db.query(MonitoringLog).filter(
+            MonitoringLog.scheme_id == scheme_id
+        ).order_by(MonitoringLog.log_date.desc()).limit(50).all()
+        monitoring_data = [{
+            "log_id": l.log_id,
+            "log_date": _date(l.log_date),
+            "package_id": l.package_id,
+            "reason_for_delay": l.reason_for_delay,
+            "issues": l.issues,
+            "action_taken": l.action_taken,
+            "progress_status": l.progress_status,
+            "extra_fields": l.extra_fields or {},
+        } for l in logs]
+    except Exception:
+        monitoring_data = []
 
     return {
         "core": core,

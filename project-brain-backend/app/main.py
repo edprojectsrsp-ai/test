@@ -44,8 +44,28 @@ app.add_middleware(
 # Sprint 9 auth router already uses prefix="/api/v1/auth"
 app.include_router(auth_router)
 app.include_router(schemes_router, prefix="/api/v1/schemes")
-app.include_router(capex_router)
 app.include_router(capex_router, prefix="/api/v1")
+
+# Deprecation alias — old buggy endpoint that duplicated plans on save.
+# Returns HTTP 410 so any client still calling it fails loudly.
+from fastapi import APIRouter as _APIRouter, HTTPException as _HTTPException
+_capex_deprecation_router = _APIRouter()
+
+
+@_capex_deprecation_router.post("/api/v1/plan/save_hierarchy", deprecated=True)
+@_capex_deprecation_router.post("/plan/save_hierarchy", deprecated=True)
+def _deprecated_old_capex_save_hierarchy():
+    raise _HTTPException(
+        status_code=410,
+        detail=(
+            "/plan/save_hierarchy was removed in Sprint 15 because it created a "
+            "duplicate plan on every save. Use POST /api/v1/capex/plans (create) "
+            "or PUT /api/v1/capex/plans/{plan_id} (update) instead."
+        ),
+    )
+
+
+app.include_router(_capex_deprecation_router)
 app.include_router(progress_router, prefix="/api/v1")
 app.include_router(cpm_router, prefix="/api/v1")
 app.include_router(dpr_router, prefix="/api/v1")

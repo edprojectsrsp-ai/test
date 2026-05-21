@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.chat_router import router as chat_router
+from app.routers.diagnostics_router import router as diagnostics_router
 
 load_dotenv()
 
@@ -34,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(chat_router)
+app.include_router(diagnostics_router)
 
 
 @app.get("/")

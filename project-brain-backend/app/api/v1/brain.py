@@ -13,6 +13,39 @@ router = APIRouter(prefix="/brain", tags=["Brain"])
 class ChatRequest(BaseModel):
     message: str
     context: Optional[Any] = None
+    provider: Optional[str] = None
+    strict_provider: bool = False
+
+
+def _ai_base() -> str:
+    return os.environ.get("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+
+
+@router.get("/providers")
+def list_providers():
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            r = client.get(f"{_ai_base()}/ai/providers")
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        if settings.OPENAI_API_KEY:
+            return {
+                "available": ["openai"],
+                "default": "openai",
+                "configured_default": "openai",
+                "all_known": ["openai", "gemini", "groq", "ollama"],
+                "degraded": True,
+                "reason": f"AI service unreachable ({type(e).__name__})",
+            }
+        return {
+            "available": [],
+            "default": None,
+            "configured_default": "openai",
+            "all_known": ["openai", "gemini", "groq", "ollama"],
+            "degraded": True,
+            "reason": f"AI service unreachable ({type(e).__name__}) and OPENAI_API_KEY not set",
+        }
 
 
 @router.post("/chat")
@@ -22,9 +55,10 @@ def ask_project_brain(request: ChatRequest):
 
     Behavior:
       1) Prefer the local AI service (Sprint 8) if available.
+         Forwards `provider` and `strict_provider` if the caller set them.
       2) Fallback to OpenAI direct (legacy) if AI service is down and OPENAI_API_KEY is set.
     """
-    ai_base = os.environ.get("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+    ai_base = _ai_base()
 
     # --- 1) Try AI service ---
     try:
@@ -42,11 +76,24 @@ def ask_project_brain(request: ChatRequest):
 
             resp = client.post(
                 f"{ai_base}/ai/chat",
-                json={"conversation_id": cid, "user_id": 1, "message": msg},
+                json={
+                    "conversation_id": cid,
+                    "user_id": 1,
+                    "message": msg,
+                    "provider": request.provider,
+                    "strict_provider": request.strict_provider,
+                },
             )
             resp.raise_for_status()
             data = resp.json()
-            return {"reply": data.get("response") or data.get("reply") or ""}
+            return {
+                "reply": data.get("response") or data.get("reply") or "",
+                "provider": data.get("provider"),
+                "model": data.get("model"),
+                "task_type": data.get("task_type"),
+                "tokens_used": data.get("tokens_used"),
+                "cost_usd": data.get("cost_usd"),
+            }
     except Exception:
         pass
 
@@ -74,6 +121,13 @@ def ask_project_brain(request: ChatRequest):
                 {"role": "user", "content": request.message},
             ],
         )
-        return {"reply": response.choices[0].message.content}
+        return {
+            "reply": response.choices[0].message.content,
+            "provider": "openai",
+            "model": "gpt-4o-mini",
+            "task_type": None,
+            "degraded": True,
+            "reason": "AI service unreachable; used OpenAI direct.",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
