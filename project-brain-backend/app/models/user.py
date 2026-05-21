@@ -1,23 +1,9 @@
-from sqlalchemy import Boolean, Column, Integer, String
+"""Compatibility exports for user models.
 
-from app.core.database import Base
+The canonical SQLAlchemy table definitions live in app.models.scheme
+for the GOD MODE v2 schema. Re-export them here so existing imports
+(`from app.models.user import User`) continue to work without
+registering duplicate tables.
+"""
 
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String, unique=True, index=True)
-    hashed_password = Column(String)
-    role = Column(String)
-
-
-class RolePermission(Base):
-    __tablename__ = "role_permissions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    role_name = Column(String, index=True)
-    module_name = Column(String)
-    can_read = Column(Boolean, default=False)
-    can_write = Column(Boolean, default=False)
-    is_admin = Column(Boolean, default=False)
+from app.models.scheme import RolePermission, User

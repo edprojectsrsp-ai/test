@@ -5,7 +5,12 @@ GOD MODE v2 — uses new schema (scheme_master with scheme_id PK, etc.)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import os
 from app.api.v1 import schemes, view_schemes
+from app.api.v1 import mobile
+from app.api.v1 import risk, notesheet
+from app.api.v1 import cpm_v4
 
 # IMPORTANT: We are NOT calling Base.metadata.create_all() anymore.
 # The database schema is managed by godmode_v2_schema.sql, not SQLAlchemy.
@@ -29,6 +34,14 @@ app.add_middleware(
 # Mount the schemes router
 app.include_router(schemes.router, prefix="/api/v1/schemes", tags=["Schemes"])
 app.include_router(view_schemes.router, prefix="/api/v1/view-schemes", tags=["View Schemes"])
+app.include_router(mobile.router)
+app.include_router(risk.router)
+app.include_router(notesheet.router)
+app.include_router(cpm_v4.router)
+
+UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 
 @app.get("/")

@@ -6,7 +6,6 @@ from app.api.v1.capex import router as capex_router
 from app.api.v1.corporate_progress import router as corporate_progress_router
 from app.api.v1.cpm import router as cpm_router
 from app.api.v1.dpr import router as dpr_router
-from app.api.v1.god_api import router as god_router
 from app.api.v1.material import router as material_router
 from app.api.v1.physical_progress import router as physical_progress_router
 from app.api.v1.plant_progress import router as plant_progress_router
@@ -20,7 +19,6 @@ from app.api.v1.plan_engine import router as plan_engine_router
 from app.models import capex
 from app.models import cpm
 from app.models import dpr
-from app.models import god_models
 from app.models import material
 from app.models import progress
 from app.models import scheme
@@ -38,8 +36,31 @@ app.add_middleware(
 
 app.include_router(auth_router, prefix="/api/v1/auth", tags=["Security"])
 app.include_router(schemes_router, prefix="/api/v1/schemes")
-app.include_router(capex_router)
+# Sprint 15: capex_router now self-prefixes with /capex.
+# Mounting at /api/v1 yields /api/v1/capex/plans, /api/v1/capex/plans/{id}, etc.
+# (Previously this router was mounted twice with no internal prefix, exposing
+# endpoints at both /plan/* and /api/v1/plan/*. The duplicate mount has been
+# dropped as part of Sprint 15.)
 app.include_router(capex_router, prefix="/api/v1")
+
+# Deprecation alias — old buggy endpoint that duplicated plans on save.
+# Returns HTTP 410 so any client still calling it fails loudly.
+from fastapi import APIRouter as _APIRouter, HTTPException as _HTTPException
+_capex_deprecation_router = _APIRouter()
+
+@_capex_deprecation_router.post("/api/v1/plan/save_hierarchy", deprecated=True)
+@_capex_deprecation_router.post("/plan/save_hierarchy", deprecated=True)
+def _deprecated_old_capex_save_hierarchy():
+    raise _HTTPException(
+        status_code=410,
+        detail=(
+            "/plan/save_hierarchy was removed in Sprint 15 because it created a "
+            "duplicate plan on every save. Use POST /api/v1/capex/plans (create) "
+            "or PUT /api/v1/capex/plans/{plan_id} (update) instead."
+        ),
+    )
+
+app.include_router(_capex_deprecation_router)
 app.include_router(progress_router, prefix="/api/v1")
 app.include_router(cpm_router, prefix="/api/v1")
 app.include_router(dpr_router, prefix="/api/v1")
@@ -53,7 +74,6 @@ app.include_router(view_schemes_router, prefix="/api/v1/view", tags=["View Schem
 app.include_router(reports_router, prefix="/api/v1/reports", tags=["Reports"])
 app.include_router(s_curve_router, prefix="/api/v1/s-curve", tags=["S-Curve"])
 app.include_router(plan_engine_router, prefix="/api/v1/plan-engine", tags=["Plan Engine"])
-app.include_router(god_router, prefix="/api/v1", tags=["GOD MODE"])
 
 
 @app.get("/")

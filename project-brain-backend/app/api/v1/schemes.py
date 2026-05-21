@@ -46,6 +46,24 @@ def _safe_dict(obj, fields):
     return out
 
 
+def _to_date(v):
+    if not v:
+        return None
+    if hasattr(v, "isoformat") and not isinstance(v, str):
+        return v
+    if isinstance(v, str):
+        try:
+            return datetime.fromisoformat(v).date()
+        except Exception:
+            return None
+    return None
+
+
+def _fmt_date(v):
+    d = _to_date(v)
+    return d.strftime("%d %b %Y") if d else "TBD"
+
+
 # ============================================================================
 # 1) GET /all  → list view (unchanged)
 # ============================================================================
@@ -59,14 +77,14 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 sm.amr_no, sm.wbs_element, sm.has_multiple_packages,
                 sm.scheme_owner_name, sm.created_at,
                 COUNT(DISTINCT p.package_id) AS package_count,
-                COALESCE(SUM(c.contract_cost_net_itc_cr), 0) AS total_contract_value_cr,
+                COALESCE(SUM(c.contract_value_cr), 0) AS total_contract_value_cr,
                 MIN(c.effective_date) AS earliest_effective_date,
-                MAX(c.scheduled_completion_date) AS latest_scheduled_completion,
-                MAX(c.likely_completion_date) AS latest_likely_completion
-            FROM public.scheme_master sm
-            LEFT JOIN public.packages p
+                MAX(c.schedule_completion_date) AS latest_scheduled_completion,
+                MAX(c.schedule_completion_date) AS latest_likely_completion
+            FROM scheme_master sm
+            LEFT JOIN packages p
               ON p.scheme_id = sm.scheme_id AND p.is_deleted = FALSE
-            LEFT JOIN public.contracts c ON c.package_id = p.package_id
+            LEFT JOIN contracts c ON c.package_id = p.package_id
             WHERE sm.is_deleted = FALSE
             GROUP BY sm.scheme_id
             ORDER BY
@@ -82,8 +100,10 @@ def get_all_schemes(db: Session = Depends(get_db)):
         out = []
         for r in results:
             delay_status, delay_days = "N/A", 0
-            if r.latest_scheduled_completion and r.latest_likely_completion:
-                delta = (r.latest_likely_completion - r.latest_scheduled_completion).days
+            sc = _to_date(r.latest_scheduled_completion)
+            lc = _to_date(r.latest_likely_completion)
+            if sc and lc:
+                delta = (lc - sc).days
                 delay_status = "On Time" if delta <= 0 else ("Delayed < 1 Year" if delta < 365 else "Delayed > 1 Year")
                 delay_days = delta
 
@@ -104,9 +124,9 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 "scheme_owner_name": r.scheme_owner_name or "",
                 "package_count": r.package_count or 0,
                 "total_contract_value_cr": _num(r.total_contract_value_cr) or 0.0,
-                "scheduled_completion": r.latest_scheduled_completion.strftime("%d %b %Y") if r.latest_scheduled_completion else "TBD",
-                "expected_completion": r.latest_likely_completion.strftime("%d %b %Y") if r.latest_likely_completion else "TBD",
-                "effective_date": r.earliest_effective_date.strftime("%d %b %Y") if r.earliest_effective_date else "TBD",
+                "scheduled_completion": _fmt_date(r.latest_scheduled_completion),
+                "expected_completion": _fmt_date(r.latest_likely_completion),
+                "effective_date": _fmt_date(r.earliest_effective_date),
                 "delay_status": delay_status,
                 "delay_days": delay_days,
             })
