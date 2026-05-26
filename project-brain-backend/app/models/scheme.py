@@ -19,31 +19,7 @@ from app.core.database import Base
 # ============================================================================
 # 1. USERS & PERMISSIONS
 # ============================================================================
-class User(Base):
-    __tablename__ = "users"
-
-    user_id = Column(Integer, primary_key=True, autoincrement=True)
-    username = Column(String(100), unique=True, nullable=False)
-    full_name = Column(String(200))
-    email = Column(String(200))
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(String(50), nullable=False, default="admin")
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-    last_login = Column(DateTime)
-
-
-class RolePermission(Base):
-    __tablename__ = "role_permissions"
-
-    permission_id = Column(Integer, primary_key=True, autoincrement=True)
-    role_name = Column(String(50), nullable=False)
-    module_name = Column(String(100), nullable=False)
-    can_read = Column(Boolean, default=True)
-    can_write = Column(Boolean, default=False)
-    is_admin = Column(Boolean, default=False)
-
-    __table_args__ = (UniqueConstraint("role_name", "module_name"),)
+# Defined in app/models/user.py in this repo (avoid duplicate table definitions).
 
 
 # ============================================================================
@@ -468,22 +444,20 @@ class Contract(Base):
     __tablename__ = "contracts"
 
     contract_id = Column(Integer, primary_key=True, autoincrement=True)
-    package_id = Column(Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), unique=True, nullable=False)
-    awarded_tender_cycle_id = Column(Integer, ForeignKey("tender_cycles.tender_cycle_id"))
+    package_id = Column(Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), nullable=False)
 
-    loa_date = Column(Date)
+    contract_no = Column(String(100), nullable=False)
     contractor_name = Column(String(300))
-    contract_no = Column(String(200))
-    contract_signing_date = Column(Date)
+    contract_value_cr = Column(Numeric(15, 4))
+    loa_date = Column(Date)
     effective_date = Column(Date)
-    scheduled_completion_date = Column(Date)
-    contract_cost_net_itc_cr = Column(Numeric(15, 4))
-    contract_cost_gross_cr = Column(Numeric(15, 4))
-    likely_completion_date = Column(Date)
-    delay_reason = Column(Text)
+    contract_duration_months = Column(Integer)
+    schedule_completion_date = Column(Date)
 
-    remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    is_active = Column(Boolean, default=True)
+    is_deleted = Column(Boolean, default=False)
+
+    extra_fields = Column(JSONB, default=dict, nullable=False)
     created_by = Column(Integer, ForeignKey("users.user_id"))
     created_at = Column(DateTime, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
@@ -491,6 +465,8 @@ class Contract(Base):
 
     package = relationship("Package", back_populates="contract")
     amendments = relationship("ContractAmendment", back_populates="contract", cascade="all, delete-orphan")
+
+    __table_args__ = (UniqueConstraint("package_id", "contract_no"),)
 
 
 class ContractAmendment(Base):
@@ -500,13 +476,11 @@ class ContractAmendment(Base):
     contract_id = Column(Integer, ForeignKey("contracts.contract_id", ondelete="CASCADE"), nullable=False)
     amendment_no = Column(Integer, nullable=False)
     amendment_date = Column(Date, nullable=False)
-    description = Column(Text)
-    cost_change_cr = Column(Numeric(15, 4))
-    new_cost_net_itc_cr = Column(Numeric(15, 4))
     new_completion_date = Column(Date)
-    approval_ref = Column(String(200))
+    value_change_cr = Column(Numeric(15, 4))
+    reason = Column(Text)
 
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, default=dict, nullable=False)
     created_by = Column(Integer, ForeignKey("users.user_id"))
     created_at = Column(DateTime, server_default=func.current_timestamp())
 

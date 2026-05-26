@@ -35,6 +35,10 @@ export default function PhysicalProgressHub() {
   const totalWeightage = activities.reduce((sum, act) => sum + (parseFloat(act.weightage) || 0), 0);
 
   // --- Corporate Logic Functions ---
+  const updateActivity = (idx: number, patch: Record<string, any>) => {
+    setActivities((prev) => prev.map((a, i) => (i === idx ? { ...a, ...patch } : a)));
+  };
+
   const handleLoadCorporateData = () => {
     if (!corpScheme || !corpFY || !corpMonth) return speakAndChat("Select Scheme, FY, and Month to load data.", "⚠️");
     speakAndChat("Loading active plan and calculating variance...", "🔄");

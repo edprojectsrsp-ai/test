@@ -101,8 +101,10 @@ export default function PlanEnginePage() {
     fetch(`${API}/schemes/${selectedSchemeId}/full`)
       .then((r) => r.json())
       .then((d) => {
-        setPackages(d.packages || []);
-        if (d.packages?.length) setSelectedPackageId(d.packages[0].package_id);
+        const pkgs = Array.isArray(d?.packages) ? d.packages : [];
+        setPackages(pkgs);
+        if (pkgs.length) setSelectedPackageId(pkgs[0].package_id);
+        else { setSelectedPackageId(null); setPlans([]); setSelectedPlanId(null); setPlanData(null); }
       });
   }, [selectedSchemeId]);
 
@@ -112,8 +114,9 @@ export default function PlanEnginePage() {
     fetch(`${API}/plans/packages/${selectedPackageId}/plans`)
       .then((r) => r.json())
       .then((d) => {
-        setPlans(d);
-        if (d.length) setSelectedPlanId(d[0].progress_plan_id);
+        const arr = Array.isArray(d) ? d : [];
+        setPlans(arr);
+        if (arr.length) setSelectedPlanId(arr[0].progress_plan_id);
         else { setSelectedPlanId(null); setPlanData(null); }
       });
   }, [selectedPackageId]);
