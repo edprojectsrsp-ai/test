@@ -38,7 +38,7 @@ const modules: ModuleItem[] = [
   { name: "DPR Entry", icon: Calendar, path: "/dpr" },
   { name: "Execution", icon: CheckSquare, path: "/execution" },
   { name: "TOD Tracking", icon: Truck, path: "/tod" },
-  { name: "Billing Schedule", icon: Receipt, path: "/billing" },
+  { name: "Billing Ledger", icon: Receipt, path: "/billing" },
   { name: "CAPEX", icon: DollarSign, path: "/capex" },
   { name: "Material Tracking", icon: Package, path: "/material" },
   { name: "CPM Engine", icon: Network, path: "/cpm" },

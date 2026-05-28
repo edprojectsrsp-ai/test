@@ -43,31 +43,28 @@ def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
     sql = text(
         """
         WITH PrevMonth AS (
-            SELECT scheme_id, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date
-            FROM plant_progress_monthly WHERE progress_month = :prev_date
+            SELECT package_id, cumulative_actual_pct, notes
+            FROM plant_progress_monthly WHERE month_date = :prev_date
         ),
         CurrMonth AS (
-            SELECT scheme_id, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date
-            FROM plant_progress_monthly WHERE progress_month = :curr_date
+            SELECT package_id, cumulative_actual_pct, notes
+            FROM plant_progress_monthly WHERE month_date = :curr_date
         )
         SELECT
-            sm.scheme_id, sm.scheme_name, sm.total_cost, sm.start_date, sm.scheduled_completion_date,
-            COALESCE(sm.expected_completion_date, sm.scheduled_completion_date) as master_expected_date,
-            sm.current_status as master_status, sm.closure_date as master_closure, sm.remarks as master_remark,
+            sm.scheme_id, sm.scheme_name, sm.estimated_cost_cr AS total_cost, sm.planned_start_date AS start_date, sm.planned_completion_date AS scheduled_completion_date,
+            COALESCE(sm.actual_completion_date, sm.planned_completion_date) as master_expected_date,
+            sm.current_status as master_status, sm.actual_completion_date as master_closure, pkg.remarks as master_remark,
 
-            COALESCE(p.cumulative_progress_percent, 0.0) as prev_progress,
-            COALESCE(p.scheme_status, 'ongoing') as prev_status,
-            COALESCE(p.progress_remark, '') as prev_remark,
+            COALESCE(p.cumulative_actual_pct, 0.0) as prev_progress,
+            COALESCE(p.notes, '') as prev_remark,
 
-            c.cumulative_progress_percent as curr_progress,
-            c.scheme_status as curr_status,
-            c.progress_remark as curr_remark,
-            c.expected_completion_date as curr_expected,
-            c.closure_date as curr_closure
+            c.cumulative_actual_pct as curr_progress,
+            c.notes as curr_remark
 
         FROM scheme_master sm
-        LEFT JOIN PrevMonth p ON sm.scheme_id = p.scheme_id
-        LEFT JOIN CurrMonth c ON sm.scheme_id = c.scheme_id
+        LEFT JOIN packages pkg ON pkg.scheme_id = sm.scheme_id AND NOT pkg.is_deleted AND NOT pkg.is_scheme_mirror
+        LEFT JOIN PrevMonth p ON pkg.package_id = p.package_id
+        LEFT JOIN CurrMonth c ON pkg.package_id = c.package_id
         WHERE sm.scheme_type = 'plant' AND sm.current_status IN ('ongoing', 'closed')
         ORDER BY CASE WHEN sm.current_status = 'ongoing' THEN 0 ELSE 1 END, sm.scheme_name
         """
@@ -78,10 +75,10 @@ def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
     workspace_data = []
     for r in results:
         current_progress = r.curr_progress if r.curr_progress is not None else r.prev_progress
-        current_status = r.curr_status if r.curr_status is not None else r.prev_status
-        current_remark = r.curr_remark if r.curr_remark is not None else r.prev_remark
-        expected_date = r.curr_expected if r.curr_expected is not None else r.master_expected_date
-        closure_date = r.curr_closure if r.curr_closure is not None else r.master_closure
+        current_status = r.master_status
+        current_remark = r.curr_remark if r.curr_remark is not None else (r.prev_remark or r.master_remark)
+        expected_date = r.master_expected_date
+        closure_date = r.master_closure
 
         workspace_data.append(
             {
@@ -92,7 +89,7 @@ def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
                 "scheduled_completion": r.scheduled_completion_date,
                 "expected_completion_date": expected_date,
                 "last_progress": r.prev_progress,
-                "last_status_remark": f"{r.prev_status} | {r.prev_remark}",
+                "last_status_remark": f"{r.master_status} | {r.prev_remark}",
                 "current_progress": current_progress,
                 "current_status": current_status,
                 "current_remark": current_remark,
@@ -112,22 +109,19 @@ def save_plant_workspace(payload: PlantWorkspaceSave, db: Session = Depends(get_
             upsert_progress_sql = text(
                 """
                 INSERT INTO plant_progress_monthly
-                (scheme_id, progress_month, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date, updated_at)
-                VALUES (:s_id, :p_month, :prog, :rem, :stat, :exp_date, :clos_date, CURRENT_TIMESTAMP)
-                ON CONFLICT (scheme_id, progress_month)
+                (package_id, month_date, cumulative_actual_pct, notes, computed_at)
+                VALUES (:pkg_id, :p_month, :prog, :rem, CURRENT_TIMESTAMP)
+                ON CONFLICT (package_id, month_date)
                 DO UPDATE SET
-                    cumulative_progress_percent = EXCLUDED.cumulative_progress_percent,
-                    progress_remark = EXCLUDED.progress_remark,
-                    scheme_status = EXCLUDED.scheme_status,
-                    expected_completion_date = EXCLUDED.expected_completion_date,
-                    closure_date = EXCLUDED.closure_date,
-                    updated_at = CURRENT_TIMESTAMP
+                    cumulative_actual_pct = EXCLUDED.cumulative_actual_pct,
+                    notes = EXCLUDED.notes,
+                    computed_at = CURRENT_TIMESTAMP
                 """
             )
             db.execute(
                 upsert_progress_sql,
                 {
-                    "s_id": row.scheme_id,
+                    "pkg_id": row.scheme_id,
                     "p_month": payload.progress_month,
                     "prog": row.current_progress,
                     "rem": row.current_remark,
@@ -140,7 +134,7 @@ def save_plant_workspace(payload: PlantWorkspaceSave, db: Session = Depends(get_
             update_master_sql = text(
                 """
                 UPDATE scheme_master
-                SET expected_completion_date = :exp_date, closure_date = :clos_date, current_status = :stat
+                SET planned_completion_date = :exp_date, actual_completion_date = :clos_date, current_status = :stat
                 WHERE scheme_id = :s_id
                 """
             )

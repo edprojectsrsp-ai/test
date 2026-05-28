@@ -37,6 +37,7 @@ export default function AIChatPage() {
   const [busy, setBusy] = useState(false);
   const [currentTaskType, setCurrentTaskType] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
+  const [selectedProvider, setSelectedProvider] = useState<string>("auto");
   const [providerInfo, setProviderInfo] = useState<{ provider?: string; model?: string } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -59,7 +60,13 @@ export default function AIChatPage() {
 
     const resp = await fetch(`${AI_API}/ai/chat/stream`, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversation_id: convId, user_id: USER_ID, message: q }),
+      body: JSON.stringify({
+        conversation_id: convId,
+        user_id: USER_ID,
+        message: q,
+        provider: selectedProvider === "auto" ? null : selectedProvider,
+        strict_provider: selectedProvider !== "auto"
+      }),
     });
     const reader = resp.body!.getReader();
     const decoder = new TextDecoder();
@@ -213,9 +220,18 @@ export default function AIChatPage() {
         <div ref={endRef} />
       </div>
 
-      {/* Input */}
       <footer className="border-t border-zinc-800 p-4">
         <div className="max-w-4xl mx-auto flex gap-2">
+          <select value={selectedProvider} onChange={e => setSelectedProvider(e.target.value)}
+            disabled={busy}
+            className="px-3 bg-zinc-900 border border-zinc-800 rounded-lg text-xs md:text-sm text-indigo-400 outline-none cursor-pointer">
+            <option value="auto">Auto Router</option>
+            <option value="ollama">Ollama (Qwen 3)</option>
+            <option value="ollama:qwen2.5:7b">Ollama (Qwen 2.5)</option>
+            <option value="gemini">Gemini</option>
+            <option value="groq">Groq</option>
+            <option value="openai">OpenAI</option>
+          </select>
           <input value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendStream())}
             placeholder="Ask about schemes, packages, risks, documents..."

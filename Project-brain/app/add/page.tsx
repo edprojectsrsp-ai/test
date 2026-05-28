@@ -153,7 +153,7 @@ export default function AddSchemeWizard() {
       setStep(2);
     } catch (error) {
       console.error("API Error:", error);
-      alert("Cannot reach the AI Brain! Ensure your FastAPI backend is running on port 8000.");
+      alert("Cannot reach the AI Brain! Ensure your FastAPI backend is running on port 8002.");
     } finally {
       setIsLoading(false);
     }

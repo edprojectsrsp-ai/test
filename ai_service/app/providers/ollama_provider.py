@@ -23,7 +23,8 @@ class OllamaProvider(LLMProvider):
         self.base_url = base_url.rstrip("/")
         self.model_id = model
         # Tool-calling support varies by model. Only enable tools for known-good models.
-        self._tools_enabled = self.model_id in {"qwen3:8b"}
+        model_lower = self.model_id.lower()
+        self._tools_enabled = "qwen3" in model_lower or "qwen2.5" in model_lower
 
     def _convert_messages(self, messages: list[ChatMessage]) -> list[dict]:
         out = []
@@ -44,7 +45,7 @@ class OllamaProvider(LLMProvider):
             "model": self.model_id,
             "messages": self._convert_messages(messages),
             "stream": False,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 16384},
         }
         if tools and self._tools_enabled:
             payload["tools"] = normalize_tools_to_openai_schema(tools)
@@ -85,7 +86,7 @@ class OllamaProvider(LLMProvider):
     async def chat_stream(self, messages, tools=None, temperature=0.3, max_tokens=2048) -> AsyncIterator[str]:
         payload = {
             "model": self.model_id, "messages": self._convert_messages(messages),
-            "stream": True, "options": {"temperature": temperature, "num_predict": max_tokens},
+            "stream": True, "options": {"temperature": temperature, "num_predict": max_tokens, "num_ctx": 16384},
         }
         if tools and self._tools_enabled:
             payload["tools"] = normalize_tools_to_openai_schema(tools)

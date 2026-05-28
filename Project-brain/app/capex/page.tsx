@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useEffect, useCallback } from "react";
 import { useMos } from "@/components/brain/MosContext";
 import {
@@ -183,7 +183,7 @@ export default function CapexWorkspace() {
     fetch(`${API_BASE}/capex/ping`)
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((d) => speakAndChat(`CAPEX backend reachable (${d.sprint})`, "ðŸ“¡"))
-      .catch((e) => speakAndChat(`Cannot reach CAPEX backend: ${e.message}. Is uvicorn on :8002?`, "ðŸš¨"));
+      .catch((e) => speakAndChat(`Cannot reach CAPEX backend: ${e.message}. Is uvicorn on :8002?`, "🚨"));
     // fy options
     fetch(`${API_BASE}/capex/fy-options`)
       .then((r) => r.json())

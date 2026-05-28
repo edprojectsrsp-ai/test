@@ -4,8 +4,9 @@
  * NeuralAssistant — floating site-wide AI chat.
  *
  * Four states: closed (bubble), minimized (robot), default (floating panel),
- * maximized (almost full-screen). Streams via /ai/chat/stream with a provider
- * dropdown to override which LLM answers.
+ * maximized (almost full-screen). Uses the common backend chat route so the
+ * assistant can answer from live project data even without the standalone AI
+ * service.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -25,13 +26,36 @@ const GREETING =
 export default function NeuralAssistant() {
   const [windowState, setWindowState] = useState<WindowState>("closed");
   const [input, setInput] = useState("");
+  const [dashboardContext, setDashboardContext] = useState<any>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   const {
     messages, send, busy, reset,
     taskType, activeTool,
     providers, provider, setProvider, strict, setStrict,
-  } = useAIChat({ mode: "stream", greeting: GREETING });
+  } = useAIChat({ mode: "simple", greeting: GREETING, context: dashboardContext });
+
+  useEffect(() => {
+    let mounted = true;
+    Promise.all([
+      fetch("http://localhost:8002/api/v1/dashboard/summary").then((r) => r.json()),
+      fetch("http://localhost:8002/api/v1/dashboard/scheme-cards").then((r) => r.json()),
+    ])
+      .then(([summary, cards]) => {
+        if (!mounted) return;
+        setDashboardContext({
+          summary,
+          cards: Array.isArray(cards) ? cards : [],
+        });
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setDashboardContext(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   // Auto-scroll on new content
   useEffect(() => {

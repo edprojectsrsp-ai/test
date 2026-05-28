@@ -43,6 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.database import get_db
+from app.security.auth import optional_user, require_role
 
 router = APIRouter()
 
@@ -156,6 +157,8 @@ def create_plan(package_id: int, data: dict, db: Session = Depends(get_db)):
         if data.get("effective_month") or data.get("contract_start_month"):
             ef["effective_month"] = data.get("effective_month") or data.get("contract_start_month")
 
+        start_date_str = data.get("contract_start_month") or data.get("plan_start_date")
+
         new_id = db.execute(text("""
             INSERT INTO progress_plans (
                 package_id, plan_name, plan_type, plan_version, financial_year,
@@ -169,13 +172,93 @@ def create_plan(package_id: int, data: dict, db: Session = Depends(get_db)):
             RETURNING plan_id
         """), {
             "pid": package_id, "name": plan_name, "ver": str(new_v), "fy": fy,
-            "start_m": data.get("contract_start_month") or data.get("plan_start_date"),
+            "start_m": start_date_str,
             "end_m": data.get("expected_completion_month") or data.get("plan_end_date"),
             "ef": json.dumps(ef),
         }).scalar()
+
+        # ── Carry-forward: auto-compute actuals_till_last_fy ──────────────
+        # If there is a prior plan for this package, copy its activities into
+        # the new plan and populate actuals_till_last_fy from daily_actuals
+        # accumulated up to the day before the new plan's start date.
+        carry_from_plan_id = data.get("carry_from_plan_id")
+        if not carry_from_plan_id:
+            # Auto-detect: find the most recent locked plan for this package
+            prior = db.execute(text("""
+                SELECT plan_id FROM progress_plans
+                WHERE package_id = :pid AND plan_id != :new_id
+                  AND is_deleted = FALSE
+                ORDER BY is_locked DESC, updated_at DESC
+                LIMIT 1
+            """), {"pid": package_id, "new_id": new_id}).first()
+            if prior:
+                carry_from_plan_id = prior.plan_id
+
+        carried_count = 0
+        if carry_from_plan_id and data.get("auto_carry_forward", False):
+            # Compute cumulative actuals cutoff date (day before new plan starts)
+            cutoff = None
+            if start_date_str:
+                try:
+                    sd = date.fromisoformat(str(start_date_str)[:10])
+                    cutoff = date(sd.year, sd.month, 1)  # first of start month
+                except (ValueError, TypeError):
+                    cutoff = None
+
+            src_activities = db.execute(text("""
+                SELECT activity_id, activity_name, activity_master_id, uom_id,
+                       scope_qty, weight_pct, actuals_till_last_fy,
+                       planned_start_date, planned_finish_date,
+                       appendix2_item_id, sort_order
+                FROM plan_activities
+                WHERE plan_id = :src AND is_deleted = FALSE
+                ORDER BY sort_order, activity_id
+            """), {"src": carry_from_plan_id}).fetchall()
+
+            # Compute cumulative actuals per source activity
+            src_ids = [a.activity_id for a in src_activities]
+            cum_actuals = {}
+            if src_ids and cutoff:
+                for r in db.execute(text("""
+                    SELECT activity_id, COALESCE(SUM(actual_qty), 0) AS total
+                    FROM daily_actuals
+                    WHERE activity_id = ANY(:ids) AND actual_date < :cutoff
+                    GROUP BY activity_id
+                """), {"ids": src_ids, "cutoff": cutoff}).fetchall():
+                    cum_actuals[r.activity_id] = float(r.total or 0)
+
+            for a in src_activities:
+                prior_cum = float(a.actuals_till_last_fy or 0)
+                new_cum = prior_cum + cum_actuals.get(a.activity_id, 0.0)
+                db.execute(text("""
+                    INSERT INTO plan_activities (
+                        plan_id, activity_master_id, activity_name, uom_id,
+                        scope_qty, weight_pct, actuals_till_last_fy,
+                        planned_start_date, planned_finish_date,
+                        appendix2_item_id, sort_order, is_deleted,
+                        extra_fields, created_at, updated_at
+                    ) VALUES (
+                        :pid, :amid, :name, :uom, :qty, :wt, :last_fy,
+                        :start, :finish, :appx, :order, FALSE,
+                        '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """), {
+                    "pid": new_id, "amid": a.activity_master_id,
+                    "name": a.activity_name, "uom": a.uom_id,
+                    "qty": float(a.scope_qty or 0),
+                    "wt": float(a.weight_pct or 0),
+                    "last_fy": new_cum,
+                    "start": a.planned_start_date,
+                    "finish": a.planned_finish_date,
+                    "appx": a.appendix2_item_id,
+                    "order": a.sort_order,
+                })
+                carried_count += 1
+
         db.commit()
         return {"progress_plan_id": new_id, "plan_id": new_id,
-                "plan_name": plan_name, "plan_version": new_v}
+                "plan_name": plan_name, "plan_version": new_v,
+                "carried_forward_activities": carried_count}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Plan creation failed: {e}")
@@ -449,10 +532,20 @@ def lock_plan(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 9) POST /plans/{plan_id}/unlock
+# 9) POST /plans/{plan_id}/unlock  (admin-only)
 # ============================================================================
 @router.post("/plans/{plan_id}/unlock")
-def unlock_plan(plan_id: int, db: Session = Depends(get_db)):
+def unlock_plan(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    user: dict = Depends(optional_user),
+):
+    # If auth is active, enforce admin-only unlock
+    if user and user.get("role") not in ("admin", None):
+        raise HTTPException(
+            status_code=403,
+            detail="Only admins can unlock a baseline plan."
+        )
     try:
         db.execute(text("""
             UPDATE progress_plans SET is_locked = FALSE, updated_at = CURRENT_TIMESTAMP
@@ -720,3 +813,31 @@ def auto_distribute(plan_id: int, db: Session = Depends(get_db)):
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Auto-distribute failed: {e}")
+
+
+# ============================================================================
+# 14) GET /packages/{package_id}/has-active-plan  → DPR gate check
+# ============================================================================
+@router.get("/packages/{package_id}/has-active-plan")
+def has_active_plan(package_id: int, db: Session = Depends(get_db)):
+    """Check if a package has at least one locked plan.
+    Used by DPR entry page to gate daily progress submission."""
+    plan = db.execute(text("""
+        SELECT plan_id, plan_name, plan_version
+        FROM progress_plans
+        WHERE package_id = :pid AND is_locked = TRUE AND is_deleted = FALSE
+        ORDER BY is_current DESC, updated_at DESC LIMIT 1
+    """), {"pid": package_id}).first()
+
+    if plan:
+        return {
+            "package_id": package_id,
+            "has_active_plan": True,
+            "active_plan_id": plan.plan_id,
+            "active_plan_name": plan.plan_name,
+        }
+    return {
+        "package_id": package_id,
+        "has_active_plan": False,
+        "message": "No locked plan exists for this package. Create and lock a plan before entering DPR.",
+    }

@@ -27,6 +27,8 @@ from app.api.v1.plan_seed import router as plan_seed_router
 from app.api.v1.plant_amr import router as plant_amr_router
 from app.api.v1.appendix2 import router as appendix2_router
 from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.billing import router as billing_router
+from app.api.v1.ppt_generator import router as ppt_generator_router
 
 load_dotenv()
 
@@ -81,6 +83,8 @@ app.include_router(view_schemes_router, prefix="/api/v1/view", tags=["View Schem
 app.include_router(reports_router, prefix="/api/v1/reports", tags=["Reports"])
 app.include_router(s_curve_router, prefix="/api/v1/s-curve", tags=["S-Curve"])
 app.include_router(plan_engine_router, prefix="/api/v1/plan-engine", tags=["Plan Engine"])
+# Sprint 9B: CPM schedule engine
+app.include_router(cpm_router, prefix="/api/v1", tags=["cpm"])
 # Appendix-2 (Chunk 4 backend half)
 app.include_router(appendix2_router, prefix="/api/v1/appendix2", tags=["Appendix-2"])
 # Sprint 16: Seed activities + FY cumulative (additive)
@@ -94,6 +98,8 @@ app.include_router(risk_router, prefix="/api/v1")
 app.include_router(plant_amr_router, prefix="/api/v1")
 # Sprint 4: Dashboard — physical-financial table, CAPEX snapshot, DPR summary
 app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+app.include_router(billing_router, prefix="/api/v1")
+app.include_router(ppt_generator_router, prefix="/api/v1")
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/project_brain/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

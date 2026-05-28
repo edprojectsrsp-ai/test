@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -106,7 +106,7 @@ export function useAIChat(options: UseAIChatOptions = {}) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const data = await res.json().catch(() => ({}));
-        const content = data.answer ?? data.response ?? data.text ?? data.message ?? "No response";
+        const content = data.reply ?? data.answer ?? data.response ?? data.text ?? data.message ?? "No response";
         const meta: ChatMeta = data.meta ?? {
           provider: data.provider,
           model: data.model,
@@ -164,4 +164,3 @@ export function useAIChat(options: UseAIChatOptions = {}) {
     [messages, send, busy, reset, taskType, activeTool, providers, provider, strict]
   );
 }
-

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 /**
  * DPR â€” Daily Progress Reports
@@ -724,6 +724,11 @@ function NewEntryForm({
   const [manpower, setManpower] = useState("");
   const [workDone, setWorkDone] = useState("");
   const [issues, setIssues] = useState("");
+  const [form, setForm] = useState({
+    manpower_officers: "",
+    manpower_skilled: "",
+    manpower_agency: ""
+  });
 
   const [gps, setGps] = useState<{ lat: number; lng: number; acc?: number } | null>(null);
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -802,7 +807,16 @@ function NewEntryForm({
       if (workDone.trim()) fd.append("work_done", workDone.trim());
       if (issues.trim()) fd.append("issues", issues.trim());
       fd.append("weather", weather);
-      fd.append("manpower", String(parseInt(manpower, 10) || 0));
+      
+      const off = parseInt(form.manpower_officers, 10) || 0;
+      const skl = parseInt(form.manpower_skilled, 10) || 0;
+      const agc = parseInt(form.manpower_agency, 10) || 0;
+      const total = off + skl + agc;
+      fd.append("manpower", String(total));
+      fd.append("manpower_officers", String(off));
+      fd.append("manpower_skilled", String(skl));
+      fd.append("manpower_agency", String(agc));
+
       fd.append("created_by", username);
       for (const p of photos) fd.append("photos", p);
 
@@ -819,7 +833,11 @@ function NewEntryForm({
       setAreaName("");
       setWorkDone("");
       setIssues("");
-      setManpower("");
+      setForm({
+        manpower_officers: "",
+        manpower_skilled: "",
+        manpower_agency: ""
+      });
       setPhotos([]);
       setGps(null); // require re-capture for next entry (different visit, different fix)
       onSaved();
@@ -1002,18 +1020,46 @@ function NewEntryForm({
       </div>
 
       {/* Manpower + Work Done + Issues */}
-      <div>
-        <label className="mb-2 flex items-center gap-2 text-sm text-zinc-400">
-          <HardHat className="h-4 w-4" /> Manpower (this visit)
-        </label>
-        <input
-          type="number"
-          placeholder="e.g. 12"
-          value={manpower}
-          disabled={!canWrite}
-          onChange={(e) => setManpower(e.target.value)}
-          className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400 disabled:opacity-50"
-        />
+      <div className="grid grid-cols-3 gap-2">
+        <div>
+          <label className="mb-2 flex items-center gap-1.5 text-xs text-zinc-400">
+            Officers
+          </label>
+          <input
+            type="number"
+            placeholder="0"
+            value={form.manpower_officers ?? ""}
+            disabled={!canWrite}
+            onChange={(e) => setForm(prev => ({ ...prev, manpower_officers: e.target.value }))}
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400 disabled:opacity-50 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-2 flex items-center gap-1.5 text-xs text-zinc-400">
+            Skilled
+          </label>
+          <input
+            type="number"
+            placeholder="0"
+            value={form.manpower_skilled ?? ""}
+            disabled={!canWrite}
+            onChange={(e) => setForm(prev => ({ ...prev, manpower_skilled: e.target.value }))}
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400 disabled:opacity-50 text-sm"
+          />
+        </div>
+        <div>
+          <label className="mb-2 flex items-center gap-1.5 text-xs text-zinc-400">
+            Agency
+          </label>
+          <input
+            type="number"
+            placeholder="0"
+            value={form.manpower_agency ?? ""}
+            disabled={!canWrite}
+            onChange={(e) => setForm(prev => ({ ...prev, manpower_agency: e.target.value }))}
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-950 p-3 outline-none focus:border-amber-400 disabled:opacity-50 text-sm"
+          />
+        </div>
       </div>
 
       <div>

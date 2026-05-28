@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
@@ -69,6 +69,7 @@ export default function DashboardPage() {
     { role: "ai", content: "Dashboard loaded. Ask me about delays, CAPEX status, or any specific project." },
   ]);
   const [chatInput, setChatInput] = useState("");
+  const [aiProvider, setAiProvider] = useState("auto");
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
@@ -128,7 +129,11 @@ export default function DashboardPage() {
       const res = await fetch(`${API}/brain/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, context: { summary, cards } }),
+        body: JSON.stringify({
+          message: msg,
+          context: { summary, cards },
+          provider: aiProvider === "auto" ? null : aiProvider,
+        }),
       });
       const data = await res.json();
       setChatMessages((p) => [
@@ -388,6 +393,34 @@ export default function DashboardPage() {
                 <Activity className="h-4 w-4 text-cyan-400" /> Physical-Financial Summary
               </h2>
               <div className="flex items-center gap-2">
+                {selectedSchemeId && (
+                  <>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await fetch(`${API}/brain/narrate/${selectedSchemeId}`, { method: "POST" });
+                          const d = await res.json();
+                          setChatMessages((p) => [
+                            ...p,
+                            { role: "ai", content: d.narrative || "Could not generate narrative." }
+                          ]);
+                        } catch {
+                          alert("Failed to generate AI narrative.");
+                        }
+                      }}
+                      className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 rounded text-[10px] font-bold text-white transition-colors"
+                    >
+                      AI Narrate
+                    </button>
+                    <a
+                      href={`${API}/ppt-generator/export/${selectedSchemeId}`}
+                      download
+                      className="px-2.5 py-1 bg-violet-600 hover:bg-violet-500 rounded text-[10px] font-bold text-white transition-colors text-center"
+                    >
+                      Export PPTX
+                    </a>
+                  </>
+                )}
                 <select
                   value={selectedSchemeId || ""}
                   onChange={(e) => setSelectedSchemeId(parseInt(e.target.value) || null)}
@@ -694,9 +727,21 @@ export default function DashboardPage() {
                 <Send className="h-4 w-4" />
               </button>
             </div>
-            <p className="mt-2 text-center text-[10px] text-zinc-500">
-              Project Brain LLM Â· Live dashboard context
-            </p>
+            <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-500">
+              <span>Project Brain LLM · Live dashboard context</span>
+              <select
+                value={aiProvider}
+                onChange={(e) => setAiProvider(e.target.value)}
+                className="bg-zinc-950 border border-zinc-800 rounded px-1.5 py-0.5 text-[10px] text-cyan-400 outline-none cursor-pointer"
+              >
+                <option value="auto">Auto Router</option>
+                <option value="ollama">Ollama (Qwen 3)</option>
+                <option value="ollama:qwen2.5:7b">Ollama (Qwen 2.5)</option>
+                <option value="gemini">Gemini</option>
+                <option value="groq">Groq</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
           </div>
         </div>
       </div>

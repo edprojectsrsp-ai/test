@@ -136,8 +136,8 @@ async def import_schedule(
 ):
     """Upload .xer / .mpp / .csv schedule file. Auto-detects format."""
     ext = file.filename.lower().rsplit('.', 1)[-1]
-    if ext not in ('xer', 'mpp', 'csv'):
-        raise HTTPException(400, f"Unsupported format: .{ext}. Use .xer, .mpp, or .csv")
+    if ext not in ('xer', 'mpp', 'csv', 'xml'):
+        raise HTTPException(400, f"Unsupported format: .{ext}. Use .xer, .mpp, .csv, or .xml")
 
     # Save to temp
     with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
@@ -182,6 +182,14 @@ async def import_schedule(
                 )
             except ImportError as e:
                 raise HTTPException(400, str(e))
+        elif ext == 'xml':
+            from app.services.cpm_importers import MSProjectXMLParser
+            parser = MSProjectXMLParser(tmp_path)
+            activities, deps = parser.parse()
+            result = load_schedule_to_db(
+                package_id, schedule_name, activities, deps,
+                'xml_import', file.filename, user_id, DB_URL, warnings
+            )
 
         # Run CPM
         cpm_result = run_cpm(result['schedule_id'], DB_URL)

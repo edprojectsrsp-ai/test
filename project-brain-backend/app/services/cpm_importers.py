@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import logging
 import re
+import xml.etree.ElementTree as ET
 from datetime import date, datetime
 from typing import Optional, Iterator
 import psycopg2
@@ -273,6 +274,160 @@ class CSVScheduleParser:
 
 
 # ============================================================================
+# MS PROJECT XML IMPORTER
+# ============================================================================
+
+class MSProjectXMLParser:
+    """
+    Parses Microsoft Project XML exports.
+
+    Expected shape:
+      <Project>
+        <Tasks>
+          <Task>
+            <UID>1</UID>
+            <Name>...</Name>
+            <Start>2026-01-01T08:00:00</Start>
+            <Finish>2026-01-05T17:00:00</Finish>
+            <Duration>PT32H0M0S</Duration>
+            <PercentComplete>25</PercentComplete>
+            <OutlineNumber>1.1</OutlineNumber>
+            <PredecessorLink>
+              <PredecessorUID>2</PredecessorUID>
+              <Type>0</Type>
+              <Lag>PT0H0M0S</Lag>
+            </PredecessorLink>
+          </Task>
+        </Tasks>
+      </Project>
+    """
+
+    def __init__(self, file_path: str):
+        self.file_path = file_path
+        self._uid_to_code: dict[str, str] = {}
+        self._tasks: list[ET.Element] = []
+
+    def parse(self) -> tuple[list[dict], list[dict]]:
+        tree = ET.parse(self.file_path)
+        root = tree.getroot()
+
+        tasks = self._findall_local(root, "Task")
+        # Ignore summary / blank rows with no UID or Name
+        tasks = [task for task in tasks if self._text(task, "UID") and self._text(task, "Name")]
+
+        activities: list[dict] = []
+        for index, task in enumerate(tasks, 1):
+            uid = self._text(task, "UID") or str(index)
+            code = self._text(task, "OutlineNumber") or self._text(task, "WBS") or self._text(task, "Id") or f"T{uid}"
+            self._uid_to_code[uid] = code
+            activities.append({
+                "activity_code": code,
+                "activity_name": self._text(task, "Name") or "",
+                "planned_start_date": self._parse_date(self._text(task, "Start")),
+                "planned_finish_date": self._parse_date(self._text(task, "Finish")),
+                "planned_duration_days": self._parse_duration(self._text(task, "Duration")),
+                "wbs_code": self._text(task, "WBS"),
+                "actual_start_date": self._parse_date(self._text(task, "ActualStart")),
+                "actual_finish_date": self._parse_date(self._text(task, "ActualFinish")),
+                "physical_pct_complete": self._parse_float(self._text(task, "PercentComplete")) or 0,
+                "activity_status": self._normalize_status(task),
+            })
+
+        dependencies: list[dict] = []
+        for task in tasks:
+            succ_uid = self._text(task, "UID")
+            succ_code = self._uid_to_code.get(succ_uid or "")
+            for link in self._findall_local(task, "PredecessorLink"):
+                pred_uid = self._text(link, "PredecessorUID")
+                pred_code = self._uid_to_code.get(pred_uid or "")
+                if not pred_code or not succ_code:
+                    continue
+                dependencies.append({
+                    "predecessor_code": pred_code,
+                    "successor_code": succ_code,
+                    "dependency_type": self._normalize_dep_type(self._text(link, "Type")),
+                    "lag_days": self._parse_lag(self._text(link, "Lag")),
+                })
+
+        return activities, dependencies
+
+    @staticmethod
+    def _findall_local(root: ET.Element, name: str) -> list[ET.Element]:
+        return [element for element in root.iter() if element.tag.split('}')[-1] == name]
+
+    @staticmethod
+    def _text(node: ET.Element, child_name: str) -> Optional[str]:
+        for child in node:
+            if child.tag.split('}')[-1] == child_name:
+                text_value = child.text.strip() if child.text else ""
+                return text_value or None
+        return None
+
+    @staticmethod
+    def _parse_date(s: Optional[str]) -> Optional[date]:
+        if not s:
+            return None
+        for fmt in (
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%d",
+            "%Y-%m-%dT%H:%M:%S%z",
+        ):
+            try:
+                return datetime.strptime(s, fmt).date()
+            except ValueError:
+                continue
+        try:
+            return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _parse_duration(s: Optional[str]) -> Optional[float]:
+        if not s:
+            return None
+        match = re.match(r"^PT(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$", s.strip())
+        if not match:
+            return None
+        hours = float(match.group(1) or 0)
+        minutes = float(match.group(2) or 0)
+        seconds = float(match.group(3) or 0)
+        return (hours + minutes / 60.0 + seconds / 3600.0) / 8.0
+
+    @staticmethod
+    def _parse_lag(s: Optional[str]) -> float:
+        duration = MSProjectXMLParser._parse_duration(s)
+        return duration or 0.0
+
+    @staticmethod
+    def _parse_float(s: Optional[str]) -> Optional[float]:
+        if s is None or not str(s).strip():
+            return None
+        try:
+            return float(str(s).strip())
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _normalize_dep_type(raw_type: Optional[str]) -> str:
+        mapping = {"0": "FS", "1": "SS", "2": "FF", "3": "SF"}
+        if raw_type is None:
+            return "FS"
+        return mapping.get(str(raw_type).strip(), "FS")
+
+    @staticmethod
+    def _normalize_status(task: ET.Element) -> str:
+        percent = MSProjectXMLParser._parse_float(MSProjectXMLParser._text(task, "PercentComplete")) or 0
+        if percent >= 100:
+            return "completed"
+        if percent > 0:
+            return "in_progress"
+        if MSProjectXMLParser._text(task, "ActualStart"):
+            return "in_progress"
+        return "not_started"
+
+
+# ============================================================================
 # MPP IMPORTER (MS Project)
 # ============================================================================
 
@@ -462,8 +617,13 @@ def import_file(file_path: str, package_id: int, schedule_name: str,
         activities, deps = parser.parse()
         result = load_schedule_to_db(package_id, schedule_name, activities, deps,
                                       'csv_import', file_path, user_id, db_url, warnings)
+    elif ext == 'xml':
+        parser = MSProjectXMLParser(file_path)
+        activities, deps = parser.parse()
+        result = load_schedule_to_db(package_id, schedule_name, activities, deps,
+                                      'xml_import', file_path, user_id, db_url, warnings)
     else:
-        raise ValueError(f"Unsupported format: {ext}. Use .xer, .mpp, or .csv")
+        raise ValueError(f"Unsupported format: {ext}. Use .xer, .mpp, .csv, or .xml")
 
     # Run CPM
     from .cpm_engine import run_cpm
@@ -475,7 +635,7 @@ def import_file(file_path: str, package_id: int, schedule_name: str,
 if __name__ == "__main__":
     import argparse, json, sys
     p = argparse.ArgumentParser()
-    p.add_argument("file", help="Path to .xer/.mpp/.csv")
+    p.add_argument("file", help="Path to .xer/.mpp/.csv/.xml")
     p.add_argument("--package-id", type=int, required=True)
     p.add_argument("--name", default="Imported Schedule")
     p.add_argument("--user-id", type=int, default=1)
@@ -508,6 +668,11 @@ if __name__ == "__main__":
                             'dependency_type': d['dependency_type'], 'lag_days': d['lag_days']})
         result = load_schedule_to_db(args.package_id, args.name, activities, deps,
                                      'xer_import', args.file, args.user_id, args.db, warnings)
+    elif ext == 'xml':
+        parser = MSProjectXMLParser(args.file)
+        activities, deps = parser.parse()
+        result = load_schedule_to_db(args.package_id, args.name, activities, deps,
+                                     'xml_import', args.file, args.user_id, args.db, warnings)
     else:
         print(f"Unsupported: {ext}"); sys.exit(1)
 

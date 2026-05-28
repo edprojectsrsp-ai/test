@@ -744,9 +744,9 @@ function ImportModal({ onClose, onImported }: any) {
           <div className="space-y-3">
             <div>
               <label className="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5 font-mono">Schedule File</label>
-              <input type="file" accept=".xer,.mpp,.csv" onChange={e => setFile(e.target.files?.[0] || null)}
+              <input type="file" accept=".xer,.mpp,.csv,.xml" onChange={e => setFile(e.target.files?.[0] || null)}
                 className="w-full text-sm file:mr-3 file:py-2 file:px-3 file:rounded file:border-0 file:bg-fuchsia-500/20 file:text-fuchsia-200" />
-              <p className="text-xs text-zinc-500 mt-1">Accepts .xer (Primavera P6), .mpp (MS Project), .csv</p>
+              <p className="text-xs text-zinc-500 mt-1">Accepts .xer (Primavera P6), .mpp (MS Project), .csv, .xml</p>
             </div>
 
             <div>
@@ -874,4 +874,3 @@ function DelayAnalysisPanel({ scheduleId, onClose }: any) {
     </motion.div>
   );
 }
-
