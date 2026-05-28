@@ -30,7 +30,7 @@ export default function InteractiveSchemeVault() {
   const [formData, setFormData] = useState<any>(null);
 
   useEffect(() => {
-    fetch(`http://localhost:8000/api/v1/schemes/${id}/vault`)
+    fetch(`http://localhost:8002/api/v1/schemes/${id}/vault`)
       .then(res => res.json())
       .then(data => {
         setFormData({
@@ -77,7 +77,7 @@ export default function InteractiveSchemeVault() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch(`http://localhost:8000/api/v1/schemes/${id}/vault`, {
+      const response = await fetch(`http://localhost:8002/api/v1/schemes/${id}/vault`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(formData)

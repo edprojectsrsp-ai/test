@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
@@ -12,7 +12,7 @@ import {
   ArrowLeft,
 } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/v1/view";
+const API_URL = "http://localhost:8002/api/v1/view";
 
 type SchemeRow = {
   scheme_id: string | number;
@@ -349,3 +349,4 @@ export default function CorporateProgressDashboard() {
     </div>
   );
 }
+

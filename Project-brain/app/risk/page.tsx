@@ -1,9 +1,9 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, CheckCircle2, ShieldQuestion, Flame, TrendingDown, DollarSign, Clock, RefreshCw } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8002";
 
 type Indicator = { key: string; label: string; level: string; score: number; action: string };
 type HeatmapItem = {
@@ -51,7 +51,7 @@ export default function RiskHeatmapPage() {
             <Flame className="w-8 h-8 text-red-400" />
             <h1 className="text-3xl font-bold">Risk Heatmap</h1>
             <span className="px-2 py-0.5 text-xs font-mono rounded bg-red-500/20 text-red-300 border border-red-500/30">
-              SPRINT 7 · INTELLIGENCE
+              SPRINT 7 Â· INTELLIGENCE
             </span>
           </div>
           <p className="text-zinc-400 mb-6">
@@ -133,3 +133,4 @@ function StatCard({ label, value, color, icon }: { label: string; value: number;
     </div>
   );
 }
+

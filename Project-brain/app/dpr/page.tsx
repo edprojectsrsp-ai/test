@@ -1,11 +1,11 @@
-"use client";
+﻿"use client";
 
 /**
- * DPR — Daily Progress Reports
+ * DPR â€” Daily Progress Reports
  *
  * Two modes, toggle at the top:
- *   1. Legacy  — one report per (scheme, date). Unchanged from before.
- *   2. Multi-Entry (Sprint 14a) — many entries per day, each with GPS, area,
+ *   1. Legacy  â€” one report per (scheme, date). Unchanged from before.
+ *   2. Multi-Entry (Sprint 14a) â€” many entries per day, each with GPS, area,
  *      photos. Used for capturing separate site visits during the day.
  */
 
@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 import { jwtDecode } from "jwt-decode";
 
-const API_URL = "http://localhost:8000/api/v1";
-const BACKEND_ORIGIN = "http://localhost:8000"; // for /uploads/...
+const API_URL = "http://localhost:8002/api/v1";
+const BACKEND_ORIGIN = "http://localhost:8002"; // for /uploads/...
 
 // =============================================================================
 // Shared types
@@ -68,7 +68,7 @@ type V2Entry = {
 };
 
 // =============================================================================
-// Page shell — scheme picker, mode toggle, then either pane
+// Page shell â€” scheme picker, mode toggle, then either pane
 // =============================================================================
 export default function DPREntry() {
   const [schemes, setSchemes] = useState<Scheme[]>([]);
@@ -184,7 +184,7 @@ export default function DPREntry() {
 }
 
 // =============================================================================
-// LEGACY PANE — preserves original behavior verbatim, only refactored into
+// LEGACY PANE â€” preserves original behavior verbatim, only refactored into
 // a child component so the toggle can swap it out.
 // =============================================================================
 function LegacyPane({
@@ -449,7 +449,7 @@ function LegacyPane({
                           <div className="flex items-center gap-2">
                             <span className="text-xs text-zinc-500">{act.progress_pct}% done</span>
                             <span className="rounded bg-zinc-900 px-2 py-0.5 text-xs text-zinc-600">
-                              {act.uom || "—"}
+                              {act.uom || "â€”"}
                             </span>
                           </div>
                         </div>
@@ -626,7 +626,7 @@ function MultiEntryPane({
           <span>Site Feed</span>
           {entries.length > 0 && (
             <span className="text-sm font-normal text-zinc-500">
-              {entries.length} entries · {grouped.length} days
+              {entries.length} entries Â· {grouped.length} days
             </span>
           )}
         </h3>
@@ -833,7 +833,7 @@ function NewEntryForm({
         </div>
       </div>
 
-      {/* Area combobox — datalist gives free-typing + suggestions out of the box */}
+      {/* Area combobox â€” datalist gives free-typing + suggestions out of the box */}
       <div>
         <label className="mb-2 flex items-center gap-2 text-sm text-zinc-400">
           <Layers className="h-4 w-4 text-amber-400" /> Area Name
@@ -873,7 +873,7 @@ function NewEntryForm({
           >
             {gpsLoading ? (
               <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Acquiring…
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Acquiringâ€¦
               </>
             ) : gps ? (
               <>
@@ -893,7 +893,7 @@ function NewEntryForm({
               lng: <span className="text-cyan-300">{gps.lng.toFixed(6)}</span>
             </div>
             {gps.acc != null && (
-              <div className="mt-0.5 text-zinc-500">±{Math.round(gps.acc)} m</div>
+              <div className="mt-0.5 text-zinc-500">Â±{Math.round(gps.acc)} m</div>
             )}
           </div>
         ) : (
@@ -1020,7 +1020,7 @@ function NewEntryForm({
       >
         {submitting ? (
           <>
-            <Loader2 className="h-5 w-5 animate-spin" /> Saving…
+            <Loader2 className="h-5 w-5 animate-spin" /> Savingâ€¦
           </>
         ) : (
           <>
@@ -1118,7 +1118,7 @@ function EntryCard({
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
             {created && <span>{created}</span>}
-            {entry.created_by && <span>· by {entry.created_by}</span>}
+            {entry.created_by && <span>Â· by {entry.created_by}</span>}
             <a
               href={mapsHref}
               target="_blank"
@@ -1128,7 +1128,7 @@ function EntryCard({
               <MapPin className="h-3 w-3" />
               {entry.gps_lat.toFixed(5)}, {entry.gps_lng.toFixed(5)}
               {entry.gps_accuracy_m != null && (
-                <span className="text-zinc-500">±{Math.round(entry.gps_accuracy_m)}m</span>
+                <span className="text-zinc-500">Â±{Math.round(entry.gps_accuracy_m)}m</span>
               )}
             </a>
           </div>
@@ -1230,3 +1230,4 @@ function EntryCard({
     </motion.div>
   );
 }
+

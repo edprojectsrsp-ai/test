@@ -1,9 +1,9 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { CheckCircle, File as FileIcon, FolderGit2, UploadCloud } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/v1";
+const API_URL = "http://localhost:8002/api/v1";
 
 type Scheme = {
   id: number;
@@ -131,3 +131,4 @@ export default function DocumentVault() {
     </div>
   );
 }
+

@@ -1,30 +1,52 @@
 """
-Project Brain — Plan Engine API Router (GOD MODE v2.1)
-Sprint 2: Master Plan Engine
+Project Brain — Plan Engine API Router — REWRITTEN against LIVE t5 schema.
 
-Handles:
-  - Progress plans (create / lock / supersede)
-  - Plan activities (rows in the planner grid)
-  - Monthly plan entries (the actual cells of the planner grid)
-  - Daily actuals submission (site-engineer entry)
-  - Calculation engine: planned %, actual %, deviation per package & per scheme
+The previous version used t3 columns that do not exist in t5
+(progress_plan_id, plan_status, weightage, plan_activity_id,
+contract_start_month, expected_completion_month, effective_month, locked_at,
+locked_by, activity_start_date, activity_finish_date, display_order,
+plan_month, daily_actuals.package_id/submitted_by). Every query would error.
 
+t5 mapping (old -> real):
+  progress_plan_id        -> plan_id
+  plan_status             -> is_current/is_locked (no status column; we expose
+                             a synthetic "plan_status" string for the frontend:
+                             'locked' if is_locked else 'draft')
+  weightage               -> weight_pct
+  plan_activity_id        -> activity_id
+  contract_start_month    -> plan_start_date
+  expected_completion_month -> plan_end_date
+  effective_month         -> stored in extra_fields['effective_month']
+  locked_at / locked_by   -> not in t5; locked_at synthesised from updated_at
+  activity_start_date     -> planned_start_date
+  activity_finish_date    -> planned_finish_date
+  display_order           -> sort_order
+  plan_month              -> month_date  (MUST be first-of-month; enforced)
+  daily_actuals.package_id/submitted_by -> entered_by / entered_via (no pkg col)
+  uom (text)              -> uom_id (we keep a text 'uom' in the response from
+                             extra_fields or null; the planner shows it as label)
+
+RESPONSE COMPATIBILITY: every response still returns the OLD field names the
+existing frontend expects (progress_plan_id, weightage, plan_activity_id,
+plan_status, contract_start_month, etc.) as ALIASES, so app/progress/plan-engine/
+page.tsx keeps working unchanged. New t5 names are included alongside.
+
+Mounted at /api/v1/plan-engine (see main.py).
 Place at: project-brain-backend/app/api/v1/plan_engine.py
 """
 
-from datetime import date, datetime, timedelta
+import json
+from datetime import date, datetime
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import text, and_, func
+from sqlalchemy import text
 from app.core.database import get_db
 
 router = APIRouter()
 
 
-# ============================================================================
-# HELPER UTILITIES
-# ============================================================================
 def _date(d):
     return d.isoformat() if d else None
 
@@ -33,213 +55,212 @@ def _num(n):
     return float(n) if n is not None else None
 
 
+def _first_of_month(s):
+    """Coerce 'YYYY-MM-01' or 'YYYY-MM-DD' to first-of-month date."""
+    if not s:
+        return None
+    if isinstance(s, date):
+        return date(s.year, s.month, 1)
+    d = date.fromisoformat(str(s)[:10])
+    return date(d.year, d.month, 1)
+
+
 def _month_range(start: date, end: date):
-    """Yield first-of-month dates from start to end inclusive."""
     if not start or not end:
         return
     cur = date(start.year, start.month, 1)
     end_m = date(end.year, end.month, 1)
     while cur <= end_m:
         yield cur
-        # advance one month
-        if cur.month == 12:
-            cur = date(cur.year + 1, 1, 1)
-        else:
-            cur = date(cur.year, cur.month + 1, 1)
+        cur = date(cur.year + 1, 1, 1) if cur.month == 12 else date(cur.year, cur.month + 1, 1)
+
+
+def _status_of(is_locked):
+    return "locked" if is_locked else "draft"
 
 
 # ============================================================================
-# 1) GET /packages/{package_id}/plans  → list all plans for a package
+# 1) GET /packages/{package_id}/plans
 # ============================================================================
 @router.get("/packages/{package_id}/plans")
 def list_plans(package_id: int, db: Session = Depends(get_db)):
-    """Return all progress plans for a package, with activity counts."""
     sql = text("""
         SELECT
-            pp.progress_plan_id,
-            pp.package_id,
-            pp.plan_name,
-            pp.plan_version,
-            pp.financial_year,
-            pp.plan_status,
-            pp.is_locked,
-            pp.contract_start_month,
-            pp.expected_completion_month,
-            pp.effective_month,
-            pp.created_at,
-            pp.locked_at,
-            COUNT(pa.plan_activity_id) AS activity_count,
-            COALESCE(SUM(pa.weightage), 0) AS total_weightage
+            pp.plan_id, pp.package_id, pp.plan_name, pp.plan_version,
+            pp.financial_year, pp.is_current, pp.is_locked,
+            pp.plan_start_date, pp.plan_end_date, pp.extra_fields,
+            pp.created_at, pp.updated_at,
+            COUNT(pa.activity_id) AS activity_count,
+            COALESCE(SUM(pa.weight_pct), 0) AS total_weightage
         FROM progress_plans pp
-        LEFT JOIN plan_activities pa ON pa.progress_plan_id = pp.progress_plan_id
-        WHERE pp.package_id = :pkg_id
-        GROUP BY pp.progress_plan_id
-        ORDER BY pp.created_at DESC
+        LEFT JOIN plan_activities pa
+               ON pa.plan_id = pp.plan_id AND pa.is_deleted = FALSE
+        WHERE pp.package_id = :pkg_id AND pp.is_deleted = FALSE
+        GROUP BY pp.plan_id
+        ORDER BY pp.is_current DESC, pp.created_at DESC
     """)
     rows = db.execute(sql, {"pkg_id": package_id}).fetchall()
 
-    return [{
-        "progress_plan_id": r.progress_plan_id,
-        "package_id": r.package_id,
-        "plan_name": r.plan_name,
-        "plan_version": r.plan_version,
-        "financial_year": r.financial_year,
-        "plan_status": r.plan_status,
-        "is_locked": r.is_locked,
-        "contract_start_month": _date(r.contract_start_month),
-        "expected_completion_month": _date(r.expected_completion_month),
-        "effective_month": _date(r.effective_month),
-        "created_at": _date(r.created_at) if r.created_at else None,
-        "locked_at": _date(r.locked_at) if r.locked_at else None,
-        "activity_count": r.activity_count or 0,
-        "total_weightage": float(r.total_weightage or 0),
-        "weightage_ok": abs(float(r.total_weightage or 0) - 100.0) < 0.01,
-    } for r in rows]
+    out = []
+    for r in rows:
+        ef = r.extra_fields or {}
+        out.append({
+            # legacy aliases
+            "progress_plan_id": r.plan_id,
+            "plan_status": _status_of(r.is_locked),
+            "contract_start_month": _date(r.plan_start_date),
+            "expected_completion_month": _date(r.plan_end_date),
+            "effective_month": ef.get("effective_month") or _date(r.plan_start_date),
+            "locked_at": _date(r.updated_at) if r.is_locked else None,
+            "total_weightage": float(r.total_weightage or 0),
+            "weightage_ok": abs(float(r.total_weightage or 0) - 100.0) < 0.01,
+            # t5 names
+            "plan_id": r.plan_id,
+            "package_id": r.package_id,
+            "plan_name": r.plan_name,
+            "plan_version": r.plan_version,
+            "financial_year": r.financial_year,
+            "is_current": r.is_current,
+            "is_locked": r.is_locked,
+            "plan_start_date": _date(r.plan_start_date),
+            "plan_end_date": _date(r.plan_end_date),
+            "created_at": _date(r.created_at),
+            "activity_count": r.activity_count or 0,
+        })
+    return out
 
 
 # ============================================================================
-# 2) POST /packages/{package_id}/plans  → create a new plan
+# 2) POST /packages/{package_id}/plans
 # ============================================================================
 @router.post("/packages/{package_id}/plans")
 def create_plan(package_id: int, data: dict, db: Session = Depends(get_db)):
-    """Create a new progress plan for a package."""
     try:
-        # Auto-increment plan_version
         max_v = db.execute(
-            text("SELECT COALESCE(MAX(plan_version), 0) FROM progress_plans WHERE package_id = :pid"),
+            text("SELECT COALESCE(MAX(plan_version::int), 0) FROM progress_plans WHERE package_id = :pid"),
             {"pid": package_id}
         ).scalar()
+        new_v = int(max_v or 0) + 1
 
-        plan_name = data.get("plan_name") or f"Plan v{int(max_v) + 1}"
+        # Default plan name to the financial year if provided, else version.
+        fy = data.get("financial_year")
+        plan_name = data.get("plan_name") or (f"FY{fy}" if fy else f"Plan v{new_v}")
 
-        sql = text("""
+        # de-current siblings so the new one is the live plan
+        db.execute(text("""
+            UPDATE progress_plans SET is_current = FALSE
+            WHERE package_id = :pid AND is_current = TRUE AND is_deleted = FALSE
+        """), {"pid": package_id})
+
+        ef = {}
+        if data.get("effective_month") or data.get("contract_start_month"):
+            ef["effective_month"] = data.get("effective_month") or data.get("contract_start_month")
+
+        new_id = db.execute(text("""
             INSERT INTO progress_plans (
-                package_id, plan_name, plan_version, financial_year, plan_status,
-                contract_start_month, expected_completion_month, effective_month,
-                created_by, created_at
+                package_id, plan_name, plan_type, plan_version, financial_year,
+                is_current, is_locked, plan_start_date, plan_end_date,
+                extra_fields, is_deleted, created_by, created_at, updated_at
             ) VALUES (
-                :pid, :name, :ver, :fy, 'draft',
-                :start_m, :end_m, :eff_m,
-                :uid, CURRENT_TIMESTAMP
+                :pid, :name, 'execution', :ver, :fy,
+                TRUE, FALSE, :start_m, :end_m,
+                CAST(:ef AS jsonb), FALSE, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            RETURNING progress_plan_id
-        """)
-        result = db.execute(sql, {
-            "pid": package_id,
-            "name": plan_name,
-            "ver": int(max_v) + 1,
-            "fy": data.get("financial_year"),
-            "start_m": data.get("contract_start_month"),
-            "end_m": data.get("expected_completion_month"),
-            "eff_m": data.get("effective_month") or data.get("contract_start_month"),
-            "uid": 1,
-        })
-        new_id = result.scalar()
+            RETURNING plan_id
+        """), {
+            "pid": package_id, "name": plan_name, "ver": str(new_v), "fy": fy,
+            "start_m": data.get("contract_start_month") or data.get("plan_start_date"),
+            "end_m": data.get("expected_completion_month") or data.get("plan_end_date"),
+            "ef": json.dumps(ef),
+        }).scalar()
         db.commit()
-
-        return {"progress_plan_id": new_id, "plan_name": plan_name, "plan_version": int(max_v) + 1}
+        return {"progress_plan_id": new_id, "plan_id": new_id,
+                "plan_name": plan_name, "plan_version": new_v}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Plan creation failed: {e}")
 
 
 # ============================================================================
-# 3) GET /plans/{plan_id}/full  → full planner grid (activities + monthly + actuals)
+# 3) GET /plans/{plan_id}/full
 # ============================================================================
 @router.get("/plans/{plan_id}/full")
 def get_plan_full(plan_id: int, db: Session = Depends(get_db)):
-    """
-    Returns full planner grid:
-      - plan header
-      - activities (rows)
-      - monthly columns
-      - monthly_plan_entries (cells)
-      - daily actuals aggregated by activity-month (filled-in cells)
-    """
-    # ---- 1. plan header ----
-    header_sql = text("""
-        SELECT progress_plan_id, package_id, plan_name, plan_version,
-               financial_year, plan_status, is_locked,
-               contract_start_month, expected_completion_month, effective_month,
-               created_at, locked_at
-        FROM progress_plans
-        WHERE progress_plan_id = :pid
-    """)
-    h = db.execute(header_sql, {"pid": plan_id}).first()
+    h = db.execute(text("""
+        SELECT plan_id, package_id, plan_name, plan_version, financial_year,
+               is_current, is_locked, plan_start_date, plan_end_date,
+               extra_fields, created_at, updated_at
+        FROM progress_plans WHERE plan_id = :pid
+    """), {"pid": plan_id}).first()
     if not h:
         raise HTTPException(status_code=404, detail="Plan not found")
 
-    # ---- 2. activities ----
-    act_sql = text("""
-        SELECT plan_activity_id, activity_name, uom, scope_qty, weightage,
-               actuals_till_last_fy, activity_start_date, activity_finish_date,
-               display_order
-        FROM plan_activities
-        WHERE progress_plan_id = :pid
-        ORDER BY display_order, plan_activity_id
-    """)
-    activities = db.execute(act_sql, {"pid": plan_id}).fetchall()
+    activities = db.execute(text("""
+        SELECT pa.activity_id, pa.activity_name, pa.uom_id, u.uom_name,
+               pa.scope_qty, pa.weight_pct, pa.actuals_till_last_fy,
+               pa.planned_start_date, pa.planned_finish_date,
+               pa.expected_finish_date, pa.sort_order, pa.appendix2_item_id
+        FROM plan_activities pa
+        LEFT JOIN uom_master u ON u.uom_id = pa.uom_id
+        WHERE pa.plan_id = :pid AND pa.is_deleted = FALSE
+        ORDER BY pa.sort_order, pa.activity_id
+    """), {"pid": plan_id}).fetchall()
 
-    # ---- 3. month columns from plan range ----
     months = []
-    if h.contract_start_month and h.expected_completion_month:
-        months = [m.isoformat() for m in _month_range(h.contract_start_month, h.expected_completion_month)]
+    if h.plan_start_date and h.plan_end_date:
+        months = [m.isoformat() for m in _month_range(h.plan_start_date, h.plan_end_date)]
 
-    # ---- 4. monthly planned cells ----
-    mp_sql = text("""
-        SELECT plan_activity_id, plan_month, planned_qty
-        FROM monthly_plan_entries
-        WHERE plan_activity_id IN (
-            SELECT plan_activity_id FROM plan_activities WHERE progress_plan_id = :pid
-        )
-    """)
+    # planned cells (row_type='plan')
     monthly_cells = {}
-    for row in db.execute(mp_sql, {"pid": plan_id}).fetchall():
-        key = f"{row.plan_activity_id}|{row.plan_month.isoformat()}"
-        monthly_cells[key] = float(row.planned_qty or 0)
+    for row in db.execute(text("""
+        SELECT activity_id, month_date, planned_qty
+        FROM monthly_plan_entries
+        WHERE activity_id IN (SELECT activity_id FROM plan_activities WHERE plan_id = :pid)
+          AND row_type = 'plan'
+    """), {"pid": plan_id}).fetchall():
+        monthly_cells[f"{row.activity_id}|{row.month_date.isoformat()}"] = float(row.planned_qty or 0)
 
-    # ---- 5. actuals aggregated to month ----
-    act_sum_sql = text("""
-        SELECT
-            plan_activity_id,
-            DATE_TRUNC('month', actual_date)::date AS actual_month,
-            SUM(actual_qty) AS month_actual
-        FROM daily_actuals
-        WHERE plan_activity_id IN (
-            SELECT plan_activity_id FROM plan_activities WHERE progress_plan_id = :pid
-        )
-        GROUP BY plan_activity_id, DATE_TRUNC('month', actual_date)
-    """)
+    # actuals aggregated to month
     actual_cells = {}
-    for row in db.execute(act_sum_sql, {"pid": plan_id}).fetchall():
-        key = f"{row.plan_activity_id}|{row.actual_month.isoformat()}"
-        actual_cells[key] = float(row.month_actual or 0)
+    for row in db.execute(text("""
+        SELECT activity_id, DATE_TRUNC('month', actual_date)::date AS am,
+               SUM(actual_qty) AS q
+        FROM daily_actuals
+        WHERE activity_id IN (SELECT activity_id FROM plan_activities WHERE plan_id = :pid)
+        GROUP BY activity_id, DATE_TRUNC('month', actual_date)
+    """), {"pid": plan_id}).fetchall():
+        actual_cells[f"{row.activity_id}|{row.am.isoformat()}"] = float(row.q or 0)
 
+    ef = h.extra_fields or {}
     return {
         "header": {
-            "progress_plan_id": h.progress_plan_id,
-            "package_id": h.package_id,
-            "plan_name": h.plan_name,
-            "plan_version": h.plan_version,
-            "financial_year": h.financial_year,
-            "plan_status": h.plan_status,
-            "is_locked": h.is_locked,
-            "contract_start_month": _date(h.contract_start_month),
-            "expected_completion_month": _date(h.expected_completion_month),
-            "effective_month": _date(h.effective_month),
-            "created_at": _date(h.created_at) if h.created_at else None,
-            "locked_at": _date(h.locked_at) if h.locked_at else None,
+            "progress_plan_id": h.plan_id, "plan_id": h.plan_id,
+            "package_id": h.package_id, "plan_name": h.plan_name,
+            "plan_version": h.plan_version, "financial_year": h.financial_year,
+            "plan_status": _status_of(h.is_locked), "is_locked": h.is_locked,
+            "is_current": h.is_current,
+            "contract_start_month": _date(h.plan_start_date),
+            "expected_completion_month": _date(h.plan_end_date),
+            "plan_start_date": _date(h.plan_start_date),
+            "plan_end_date": _date(h.plan_end_date),
+            "effective_month": ef.get("effective_month") or _date(h.plan_start_date),
+            "created_at": _date(h.created_at),
+            "locked_at": _date(h.updated_at) if h.is_locked else None,
         },
         "activities": [{
-            "plan_activity_id": a.plan_activity_id,
+            "plan_activity_id": a.activity_id, "activity_id": a.activity_id,
             "activity_name": a.activity_name,
-            "uom": a.uom,
+            "uom": a.uom_name or "", "uom_id": a.uom_id,
             "scope_qty": float(a.scope_qty or 0),
-            "weightage": float(a.weightage or 0),
+            "weightage": float(a.weight_pct or 0), "weight_pct": float(a.weight_pct or 0),
             "actuals_till_last_fy": float(a.actuals_till_last_fy or 0),
-            "activity_start_date": _date(a.activity_start_date),
-            "activity_finish_date": _date(a.activity_finish_date),
-            "display_order": a.display_order or 0,
+            "activity_start_date": _date(a.planned_start_date),
+            "activity_finish_date": _date(a.planned_finish_date),
+            "planned_start_date": _date(a.planned_start_date),
+            "planned_finish_date": _date(a.planned_finish_date),
+            "expected_finish_date": _date(a.expected_finish_date),
+            "appendix2_item_id": a.appendix2_item_id,
+            "display_order": a.sort_order or 0, "sort_order": a.sort_order or 0,
         } for a in activities],
         "months": months,
         "monthly_cells": monthly_cells,
@@ -248,50 +269,45 @@ def get_plan_full(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 4) POST /plans/{plan_id}/activities  → add an activity row
+# 4) POST /plans/{plan_id}/activities
 # ============================================================================
 @router.post("/plans/{plan_id}/activities")
 def add_activity(plan_id: int, data: dict, db: Session = Depends(get_db)):
     try:
-        plan = db.execute(
-            text("SELECT package_id, is_locked FROM progress_plans WHERE progress_plan_id = :pid"),
-            {"pid": plan_id}
-        ).first()
+        plan = db.execute(text("SELECT is_locked FROM progress_plans WHERE plan_id = :pid"),
+                          {"pid": plan_id}).first()
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
         if plan.is_locked:
             raise HTTPException(status_code=403, detail="Plan is locked. Create a new version.")
 
-        # Auto display_order
         max_order = db.execute(
-            text("SELECT COALESCE(MAX(display_order), 0) FROM plan_activities WHERE progress_plan_id = :pid"),
-            {"pid": plan_id}
-        ).scalar()
+            text("SELECT COALESCE(MAX(sort_order),0) FROM plan_activities WHERE plan_id = :pid"),
+            {"pid": plan_id}).scalar()
 
-        sql = text("""
+        new_id = db.execute(text("""
             INSERT INTO plan_activities (
-                progress_plan_id, package_id, activity_name, uom, scope_qty,
-                weightage, actuals_till_last_fy, activity_start_date,
-                activity_finish_date, display_order
+                plan_id, activity_name, scope_qty, weight_pct, actuals_till_last_fy,
+                planned_start_date, planned_finish_date, sort_order, is_deleted,
+                extra_fields, created_at, updated_at
             ) VALUES (
-                :pid, :pkg, :name, :uom, :qty, :wt, :last_fy, :start, :finish, :order
+                :pid, :name, :qty, :wt, :last_fy,
+                :start, :finish, :order, FALSE, '{}'::jsonb,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
             )
-            RETURNING plan_activity_id
-        """)
-        new_id = db.execute(sql, {
+            RETURNING activity_id
+        """), {
             "pid": plan_id,
-            "pkg": plan.package_id,
             "name": data.get("activity_name", "New Activity"),
-            "uom": data.get("uom", "Nos"),
             "qty": data.get("scope_qty", 0),
-            "wt": data.get("weightage", 10),
+            "wt": data.get("weightage", data.get("weight_pct", 10)),
             "last_fy": data.get("actuals_till_last_fy", 0),
-            "start": data.get("activity_start_date"),
-            "finish": data.get("activity_finish_date"),
-            "order": int(max_order) + 10,
+            "start": data.get("activity_start_date") or data.get("planned_start_date"),
+            "finish": data.get("activity_finish_date") or data.get("planned_finish_date"),
+            "order": int(max_order or 0) + 10,
         }).scalar()
         db.commit()
-        return {"plan_activity_id": new_id}
+        return {"plan_activity_id": new_id, "activity_id": new_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -300,38 +316,42 @@ def add_activity(plan_id: int, data: dict, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 5) PUT /activities/{activity_id}  → update activity row
+# 5) PUT /activities/{activity_id}
 # ============================================================================
 @router.put("/activities/{activity_id}")
 def update_activity(activity_id: int, data: dict, db: Session = Depends(get_db)):
     try:
-        # check lock
         lock = db.execute(text("""
-            SELECT pp.is_locked
-            FROM plan_activities pa
-            JOIN progress_plans pp ON pp.progress_plan_id = pa.progress_plan_id
-            WHERE pa.plan_activity_id = :id
+            SELECT pp.is_locked FROM plan_activities pa
+            JOIN progress_plans pp ON pp.plan_id = pa.plan_id
+            WHERE pa.activity_id = :id
         """), {"id": activity_id}).scalar()
         if lock:
             raise HTTPException(status_code=403, detail="Plan is locked")
 
-        updatable = [
-            "activity_name", "uom", "scope_qty", "weightage",
-            "actuals_till_last_fy", "activity_start_date",
-            "activity_finish_date", "display_order"
-        ]
-        sets = []
-        params = {"id": activity_id}
-        for k in updatable:
-            if k in data:
-                sets.append(f"{k} = :{k}")
-                params[k] = data[k]
+        # map legacy -> t5 columns
+        field_map = {
+            "activity_name": "activity_name",
+            "scope_qty": "scope_qty",
+            "weightage": "weight_pct", "weight_pct": "weight_pct",
+            "actuals_till_last_fy": "actuals_till_last_fy",
+            "activity_start_date": "planned_start_date", "planned_start_date": "planned_start_date",
+            "activity_finish_date": "planned_finish_date", "planned_finish_date": "planned_finish_date",
+            "expected_finish_date": "expected_finish_date",
+            "display_order": "sort_order", "sort_order": "sort_order",
+        }
+        sets, params, seen = [], {"id": activity_id}, set()
+        for incoming, col in field_map.items():
+            if incoming in data and col not in seen:
+                sets.append(f"{col} = :{col}")
+                params[col] = data[incoming]
+                seen.add(col)
         if not sets:
             return {"ok": True, "noop": True}
-
-        db.execute(text(f"UPDATE plan_activities SET {', '.join(sets)} WHERE plan_activity_id = :id"), params)
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        db.execute(text(f"UPDATE plan_activities SET {', '.join(sets)} WHERE activity_id = :id"), params)
         db.commit()
-        return {"ok": True, "plan_activity_id": activity_id}
+        return {"ok": True, "plan_activity_id": activity_id, "activity_id": activity_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -340,21 +360,20 @@ def update_activity(activity_id: int, data: dict, db: Session = Depends(get_db))
 
 
 # ============================================================================
-# 6) DELETE /activities/{activity_id}
+# 6) DELETE /activities/{activity_id}  (soft delete)
 # ============================================================================
 @router.delete("/activities/{activity_id}")
 def delete_activity(activity_id: int, db: Session = Depends(get_db)):
     try:
         lock = db.execute(text("""
-            SELECT pp.is_locked
-            FROM plan_activities pa
-            JOIN progress_plans pp ON pp.progress_plan_id = pa.progress_plan_id
-            WHERE pa.plan_activity_id = :id
+            SELECT pp.is_locked FROM plan_activities pa
+            JOIN progress_plans pp ON pp.plan_id = pa.plan_id
+            WHERE pa.activity_id = :id
         """), {"id": activity_id}).scalar()
         if lock:
             raise HTTPException(status_code=403, detail="Plan is locked")
-
-        db.execute(text("DELETE FROM plan_activities WHERE plan_activity_id = :id"), {"id": activity_id})
+        db.execute(text("UPDATE plan_activities SET is_deleted = TRUE WHERE activity_id = :id"),
+                   {"id": activity_id})
         db.commit()
         return {"ok": True}
     except HTTPException:
@@ -365,20 +384,13 @@ def delete_activity(activity_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 7) PUT /plans/{plan_id}/cells  → bulk update monthly_plan_entries
+# 7) PUT /plans/{plan_id}/cells  → upsert monthly_plan_entries (row_type='plan')
 # ============================================================================
 @router.put("/plans/{plan_id}/cells")
 def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
-    """
-    Bulk update planner grid cells.
-    Payload: { cells: [ {plan_activity_id, plan_month: "YYYY-MM-01", planned_qty: float}, ... ] }
-    Upserts each cell.
-    """
     try:
-        plan = db.execute(
-            text("SELECT package_id, is_locked FROM progress_plans WHERE progress_plan_id = :pid"),
-            {"pid": plan_id}
-        ).first()
+        plan = db.execute(text("SELECT is_locked FROM progress_plans WHERE plan_id = :pid"),
+                          {"pid": plan_id}).first()
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
         if plan.is_locked:
@@ -388,23 +400,19 @@ def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
         if not isinstance(cells, list):
             raise HTTPException(status_code=400, detail="`cells` must be a list")
 
-        upsert_sql = text("""
-            INSERT INTO monthly_plan_entries (plan_activity_id, package_id, plan_month, planned_qty)
-            VALUES (:aid, :pkg, :month, :qty)
-            ON CONFLICT (plan_activity_id, plan_month)
-            DO UPDATE SET planned_qty = EXCLUDED.planned_qty
+        upsert = text("""
+            INSERT INTO monthly_plan_entries (activity_id, month_date, planned_qty, row_type, created_at, updated_at)
+            VALUES (:aid, :month, :qty, 'plan', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (activity_id, month_date, row_type)
+            DO UPDATE SET planned_qty = EXCLUDED.planned_qty, updated_at = CURRENT_TIMESTAMP
         """)
         written = 0
         for c in cells:
-            qty = float(c.get("planned_qty") or 0)
-            db.execute(upsert_sql, {
-                "aid": c["plan_activity_id"],
-                "pkg": plan.package_id,
-                "month": c["plan_month"],
-                "qty": qty,
-            })
+            aid = c.get("plan_activity_id") or c.get("activity_id")
+            month = _first_of_month(c.get("plan_month") or c.get("month_date"))
+            db.execute(upsert, {"aid": aid, "month": month.isoformat() if month else None,
+                                "qty": float(c.get("planned_qty") or 0)})
             written += 1
-
         db.commit()
         return {"ok": True, "cells_written": written}
     except HTTPException:
@@ -415,33 +423,24 @@ def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 8) POST /plans/{plan_id}/lock  → lock the plan as baseline
+# 8) POST /plans/{plan_id}/lock
 # ============================================================================
 @router.post("/plans/{plan_id}/lock")
 def lock_plan(plan_id: int, db: Session = Depends(get_db)):
-    """Lock a plan. Validates weightages sum to 100."""
     try:
         total_wt = db.execute(
-            text("SELECT COALESCE(SUM(weightage), 0) FROM plan_activities WHERE progress_plan_id = :pid"),
-            {"pid": plan_id}
-        ).scalar()
-
+            text("SELECT COALESCE(SUM(weight_pct),0) FROM plan_activities WHERE plan_id = :pid AND is_deleted = FALSE"),
+            {"pid": plan_id}).scalar()
         if abs(float(total_wt or 0) - 100.0) > 0.01:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot lock: weightages sum to {total_wt}, not 100"
-            )
+            raise HTTPException(status_code=400, detail=f"Cannot lock: weightages sum to {total_wt}, not 100")
 
         db.execute(text("""
-            UPDATE progress_plans
-            SET is_locked = TRUE,
-                plan_status = 'locked',
-                locked_at = CURRENT_TIMESTAMP,
-                locked_by = 1
-            WHERE progress_plan_id = :pid
+            UPDATE progress_plans SET is_locked = TRUE, updated_at = CURRENT_TIMESTAMP
+            WHERE plan_id = :pid
         """), {"pid": plan_id})
         db.commit()
-        return {"ok": True, "is_locked": True, "locked_at": datetime.utcnow().isoformat()}
+        return {"ok": True, "is_locked": True, "plan_status": "locked",
+                "locked_at": datetime.utcnow().isoformat()}
     except HTTPException:
         raise
     except Exception as e:
@@ -450,50 +449,44 @@ def lock_plan(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 9) POST /plans/{plan_id}/unlock  → admin re-open
+# 9) POST /plans/{plan_id}/unlock
 # ============================================================================
 @router.post("/plans/{plan_id}/unlock")
 def unlock_plan(plan_id: int, db: Session = Depends(get_db)):
     try:
         db.execute(text("""
-            UPDATE progress_plans
-            SET is_locked = FALSE, plan_status = 'draft', locked_at = NULL, locked_by = NULL
-            WHERE progress_plan_id = :pid
+            UPDATE progress_plans SET is_locked = FALSE, updated_at = CURRENT_TIMESTAMP
+            WHERE plan_id = :pid
         """), {"pid": plan_id})
         db.commit()
-        return {"ok": True, "is_locked": False}
+        return {"ok": True, "is_locked": False, "plan_status": "draft"}
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================================================
-# 10) POST /activities/{activity_id}/daily-actual  → site engineer entry
+# 10) POST /activities/{activity_id}/daily-actual
 # ============================================================================
 @router.post("/activities/{activity_id}/daily-actual")
 def add_daily_actual(activity_id: int, data: dict, db: Session = Depends(get_db)):
-    """Site engineer enters today's actual quantity."""
     try:
-        # Get package_id
-        pkg = db.execute(
-            text("SELECT package_id FROM plan_activities WHERE plan_activity_id = :id"),
-            {"id": activity_id}
-        ).scalar()
-        if not pkg:
+        exists = db.execute(text("SELECT 1 FROM plan_activities WHERE activity_id = :id"),
+                            {"id": activity_id}).scalar()
+        if not exists:
             raise HTTPException(status_code=404, detail="Activity not found")
 
-        sql = text("""
-            INSERT INTO daily_actuals (plan_activity_id, package_id, actual_date, actual_qty, remarks, submitted_by)
-            VALUES (:aid, :pkg, :dt, :qty, :rmk, :uid)
+        new_id = db.execute(text("""
+            INSERT INTO daily_actuals (activity_id, actual_date, actual_qty, remarks,
+                                       entered_by, entered_via, created_at, updated_at)
+            VALUES (:aid, :dt, :qty, :rmk, 1, :via, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             RETURNING daily_actual_id
-        """)
-        new_id = db.execute(sql, {
+        """), {
             "aid": activity_id,
-            "pkg": pkg,
             "dt": data.get("actual_date", date.today().isoformat()),
             "qty": float(data.get("actual_qty", 0)),
             "rmk": data.get("remarks"),
-            "uid": 1,
+            "via": data.get("entered_via", "web"),
         }).scalar()
         db.commit()
         return {"daily_actual_id": new_id, "ok": True}
@@ -509,93 +502,58 @@ def add_daily_actual(activity_id: int, data: dict, db: Session = Depends(get_db)
 # ============================================================================
 @router.get("/packages/{package_id}/progress")
 def get_package_progress(package_id: int, as_of: Optional[str] = None, db: Session = Depends(get_db)):
-    """
-    The MOS calculation engine.
-    For the active locked plan, returns:
-      - planned %    = weighted sum of (planned-to-date / scope_qty)
-      - actual %     = weighted sum of (actuals-to-date / scope_qty)
-      - deviation    = planned - actual
-      - per-activity breakdown
-    """
     as_of_date = date.fromisoformat(as_of) if as_of else date.today()
 
-    # Find active locked plan
     plan = db.execute(text("""
-        SELECT progress_plan_id, plan_name, plan_version
+        SELECT plan_id, plan_name, plan_version
         FROM progress_plans
-        WHERE package_id = :pid AND is_locked = TRUE AND plan_status = 'locked'
-        ORDER BY plan_version DESC LIMIT 1
+        WHERE package_id = :pid AND is_locked = TRUE AND is_deleted = FALSE
+        ORDER BY is_current DESC, plan_version::int DESC LIMIT 1
     """), {"pid": package_id}).first()
 
     if not plan:
-        return {
-            "package_id": package_id,
-            "has_active_plan": False,
-            "message": "No locked plan for this package",
-            "planned_pct": 0, "actual_pct": 0, "deviation_pct": 0,
-            "activities": [],
-        }
+        return {"package_id": package_id, "has_active_plan": False,
+                "message": "No locked plan for this package",
+                "planned_pct": 0, "actual_pct": 0, "deviation_pct": 0, "activities": []}
 
-    # Per-activity: planned and actual qty as of date
-    sql = text("""
-        SELECT
-            pa.plan_activity_id, pa.activity_name, pa.uom,
-            pa.scope_qty, pa.weightage, pa.actuals_till_last_fy,
-            COALESCE((
-                SELECT SUM(planned_qty) FROM monthly_plan_entries
-                WHERE plan_activity_id = pa.plan_activity_id
-                  AND plan_month <= :as_of
-            ), 0) AS planned_qty_to_date,
-            COALESCE((
-                SELECT SUM(actual_qty) FROM daily_actuals
-                WHERE plan_activity_id = pa.plan_activity_id
-                  AND actual_date <= :as_of
-            ), 0) AS actual_qty_to_date
+    rows = db.execute(text("""
+        SELECT pa.activity_id, pa.activity_name, pa.scope_qty, pa.weight_pct,
+               pa.actuals_till_last_fy,
+               COALESCE((SELECT SUM(planned_qty) FROM monthly_plan_entries
+                         WHERE activity_id = pa.activity_id AND row_type='plan'
+                           AND month_date <= :as_of), 0) AS planned_qty_to_date,
+               COALESCE((SELECT SUM(actual_qty) FROM daily_actuals
+                         WHERE activity_id = pa.activity_id
+                           AND actual_date <= :as_of), 0) AS actual_qty_to_date
         FROM plan_activities pa
-        WHERE pa.progress_plan_id = :pid
-        ORDER BY pa.display_order
-    """)
-    rows = db.execute(sql, {"pid": plan.progress_plan_id, "as_of": as_of_date}).fetchall()
+        WHERE pa.plan_id = :pid AND pa.is_deleted = FALSE
+        ORDER BY pa.sort_order
+    """), {"pid": plan.plan_id, "as_of": as_of_date}).fetchall()
 
-    activities = []
-    weighted_plan = 0.0
-    weighted_actual = 0.0
-
+    activities, weighted_plan, weighted_actual = [], 0.0, 0.0
     for r in rows:
         scope = float(r.scope_qty or 0)
-        wt = float(r.weightage or 0)
+        wt = float(r.weight_pct or 0)
         plan_qty = float(r.planned_qty_to_date or 0)
         act_qty = float(r.actual_qty_to_date or 0) + float(r.actuals_till_last_fy or 0)
-
-        plan_pct = (plan_qty / scope * 100) if scope > 0 else 0
-        act_pct = (act_qty / scope * 100) if scope > 0 else 0
-        plan_pct = min(plan_pct, 100)
-        act_pct = min(act_pct, 100)
-
+        plan_pct = min((plan_qty / scope * 100) if scope > 0 else 0, 100)
+        act_pct = min((act_qty / scope * 100) if scope > 0 else 0, 100)
         weighted_plan += plan_pct * (wt / 100)
         weighted_actual += act_pct * (wt / 100)
-
         activities.append({
-            "plan_activity_id": r.plan_activity_id,
-            "activity_name": r.activity_name,
-            "uom": r.uom,
-            "scope_qty": scope,
-            "weightage": wt,
-            "planned_qty_to_date": plan_qty,
-            "actual_qty_to_date": act_qty,
-            "planned_pct": round(plan_pct, 2),
-            "actual_pct": round(act_pct, 2),
+            "plan_activity_id": r.activity_id, "activity_id": r.activity_id,
+            "activity_name": r.activity_name, "scope_qty": scope,
+            "weightage": wt, "weight_pct": wt,
+            "planned_qty_to_date": plan_qty, "actual_qty_to_date": act_qty,
+            "planned_pct": round(plan_pct, 2), "actual_pct": round(act_pct, 2),
             "deviation_pct": round(plan_pct - act_pct, 2),
         })
 
     return {
-        "package_id": package_id,
-        "has_active_plan": True,
-        "plan_name": plan.plan_name,
-        "plan_version": plan.plan_version,
+        "package_id": package_id, "has_active_plan": True,
+        "plan_name": plan.plan_name, "plan_version": plan.plan_version,
         "as_of": as_of_date.isoformat(),
-        "planned_pct": round(weighted_plan, 2),
-        "actual_pct": round(weighted_actual, 2),
+        "planned_pct": round(weighted_plan, 2), "actual_pct": round(weighted_actual, 2),
         "deviation_pct": round(weighted_plan - weighted_actual, 2),
         "status": "ahead" if weighted_actual > weighted_plan else ("on_track" if abs(weighted_plan - weighted_actual) < 2 else "behind"),
         "activities": activities,
@@ -603,51 +561,51 @@ def get_package_progress(package_id: int, as_of: Optional[str] = None, db: Sessi
 
 
 # ============================================================================
-# 12) GET /schemes/{scheme_id}/progress  → roll up to scheme level
+# 12) GET /schemes/{scheme_id}/progress  → scheme rollup
 # ============================================================================
 @router.get("/schemes/{scheme_id}/progress")
 def get_scheme_progress(scheme_id: int, as_of: Optional[str] = None, db: Session = Depends(get_db)):
-    """
-    Roll up package progress to scheme level using package_value_cr as weight.
-    """
     as_of_date = date.fromisoformat(as_of) if as_of else date.today()
 
     packages = db.execute(text("""
-        SELECT package_id, package_name, package_value_cr, is_scheme_mirror
+        SELECT package_id, package_name, package_value_cr, package_estimate_cr,
+               extra_fields, is_scheme_mirror
         FROM packages WHERE scheme_id = :sid AND is_deleted = FALSE
     """), {"sid": scheme_id}).fetchall()
 
     if not packages:
         return {"scheme_id": scheme_id, "has_packages": False, "packages": []}
 
-    total_value = sum(float(p.package_value_cr or 0) for p in packages)
-    pkg_results = []
-    weighted_plan = 0.0
-    weighted_actual = 0.0
+    def _wt(p):
+        ef = p.extra_fields or {}
+        if isinstance(ef, dict) and ef.get("scheme_rollup_weight") not in (None, ""):
+            try:
+                v = float(ef["scheme_rollup_weight"])
+                if v > 0:
+                    return v
+            except (TypeError, ValueError):
+                pass
+        return float(p.package_value_cr or p.package_estimate_cr or 0)
 
+    total_w = sum(_wt(p) for p in packages) or 0
+    pkg_results, weighted_plan, weighted_actual = [], 0.0, 0.0
     for p in packages:
         prog = get_package_progress(p.package_id, as_of_date.isoformat(), db)
-        wt = (float(p.package_value_cr or 0) / total_value * 100) if total_value > 0 else (100.0 / len(packages))
-
+        w = _wt(p)
+        share = (w / total_w * 100) if total_w > 0 else (100.0 / len(packages))
         pkg_results.append({
-            "package_id": p.package_id,
-            "package_name": p.package_name,
+            "package_id": p.package_id, "package_name": p.package_name,
             "package_value_cr": float(p.package_value_cr or 0),
-            "weight_in_scheme": round(wt, 2),
-            "planned_pct": prog["planned_pct"],
-            "actual_pct": prog["actual_pct"],
-            "deviation_pct": prog["deviation_pct"],
-            "has_plan": prog["has_active_plan"],
+            "weight_in_scheme": round(share, 2),
+            "planned_pct": prog["planned_pct"], "actual_pct": prog["actual_pct"],
+            "deviation_pct": prog["deviation_pct"], "has_plan": prog["has_active_plan"],
         })
-
         if prog["has_active_plan"]:
-            weighted_plan += prog["planned_pct"] * (wt / 100)
-            weighted_actual += prog["actual_pct"] * (wt / 100)
+            weighted_plan += prog["planned_pct"] * (share / 100)
+            weighted_actual += prog["actual_pct"] * (share / 100)
 
     return {
-        "scheme_id": scheme_id,
-        "has_packages": True,
-        "as_of": as_of_date.isoformat(),
+        "scheme_id": scheme_id, "has_packages": True, "as_of": as_of_date.isoformat(),
         "scheme_planned_pct": round(weighted_plan, 2),
         "scheme_actual_pct": round(weighted_actual, 2),
         "scheme_deviation_pct": round(weighted_plan - weighted_actual, 2),

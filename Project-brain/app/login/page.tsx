@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useState } from "react";
 import { ArrowRight, Lock, User } from "lucide-react";
@@ -14,7 +14,7 @@ export default function Login() {
     formData.append("password", password);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/auth/login", {
+      const res = await fetch("http://localhost:8002/api/v1/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: formData,
@@ -39,7 +39,7 @@ export default function Login() {
 
       <div className="z-10 w-full max-w-md rounded-3xl border border-zinc-800 bg-zinc-900 p-10 shadow-2xl backdrop-blur-xl">
         <div className="mb-8 flex flex-col items-center">
-          <div className="mb-4 text-6xl drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">🧠</div>
+          <div className="mb-4 text-6xl drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">ðŸ§ </div>
           <h1 className="text-3xl font-bold tracking-tight text-white">PROJECT BRAIN</h1>
           <p className="text-sm text-cyan-400">Secure Authentication Protocol</p>
         </div>
@@ -77,3 +77,4 @@ export default function Login() {
     </div>
   );
 }
+

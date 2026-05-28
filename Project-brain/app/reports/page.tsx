@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LineChart, Table, FileText, Bot } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/v1/view";
+const API_URL = "http://localhost:8002/api/v1/view";
 
 type SchemeRow = {
   scheme_id: string | number;
@@ -79,3 +79,4 @@ export default function ReportsHub() {
     </div>
   );
 }
+

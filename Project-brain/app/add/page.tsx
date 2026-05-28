@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
@@ -6,7 +6,7 @@ import { AlertTriangle, ArrowRight, CheckCircle, Save, SkipForward, UploadCloud 
 import { useMos } from "@/components/brain/MosContext";
 import Link from "next/link"; // Added for routing to bulk upload
 
-const API_URL = "http://localhost:8000/api/v1/schemes";
+const API_URL = "http://localhost:8002/api/v1/schemes";
 
 type SchemeType = "corporate" | "plant" | "dummy";
 type SchemeStatus = "under_formulation" | "under_stage1" | "under_tendering" | "under_stage2" | "ongoing" | "closed";
@@ -88,11 +88,11 @@ export default function AddSchemeWizard() {
     if (val >= 30) {
       setType("corporate");
       setTypeGlow("ring-4 ring-cyan-400");
-      speakAndChat(`Cost is ${val} Cr. I suggest Corporate AMR. Pre-selected for you.`, "💡");
+      speakAndChat(`Cost is ${val} Cr. I suggest Corporate AMR. Pre-selected for you.`, "ðŸ’¡");
     } else if (val > 0 && val < 30) {
       setType("plant");
       setTypeGlow("ring-4 ring-emerald-400");
-      speakAndChat(`Cost is ${val} Cr. This is Plant AMR. Updated type for you.`, "🌱");
+      speakAndChat(`Cost is ${val} Cr. This is Plant AMR. Updated type for you.`, "ðŸŒ±");
     }
     setTimeout(() => setTypeGlow(""), 1500);
   };
@@ -125,7 +125,7 @@ export default function AddSchemeWizard() {
             if (isExact) return alert("Exact name already exists! Please choose another.");
 
             setSimilarNames(data.matches);
-            speakAndChat("Wait! I found similar names in the database. Please review them before proceeding.", "⚠️");
+            speakAndChat("Wait! I found similar names in the database. Please review them before proceeding.", "âš ï¸");
             return;
           }
         }
@@ -251,7 +251,7 @@ export default function AddSchemeWizard() {
                     type="text"
                     value={name}
                     onFocus={(e) =>
-                      focusField(e, "The Scheme Name must be unique. I will scan the database when you continue — be specific!", "😊")
+                      focusField(e, "The Scheme Name must be unique. I will scan the database when you continue â€” be specific!", "ðŸ˜Š")
                     }
                     onChange={(event) => {
                       setName(event.target.value);
@@ -272,7 +272,7 @@ export default function AddSchemeWizard() {
                       focusField(
                         e,
                         "What is the estimated cost? I will help you pick the right scheme type based on this.",
-                        "🤔"
+                        "ðŸ¤”"
                       )
                     }
                     onBlur={checkCostLogic}
@@ -287,7 +287,7 @@ export default function AddSchemeWizard() {
                   {/* DROPDOWN FIX: Added solid background to select, and explicitly styled options */}
                   <select
                     value={type}
-                    onFocus={(e) => focusField(e, "Select the type. Did you see my recommendation?", "💡")}
+                    onFocus={(e) => focusField(e, "Select the type. Did you see my recommendation?", "ðŸ’¡")}
                     onChange={(event) => setType(event.target.value as SchemeType)}
                     className={`glass-input w-full cursor-pointer rounded-2xl border border-zinc-700 bg-zinc-800 px-5 py-4 text-lg text-white outline-none transition-all focus:border-cyan-400 ${typeGlow}`}
                   >
@@ -305,8 +305,8 @@ export default function AddSchemeWizard() {
                     onFocus={(e) =>
                       focusField(
                         e,
-                        "⚠️ Warning: Please fill the scheme status carefully. This dictates the entire project workflow!",
-                        "⚠️"
+                        "âš ï¸ Warning: Please fill the scheme status carefully. This dictates the entire project workflow!",
+                        "âš ï¸"
                       )
                     }
                     onChange={(event) => setStatus(event.target.value as SchemeStatus)}

@@ -1,17 +1,14 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
   LayoutDashboard, AlertTriangle, CheckCircle, TrendingUp,
   IndianRupee, Layers, Clock, Building2, Bot, User, Send,
-  Wrench, Loader2,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
-import { useAIChat } from "@/lib/aiChat";
-import ProviderPicker from "@/components/ProviderPicker";
 
-const API = "http://localhost:8000/api/v1";
+const API = "http://localhost:8002/api/v1";
 
 type Summary = {
   total_schemes: number;
@@ -54,29 +51,11 @@ export default function DashboardPage() {
   const [cards, setCards] = useState<SchemeCard[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  // Sprint AI: shared chat hook. 'simple' mode = one-shot /brain/chat with the
-  // current dashboard summary as context. Streaming is reserved for the
-  // floating NeuralAssistant where the user starts a real conversation.
-  const dashboardContext = summary ? { summary, cards } : null;
-  const {
-    messages: chatMessages,
-    send: sendChat,
-    busy: isTyping,
-    taskType,
-    activeTool,
-    providers,
-    provider,
-    setProvider,
-    strict,
-    setStrict,
-  } = useAIChat({
-    mode: "simple",
-    context: dashboardContext,
-    greeting:
-      "Dashboard loaded. Ask me about delays, CAPEX status, or any specific project.",
-  });
+  const [chatMessages, setChatMessages] = useState([
+    { role: "ai", content: "Dashboard loaded. Ask me about delays, CAPEX status, or any specific project." },
+  ]);
   const [chatInput, setChatInput] = useState("");
+  const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -100,11 +79,31 @@ export default function DashboardPage() {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, isTyping]);
 
-  const sendMessage = () => {
-    if (!chatInput.trim() || isTyping) return;
-    const q = chatInput;
+  const sendMessage = async () => {
+    if (!chatInput.trim()) return;
+    const msg = chatInput;
+    setChatMessages((p) => [...p, { role: "user", content: msg }]);
     setChatInput("");
-    sendChat(q);
+    setIsTyping(true);
+    try {
+      const res = await fetch(`${API}/brain/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: msg, context: { summary, cards } }),
+      });
+      const data = await res.json();
+      setChatMessages((p) => [
+        ...p,
+        { role: "ai", content: data.reply || "No response from Neural Engine." },
+      ]);
+    } catch {
+      setChatMessages((p) => [
+        ...p,
+        { role: "ai", content: "Error connecting to Neural Engine." },
+      ]);
+    } finally {
+      setIsTyping(false);
+    }
   };
 
   if (loading) {
@@ -152,7 +151,7 @@ export default function DashboardPage() {
             Portfolio Dashboard
           </h1>
           <p className="text-zinc-400 text-sm mt-1">
-            Capital Projects · {summary?.current_fy}
+            Capital Projects Â· {summary?.current_fy}
           </p>
         </div>
         <div className="flex items-center gap-2 rounded-full border border-cyan-500/20 bg-cyan-500/5 px-4 py-2">
@@ -181,7 +180,7 @@ export default function DashboardPage() {
               },
               {
                 label: "Total CAPEX",
-                value: `₹${(summary?.total_cost_cr ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`,
+                value: `â‚¹${(summary?.total_cost_cr ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })} Cr`,
                 sub: "Portfolio value",
                 icon: IndianRupee,
                 border: "border-violet-500/30",
@@ -393,7 +392,7 @@ export default function DashboardPage() {
                             <div className="flex justify-between">
                               <span>Cost</span>
                               <span className="text-zinc-300 font-medium">
-                                ₹{card.cost_cr.toLocaleString("en-IN", { maximumFractionDigits: 2 })} Cr
+                                â‚¹{card.cost_cr.toLocaleString("en-IN", { maximumFractionDigits: 2 })} Cr
                               </span>
                             </div>
                           )}
@@ -431,24 +430,14 @@ export default function DashboardPage() {
         <div className="col-span-4 flex flex-col overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#09090b] shadow-[0_0_30px_rgba(34,211,238,0.05)] backdrop-blur-xl relative">
           <div className="absolute inset-0 bg-gradient-to-br from-[#09090b] to-[#082f49] opacity-50 z-0 pointer-events-none" />
 
-          <div className="relative z-10 border-b border-cyan-500/20 bg-black/40 p-4 backdrop-blur-md flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-500/20 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
-                <Bot className="h-5 w-5 text-cyan-400" />
-              </div>
-              <div className="flex-1">
-                <h2 className="font-semibold text-cyan-50">Neural Analyst</h2>
-                <p className="text-xs text-cyan-400/70">Context-Aware Portfolio Intelligence</p>
-              </div>
+          <div className="relative z-10 border-b border-cyan-500/20 bg-black/40 p-4 backdrop-blur-md flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-500/20 border border-cyan-400/50 shadow-[0_0_15px_rgba(34,211,238,0.4)]">
+              <Bot className="h-5 w-5 text-cyan-400" />
             </div>
-            <ProviderPicker
-              providers={providers}
-              value={provider}
-              onChange={setProvider}
-              strict={strict}
-              onStrictChange={setStrict}
-              compact
-            />
+            <div>
+              <h2 className="font-semibold text-cyan-50">Neural Analyst</h2>
+              <p className="text-xs text-cyan-400/70">Context-Aware Portfolio Intelligence</p>
+            </div>
           </div>
 
           <div className="relative z-10 flex-1 overflow-y-auto p-4 flex flex-col gap-4">
@@ -479,37 +468,7 @@ export default function DashboardPage() {
                       : "bg-cyan-950/40 text-cyan-50 border border-cyan-500/20 rounded-tl-none"
                   }`}
                 >
-                  <div className="whitespace-pre-wrap">
-                    {msg.content || (msg.pending ? "…" : "")}
-                  </div>
-                  {msg.role === "assistant" && msg.meta && (
-                    <div className="mt-2 pt-2 border-t border-cyan-900/40 flex flex-wrap gap-1.5 text-[10px] text-zinc-400">
-                      {msg.meta.provider && (
-                        <span
-                          className={`px-1.5 py-0.5 rounded font-mono ${
-                            msg.meta.degraded
-                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/30"
-                              : "bg-cyan-500/10 text-cyan-300 border border-cyan-500/20"
-                          }`}
-                        >
-                          {msg.meta.provider}
-                          {msg.meta.model ? ` · ${msg.meta.model}` : ""}
-                        </span>
-                      )}
-                      {msg.meta.tokens != null && <span>{msg.meta.tokens} tok</span>}
-                      {msg.meta.cost != null && msg.meta.cost > 0 && (
-                        <span>${msg.meta.cost.toFixed(4)}</span>
-                      )}
-                      {msg.meta.task_type && (
-                        <span className="text-zinc-500">[{msg.meta.task_type}]</span>
-                      )}
-                      {msg.meta.degraded && msg.meta.reason && (
-                        <span className="text-amber-400/80" title={msg.meta.reason}>
-                          degraded
-                        </span>
-                      )}
-                    </div>
-                  )}
+                  {msg.content}
                 </div>
               </motion.div>
             ))}
@@ -519,24 +478,10 @@ export default function DashboardPage() {
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-900/50 border border-cyan-500/30">
                   <Bot className="h-4 w-4 text-cyan-400" />
                 </div>
-                <div className="flex items-center gap-2 rounded-2xl rounded-tl-none bg-cyan-950/40 border border-cyan-500/20 px-3 py-2 text-[11px] text-cyan-300">
-                  {activeTool ? (
-                    <>
-                      <Wrench size={11} className="animate-pulse" />
-                      Calling tool: <span className="font-mono">{activeTool}</span>
-                    </>
-                  ) : taskType ? (
-                    <>
-                      <Loader2 size={11} className="animate-spin" />
-                      Thinking ({taskType})...
-                    </>
-                  ) : (
-                    <>
-                      <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400" />
-                      <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400 [animation-delay:75ms]" />
-                      <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400 [animation-delay:150ms]" />
-                    </>
-                  )}
+                <div className="flex items-center gap-1 rounded-2xl rounded-tl-none bg-cyan-950/40 border border-cyan-500/20 p-4">
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400" />
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400 [animation-delay:75ms]" />
+                  <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400 [animation-delay:150ms]" />
                 </div>
               </motion.div>
             )}
@@ -562,7 +507,7 @@ export default function DashboardPage() {
               </button>
             </div>
             <p className="mt-2 text-center text-[10px] text-zinc-500">
-              Project Brain LLM · Live dashboard context
+              Project Brain LLM Â· Live dashboard context
             </p>
           </div>
         </div>
@@ -570,3 +515,4 @@ export default function DashboardPage() {
     </div>
   );
 }
+

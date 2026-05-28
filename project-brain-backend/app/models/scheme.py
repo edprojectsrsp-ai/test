@@ -1,14 +1,26 @@
 """
-SQLAlchemy models for Project Brain — GOD MODE v2
-Matches the schema in godmode_v2_schema.sql exactly.
+SQLAlchemy models for Project Brain — reconciled to LIVE t5 schema
+(source of truth: pg_dump "Project Brain v4 — final form").
 
-Place this file at: project-brain-backend/app/models/scheme.py
-(Replaces the old scheme.py)
+Sprint 0 fix: every column, type, nullability and FK below was verified
+against the live dump. Differences from the previous (t3-era) file are
+documented in MODEL_RECONCILIATION_CHANGELOG.md.
+
+Notes on type choices:
+  * Postgres ENUM columns (scheme_type_enum, scheme_status_enum,
+    package_status_enum, tender_cycle_status_enum) are mapped as String here.
+    Reading/writing enum values as text works transparently in psycopg2/
+    SQLAlchemy and avoids importing a parallel set of Python enums. The DB
+    still enforces the allowed values via the column type.
+  * Audit columns (created_by/at, updated_by/at) match t5 exactly.
+  * extra_fields is JSONB NOT NULL DEFAULT '{}' everywhere it appears in t5.
+
+Place at: project-brain-backend/app/models/scheme.py
 """
 
 from sqlalchemy import (
-    Column, Integer, String, Text, Numeric, Date, DateTime, Boolean,
-    ForeignKey, ARRAY, UniqueConstraint, CheckConstraint, Index
+    Column, Integer, BigInteger, String, Text, Numeric, Date, DateTime, Boolean,
+    ForeignKey, ARRAY, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -17,9 +29,8 @@ from app.core.database import Base
 
 
 # ============================================================================
-# 1. USERS & PERMISSIONS
+# 1. USERS & PERMISSIONS  -> defined in app/models/user.py (no dup here)
 # ============================================================================
-# Defined in app/models/user.py in this repo (avoid duplicate table definitions).
 
 
 # ============================================================================
@@ -29,49 +40,55 @@ class UomMaster(Base):
     __tablename__ = "uom_master"
 
     uom_id = Column(Integer, primary_key=True, autoincrement=True)
-    uom_name = Column(String(50), unique=True, nullable=False)
-    description = Column(String(200))
-    is_active = Column(Boolean, default=True)
+    uom_code = Column(String(20), nullable=False)          # t5: was missing
+    uom_name = Column(String(100), nullable=False)          # t5: 100 not 50
+    uom_category = Column(String(50))                        # t5: was missing
+    is_active = Column(Boolean, nullable=False, default=True)
 
 
 class ActivityMasterGlobal(Base):
     __tablename__ = "activity_master_global"
 
-    activity_id = Column(Integer, primary_key=True, autoincrement=True)
+    activity_master_id = Column(Integer, primary_key=True, autoincrement=True)  # t5 PK name
     activity_name = Column(String(255), unique=True, nullable=False)
+    activity_category = Column(String(100))                  # t5: was missing
     default_uom_id = Column(Integer, ForeignKey("uom_master.uom_id"))
     default_weightage = Column(Numeric(5, 2), default=10.00)
-    is_active = Column(Boolean, default=True)
+    description = Column(Text)                               # t5: was missing
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())  # t5: was missing
 
 
 class CustomFieldDefinition(Base):
     __tablename__ = "custom_field_definitions"
 
-    custom_field_id = Column(Integer, primary_key=True, autoincrement=True)
-    section_name = Column(String(100), nullable=False)
+    field_def_id = Column(Integer, primary_key=True, autoincrement=True)  # t5 PK name
+    entity_type = Column(String(50), nullable=False)         # t5 (replaces section_name)
     field_key = Column(String(100), nullable=False)
     field_label = Column(String(200), nullable=False)
-    field_type = Column(String(20), nullable=False)
-    field_options = Column(JSONB)
-    usage_count = Column(Integer, default=0)
-    promoted_to_column = Column(Boolean, default=False)
-    created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    field_type = Column(String(30), nullable=False)          # t5: 30 not 20; CHECK enforced in DB
+    options = Column(JSONB)                                   # t5 (replaces field_options)
+    is_required = Column(Boolean, nullable=False, default=False)
+    sort_order = Column(Integer, nullable=False, default=0)
+    description = Column(Text)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
-    __table_args__ = (UniqueConstraint("section_name", "field_key"),)
+    __table_args__ = (UniqueConstraint("entity_type", "field_key"),)
 
 
 # ============================================================================
 # 3. SCHEME MASTER (the registry)
 # ============================================================================
 class Scheme(Base):
-    """The main scheme registry. Lean — lifecycle data lives in child tables."""
+    """Main scheme registry. Lifecycle data lives in versioned child tables."""
     __tablename__ = "scheme_master"
 
     scheme_id = Column(Integer, primary_key=True, autoincrement=True)
+    scheme_code = Column(String(50))                         # t5: was missing
     scheme_name = Column(String(500), nullable=False)
-    scheme_type = Column(String(20), nullable=False)
-    current_status = Column(String(30), nullable=False, default="under_formulation")
+    scheme_type = Column(String(20), nullable=False)         # enum scheme_type_enum (corporate/plant/dummy)
+    current_status = Column(String(30), nullable=False, default="under_formulation")  # enum scheme_status_enum
 
     wbs_element = Column(String(100))
     ipm_fa_code = Column(String(100))
@@ -81,31 +98,37 @@ class Scheme(Base):
     sanctioned_cost_cr = Column(Numeric(15, 4))
     anticipated_cost_cr = Column(Numeric(15, 4))
 
+    scheme_owner_id = Column(Integer, ForeignKey("users.user_id"))  # t5: was missing
     scheme_owner_name = Column(String(200))
     scheme_owner_designation = Column(String(200))
     steering_committee_chair = Column(String(200))
     finance_controller = Column(String(200))
 
-    has_multiple_packages = Column(Boolean, default=False)
-    is_active = Column(Boolean, default=True)
-    is_deleted = Column(Boolean, default=False)
+    planned_start_date = Column(Date)                        # t5: was missing
+    planned_completion_date = Column(Date)                   # t5: was missing
+    actual_start_date = Column(Date)                         # t5: was missing
+    actual_completion_date = Column(Date)                    # t5: was missing
 
-    extra_fields = Column(JSONB, default=dict)
+    has_multiple_packages = Column(Boolean, nullable=False, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
-    # Relationships
+    # Relationships (only to tables that EXIST in t5)
     packages = relationship("Package", back_populates="scheme", cascade="all, delete-orphan")
     formulations = relationship("SchemeFormulation", back_populates="scheme", cascade="all, delete-orphan")
     stage1_approvals = relationship("Stage1Approval", back_populates="scheme", cascade="all, delete-orphan")
     stage2_approvals = relationship("Stage2Approval", back_populates="scheme", cascade="all, delete-orphan")
-    monitoring_logs = relationship("MonitoringLog", back_populates="scheme", cascade="all, delete-orphan")
+    # NOTE: monitoring_log in t5 has NO scheme_id — relationship removed (was invalid).
 
 
 # ============================================================================
-# 4. FORMULATION HISTORY
+# 4. FORMULATION HISTORY  (versioned: revision_no + is_current)
 # ============================================================================
 class SchemeFormulation(Base):
     __tablename__ = "scheme_formulation"
@@ -116,31 +139,28 @@ class SchemeFormulation(Base):
     revision_no = Column(Integer, nullable=False, default=0)
     revision_label = Column(String(100))
     revision_reason = Column(Text)
-    is_current = Column(Boolean, default=True)
+    is_current = Column(Boolean, nullable=False, default=True)
 
     consultant_name = Column(String(300))
     consultant_acceptance_date = Column(Date)
-
     draft_fr_ts_date = Column(Date)
     final_fr_ts_ce_ec_date = Column(Date)
-
     pre_nit_meeting_date = Column(Date)
     pre_nit_participants = Column(Text)
-
     plant_pag_meeting_date = Column(Date)
     dic_approval_date = Column(Date)
     forwarded_to_corporate_date = Column(Date)
-
     cost_gross_cr = Column(Numeric(15, 4))
     cost_net_itc_cr = Column(Numeric(15, 4))
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
+    is_deleted = Column(Boolean, nullable=False, default=False)   # t5: was missing
 
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     scheme = relationship("Scheme", back_populates="formulations")
 
@@ -148,7 +168,7 @@ class SchemeFormulation(Base):
 
 
 # ============================================================================
-# 5. STAGE-I APPROVALS
+# 5. STAGE-I APPROVALS  (versioned)
 # ============================================================================
 class Stage1Approval(Base):
     __tablename__ = "stage1_approvals"
@@ -159,7 +179,7 @@ class Stage1Approval(Base):
     revision_no = Column(Integer, nullable=False, default=0)
     revision_label = Column(String(100))
     revision_reason = Column(Text)
-    is_current = Column(Boolean, default=True)
+    is_current = Column(Boolean, nullable=False, default=True)
 
     cod_date = Column(Date)
     independent_financial_appraisal_date = Column(Date)
@@ -167,7 +187,6 @@ class Stage1Approval(Base):
     chairman_approval_date = Column(Date)
     pcsb_date = Column(Date)
     sail_board_date = Column(Date)
-
     sanction_date = Column(Date)
     order_date = Column(Date)
     cost_gross_cr = Column(Numeric(15, 4))
@@ -175,12 +194,13 @@ class Stage1Approval(Base):
     implementation_period_months = Column(Integer)
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
+    is_deleted = Column(Boolean, nullable=False, default=False)   # t5: was missing
 
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     scheme = relationship("Scheme", back_populates="stage1_approvals")
 
@@ -188,7 +208,7 @@ class Stage1Approval(Base):
 
 
 # ============================================================================
-# 6. STAGE-II APPROVALS
+# 6. STAGE-II APPROVALS  (versioned)
 # ============================================================================
 class Stage2Approval(Base):
     __tablename__ = "stage2_approvals"
@@ -199,7 +219,7 @@ class Stage2Approval(Base):
     revision_no = Column(Integer, nullable=False, default=0)
     revision_label = Column(String(100))
     revision_reason = Column(Text)
-    is_current = Column(Boolean, default=True)
+    is_current = Column(Boolean, nullable=False, default=True)
 
     draft_board_note_date = Column(Date)
     proposal_to_co_date = Column(Date)
@@ -208,24 +228,23 @@ class Stage2Approval(Base):
     consultant_estimate_cr = Column(Numeric(15, 4))
     variance_vs_stage1_pct = Column(Numeric(8, 2))
     variance_vs_consultant_pct = Column(Numeric(8, 2))
-
     cod_date = Column(Date)
     pag_date = Column(Date)
     chairman_approval_date = Column(Date)
     pcsb_date = Column(Date)
     sail_board_date = Column(Date)
     empowered_committee_date = Column(Date)
-
     sanction_date = Column(Date)
     order_date = Column(Date)
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
+    is_deleted = Column(Boolean, nullable=False, default=False)   # t5: was missing
 
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     scheme = relationship("Scheme", back_populates="stage2_approvals")
 
@@ -242,10 +261,11 @@ class Package(Base):
     scheme_id = Column(Integer, ForeignKey("scheme_master.scheme_id", ondelete="CASCADE"), nullable=False)
 
     package_no = Column(Integer, nullable=False)
+    package_code = Column(String(50))                        # t5: was missing
     package_name = Column(String(500), nullable=False)
     package_scope = Column(Text)
     package_type = Column(String(50))
-    package_status = Column(String(30), nullable=False, default="planned")
+    package_status = Column(String(30), nullable=False, default="planned")  # enum package_status_enum
 
     package_estimate_cr = Column(Numeric(15, 4))
     package_value_cr = Column(Numeric(15, 4))
@@ -253,6 +273,7 @@ class Package(Base):
     linked_stage1_id = Column(Integer, ForeignKey("stage1_approvals.stage1_id"))
     linked_stage2_id = Column(Integer, ForeignKey("stage2_approvals.stage2_id"))
 
+    project_manager_id = Column(Integer, ForeignKey("users.user_id"))  # t5: was missing
     project_manager_name = Column(String(200))
     project_manager_email = Column(String(200))
     project_manager_phone = Column(String(50))
@@ -263,29 +284,33 @@ class Package(Base):
     safety_officer = Column(String(200))
     quality_officer = Column(String(200))
     site_location = Column(String(300))
-    start_date_actual = Column(Date)
 
-    is_scheme_mirror = Column(Boolean, default=False)
-    is_deleted = Column(Boolean, default=False)
+    planned_start_date = Column(Date)                        # t5: was missing
+    planned_end_date = Column(Date)                          # t5: was missing
+    start_date_actual = Column(Date)
+    completion_date_actual = Column(Date)                    # t5: was missing
+
+    is_scheme_mirror = Column(Boolean, nullable=False, default=False)
+    is_deleted = Column(Boolean, nullable=False, default=False)
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
-
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     scheme = relationship("Scheme", back_populates="packages")
     tender_cycles = relationship("TenderCycle", back_populates="package", cascade="all, delete-orphan")
     contract = relationship("Contract", back_populates="package", uselist=False, cascade="all, delete-orphan")
-    completion = relationship("CompletionDetail", back_populates="package", uselist=False, cascade="all, delete-orphan")
+    # NOTE: completion relationship removed — completion_details table not in t5.
+    #       Package completion lives in completion_date_actual; closure in scheme_closure.
 
     __table_args__ = (UniqueConstraint("scheme_id", "package_no"),)
 
 
 # ============================================================================
-# 8. TENDER CYCLES & RELATED
+# 8. TENDER CYCLES & RELATED  (versioned: cycle_no + is_current + status)
 # ============================================================================
 class TenderCycle(Base):
     __tablename__ = "tender_cycles"
@@ -295,33 +320,36 @@ class TenderCycle(Base):
 
     cycle_no = Column(Integer, nullable=False)
     cycle_label = Column(String(100))
-    cycle_status = Column(String(30), nullable=False, default="active")
-    is_current = Column(Boolean, default=True)
+    cycle_status = Column(String(30), nullable=False, default="active")  # enum tender_cycle_status_enum
+    is_current = Column(Boolean, nullable=False, default=True)
 
     pr_initiation_date = Column(Date)
     pr_approval_date = Column(Date)
     mode_of_tender = Column(String(50))
     nit_number = Column(String(100))
     nit_date = Column(Date)
-
     pre_bid_date = Column(Date)
     pre_bid_participants = Column(Text)
-
     tod_original_date = Column(Date)
-
     offers_received_count = Column(Integer)
     bidder_names = Column(ARRAY(Text))
 
     cancellation_reason = Column(Text)
     cancellation_date = Column(Date)
+    rpn_issued = Column(Boolean, nullable=False, default=False)   # t5: was missing
+    rpn_date = Column(Date)                                       # t5: was missing
+    rpn_reason = Column(Text)                                     # t5: was missing
+    awarded_value_cr = Column(Numeric(15, 4))                    # t5: was missing
+    estimated_value_cr = Column(Numeric(15, 4))                  # t5: was missing
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
+    is_deleted = Column(Boolean, nullable=False, default=False)   # t5: was missing
 
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     package = relationship("Package", back_populates="tender_cycles")
     tod_extensions = relationship("TodExtension", back_populates="tender_cycle", cascade="all, delete-orphan")
@@ -342,9 +370,9 @@ class TodExtension(Base):
     extension_letter_no = Column(String(100))
     approved_by_date = Column(Date)
     reason = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     tender_cycle = relationship("TenderCycle", back_populates="tod_extensions")
 
@@ -371,11 +399,11 @@ class BidEvaluation(Base):
     techno_commercial_ineligible = Column(ARRAY(Text))
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     tender_cycle = relationship("TenderCycle", back_populates="bid_evaluation")
 
@@ -400,11 +428,11 @@ class PriceEvaluation(Base):
     tc_approval_date = Column(Date)
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     tender_cycle = relationship("TenderCycle", back_populates="price_evaluation")
 
@@ -426,11 +454,10 @@ class NegotiationRound(Base):
     is_final_round = Column(Boolean, default=False)
 
     remarks = Column(Text)
-    extra_fields = Column(JSONB, default=dict)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-    updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    # NOTE: t5 negotiation_rounds has NO updated_by/updated_at — removed (were invalid).
 
     tender_cycle = relationship("TenderCycle", back_populates="negotiation_rounds")
 
@@ -453,15 +480,16 @@ class Contract(Base):
     effective_date = Column(Date)
     contract_duration_months = Column(Integer)
     schedule_completion_date = Column(Date)
+    expected_completion_date = Column(Date)                  # t5: was missing (Sprint 17 col)
 
-    is_active = Column(Boolean, default=True)
-    is_deleted = Column(Boolean, default=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_deleted = Column(Boolean, nullable=False, default=False)
 
-    extra_fields = Column(JSONB, default=dict, nullable=False)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
     updated_by = Column(Integer, ForeignKey("users.user_id"))
-    updated_at = Column(DateTime, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     package = relationship("Package", back_populates="contract")
     amendments = relationship("ContractAmendment", back_populates="contract", cascade="all, delete-orphan")
@@ -480,9 +508,9 @@ class ContractAmendment(Base):
     value_change_cr = Column(Numeric(15, 4))
     reason = Column(Text)
 
-    extra_fields = Column(JSONB, default=dict, nullable=False)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
     created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
     contract = relationship("Contract", back_populates="amendments")
 
@@ -490,14 +518,20 @@ class ContractAmendment(Base):
 
 
 # ============================================================================
-# 10. COMPLETION
+# 10. COMPLETION (DORMANT)
 # ============================================================================
+# t5 has NO completion_details table. This class is retained ONLY so legacy
+# imports in schemes.py succeed; schemes.py guards every use with
+# _table_exists(db, "completion_details") which returns False on t5, so it is
+# never queried. Do not rely on this for new code — use packages.completion_*
+# columns and scheme_closure instead. Slated for removal once schemes.py drops
+# the import.
 class CompletionDetail(Base):
     __tablename__ = "completion_details"
+    __table_args__ = {"extend_existing": True}
 
     completion_id = Column(Integer, primary_key=True, autoincrement=True)
-    package_id = Column(Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), unique=True, nullable=False)
-
+    package_id = Column(Integer, unique=True, nullable=False)
     pac_date = Column(Date)
     commissioning_date = Column(Date)
     delay_analysis_approval_date = Column(Date)
@@ -506,39 +540,28 @@ class CompletionDetail(Base):
     fac_date = Column(Date)
     fac_payment_date = Column(Date)
     closure_date = Column(Date)
-
     remarks = Column(Text)
     extra_fields = Column(JSONB, default=dict)
-    created_by = Column(Integer, ForeignKey("users.user_id"))
+    created_by = Column(Integer)
     created_at = Column(DateTime, server_default=func.current_timestamp())
-    updated_by = Column(Integer, ForeignKey("users.user_id"))
+    updated_by = Column(Integer)
     updated_at = Column(DateTime, server_default=func.current_timestamp())
-
-    package = relationship("Package", back_populates="completion")
 
 
 # ============================================================================
-# 11. MONITORING LOG
+# 11. MONITORING LOG  (t5 = generic event log, NOT per-package progress log)
 # ============================================================================
 class MonitoringLog(Base):
     __tablename__ = "monitoring_log"
 
-    log_id = Column(Integer, primary_key=True, autoincrement=True)
-    scheme_id = Column(Integer, ForeignKey("scheme_master.scheme_id", ondelete="CASCADE"), nullable=False)
-    package_id = Column(Integer, ForeignKey("packages.package_id", ondelete="CASCADE"))
-
-    log_date = Column(Date, server_default=func.current_date(), nullable=False)
-    reason_for_delay = Column(Text)
-    issues = Column(Text)
-    action_taken = Column(Text)
-    progress_status = Column(Text)
-
-    extra_fields = Column(JSONB, default=dict)
-    created_by = Column(Integer, ForeignKey("users.user_id"))
-    created_at = Column(DateTime, server_default=func.current_timestamp())
-
-    scheme = relationship("Scheme", back_populates="monitoring_logs")
+    log_id = Column(BigInteger, primary_key=True, autoincrement=True)  # t5: bigint
+    event_type = Column(String(100), nullable=False)
+    severity = Column(String(20), default="info")
+    source = Column(String(100))
+    message = Column(Text)
+    payload = Column(JSONB)
+    occurred_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
 
 
-# Backward-compat alias used by legacy API modules
+# Backward-compat alias used by legacy API modules (schemes.py, god_api.py).
 SchemeMaster = Scheme

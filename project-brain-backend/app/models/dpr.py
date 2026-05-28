@@ -1,87 +1,72 @@
+"""
+DPR / field-observation models — remapped to LIVE t5 tables.
+
+Sprint 0 fix. The previous file defined dpr_entries / dpr_entries_v2 /
+dpr_photos / corporate_manpower_daily — NONE of which exist in t5. The real
+t5 home for geotagged field reports with photos is `field_observations`
+(it already has gps lat/lng + photo_urls[] + severity + resolution tracking).
+The quantity side of a daily report lives in `daily_actuals` (entered_via='dpr').
+
+Mapping:
+    DPREntryV2 (geotagged report + photos)  ->  field_observations
+    DPRPhoto  (separate photo rows)         ->  folded into photo_urls[] array
+    DPREntry  (legacy flat report)          ->  field_observations (observation_type='progress_update')
+    CorporateManpowerDaily                  ->  daily_actuals.manpower_count
+                                                (no separate table in t5)
+
+The dpr.py ROUTER must be rewritten (Chunk 2) to use FieldObservation; the
+aliases below only keep the import working until then.
+
+Place at: project-brain-backend/app/models/dpr.py
+"""
+
 from sqlalchemy import (
-    Column, Date, DateTime, Float, ForeignKey, Integer, String, Text,
+    Column, Integer, String, Text, Numeric, Date, DateTime, Boolean,
+    ForeignKey, ARRAY,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 
 from app.core.database import Base
 
 
+class FieldObservation(Base):
+    """
+    Geotagged field report. observation_type_enum values:
+      'progress_update' | 'issue' | 'safety_incident' | 'quality_issue'
+      | 'photo' | 'note'
+    severity uses risk_level_enum: 'green' | 'amber' | 'red' | 'unknown'.
+    """
+    __tablename__ = "field_observations"
+
+    observation_id = Column(Integer, primary_key=True, autoincrement=True)
+    package_id = Column(Integer, ForeignKey("packages.package_id", ondelete="CASCADE"), nullable=False)
+    activity_id = Column(Integer, ForeignKey("plan_activities.activity_id"))
+    observation_type = Column(String(30), nullable=False, default="note")
+    title = Column(String(300))
+    description = Column(Text, nullable=False)
+    severity = Column(String(10))  # risk_level_enum
+    photo_urls = Column(ARRAY(Text))
+    location_lat = Column(Numeric(10, 7))
+    location_lng = Column(Numeric(10, 7))
+    location_label = Column(String(200))
+    weather = Column(String(100))
+    observed_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    observed_by = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    is_resolved = Column(Boolean, nullable=False, default=False)
+    resolved_at = Column(DateTime)
+    resolved_by = Column(Integer, ForeignKey("users.user_id"))
+    resolution_notes = Column(Text)
+    extra_fields = Column(JSONB, nullable=False, default=dict)
+    is_deleted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+    updated_at = Column(DateTime, nullable=False, server_default=func.current_timestamp())
+
+
 # ============================================================================
-# Legacy DPR table — one row per (scheme, date). Kept for backward compat with
-# the existing /dpr endpoint and the "Legacy mode" toggle on the UI.
+# BACKWARD-COMPAT ALIASES (prevent ImportError until dpr.py router rewrite)
+# DO NOT write new code against these — column names differ from t5.
 # ============================================================================
-class DPREntry(Base):
-    __tablename__ = "dpr_entries"
-
-    id = Column(Integer, primary_key=True, index=True)
-    scheme_id = Column(Integer, ForeignKey("schemes.id"), nullable=False)
-    report_date = Column(Date, nullable=False)
-    weather = Column(String, default="Clear")
-    manpower = Column(Integer, default=0)
-    work_done = Column(Text, nullable=True)
-    issues = Column(Text, nullable=True)
-
-
-# ============================================================================
-# Sprint 14a — multi-entry DPR. Many rows per (scheme, date), each with its
-# own GPS, area, and zero-or-more photos.
-# ============================================================================
-class DPREntryV2(Base):
-    __tablename__ = "dpr_entries_v2"
-
-    id = Column(Integer, primary_key=True, index=True)
-    scheme_id = Column(Integer, ForeignKey("schemes.id"), nullable=False, index=True)
-    report_date = Column(Date, nullable=False, index=True)
-
-    area_name = Column(String(200), nullable=True)
-    gps_lat = Column(Float, nullable=False)
-    gps_lng = Column(Float, nullable=False)
-    gps_accuracy_m = Column(Float, nullable=True)
-
-    work_done = Column(Text, nullable=True)
-    issues = Column(Text, nullable=True)
-    weather = Column(String(40), default="Clear")
-    manpower = Column(Integer, default=0)
-
-    created_by = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    photos = relationship(
-        "DPRPhoto",
-        back_populates="entry",
-        cascade="all, delete-orphan",
-        order_by="DPRPhoto.id",
-    )
-
-
-class DPRPhoto(Base):
-    __tablename__ = "dpr_photos"
-
-    id = Column(Integer, primary_key=True, index=True)
-    dpr_entry_id = Column(
-        Integer,
-        ForeignKey("dpr_entries_v2.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    # Path relative to UPLOAD_DIR — e.g. "dpr/12/2026-05/abc123.jpg"
-    # Served at /uploads/<file_path>.
-    file_path = Column(String(500), nullable=False)
-    captured_at = Column(DateTime(timezone=True), server_default=func.now())
-
-    entry = relationship("DPREntryV2", back_populates="photos")
-
-
-class CorporateManpowerDaily(Base):
-    __tablename__ = "corporate_manpower_daily"
-
-    id = Column(Integer, primary_key=True, index=True)
-    scheme_id = Column(Integer, ForeignKey("schemes.id"))
-    record_date = Column(Date)
-    rsp_executives = Column(Integer, default=0)
-    rsp_non_executives = Column(Integer, default=0)
-    agency_executives = Column(Integer, default=0)
-    agency_non_executives = Column(Integer, default=0)
-    subcontractor_supervisors = Column(Integer, default=0)
-    subcontractor_labour = Column(Integer, default=0)
+DPREntry = FieldObservation
+DPREntryV2 = FieldObservation
+DPRPhoto = FieldObservation   # photos are now an array on the observation

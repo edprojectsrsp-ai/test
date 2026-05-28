@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -8,7 +8,7 @@ import {
   Filter, RefreshCw, FileUp, Plus, ChevronRight, Info
 } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8002";
 const USER_ID = 1;
 
 // ===========================================================================
@@ -48,7 +48,7 @@ type Schedule = {
   package_name: string; scheme_name: string;
 };
 
-// Date view config — each dimension picks its own colour and bar style
+// Date view config â€” each dimension picks its own colour and bar style
 const DATE_VIEWS: Record<DateView, { label: string; color: string; bg: string; getDates: (a: Activity) => [string?, string?] }> = {
   planned:    { label: "Planned",     color: "border-cyan-500",       bg: "bg-cyan-500/40",     getDates: (a) => [a.planned_start_date, a.planned_finish_date] },
   baseline:   { label: "Baseline",    color: "border-sky-400",        bg: "bg-sky-400/30",      getDates: (a) => [a.baseline_start_date, a.baseline_finish_date] },
@@ -162,7 +162,7 @@ export default function CPMPage() {
                 <h1 className="text-2xl font-bold tracking-tight">CPM Schedule Engine</h1>
                 <div className="flex items-center gap-2 text-xs text-zinc-500 font-mono">
                   <span className="px-2 py-0.5 rounded bg-fuchsia-500/10 text-fuchsia-300 border border-fuchsia-500/20">SPRINT 9B</span>
-                  <span>·</span><span>CRITICAL PATH METHOD · 7-DIMENSION DATES · XER/MPP/CSV</span>
+                  <span>Â·</span><span>CRITICAL PATH METHOD Â· 7-DIMENSION DATES Â· XER/MPP/CSV</span>
                 </div>
               </div>
             </div>
@@ -195,15 +195,15 @@ export default function CPMPage() {
               className="px-3 py-2 bg-zinc-900 border border-zinc-800 rounded-lg text-sm min-w-[300px]">
               {schedules.map(s =>
                 <option key={s.schedule_id} value={s.schedule_id}>
-                  {s.scheme_name} / {s.package_name} — {s.schedule_name}
+                  {s.scheme_name} / {s.package_name} â€” {s.schedule_name}
                 </option>
               )}
-              {!schedules.length && <option>No schedules — import one</option>}
+              {!schedules.length && <option>No schedules â€” import one</option>}
             </select>
 
             {schedule && (
               <div className="flex items-center gap-4 text-xs">
-                <Stat label="Duration" value={schedule.critical_path_length_days != null ? `${schedule.critical_path_length_days}d` : "—"} />
+                <Stat label="Duration" value={schedule.critical_path_length_days != null ? `${schedule.critical_path_length_days}d` : "â€”"} />
                 <Stat label="Activities" value={`${schedule.total_activities || 0}`} />
                 <Stat label="Critical" value={`${activities.filter(a => a.is_critical).length}`} accent="fuchsia" />
                 <Stat label="Complete" value={`${Math.round(schedule.schedule_pct_complete || 0)}%`} accent="emerald" />
@@ -459,7 +459,7 @@ function GanttChart({ activities, allActivities, dependencies, dateView, timeRan
                               left, width, top: topOffset, height: barHeight,
                               transformOrigin: "left",
                             }}
-                            title={`${a.activity_code} · ${DATE_VIEWS[dim].label}: ${s} → ${f}`}
+                            title={`${a.activity_code} Â· ${DATE_VIEWS[dim].label}: ${s} â†’ ${f}`}
                           >
                             {/* Progress fill */}
                             {a.physical_pct_complete > 0 && dim === "actual" && (
@@ -468,7 +468,7 @@ function GanttChart({ activities, allActivities, dependencies, dateView, timeRan
                             )}
                             {dateView !== "all" && width > 60 && (
                               <span className="absolute inset-0 flex items-center px-2 text-[10px] font-mono text-zinc-100 truncate">
-                                {a.activity_code} · {Math.round((fx-sx))}d
+                                {a.activity_code} Â· {Math.round((fx-sx))}d
                               </span>
                             )}
                           </motion.div>
@@ -695,7 +695,7 @@ function ReadOnlyRow({ label, value }: any) {
   return (
     <Field label={label}>
       <div className="px-3 py-1.5 bg-zinc-950/50 border border-zinc-800/50 rounded text-sm text-zinc-400 font-mono">
-        {value || "—"}
+        {value || "â€”"}
       </div>
     </Field>
   );
@@ -831,7 +831,7 @@ function DelayAnalysisPanel({ scheduleId, onClose }: any) {
       </div>
 
       {delays.length === 0 ? (
-        <p className="text-sm text-zinc-400">No delays detected — schedule is on track.</p>
+        <p className="text-sm text-zinc-400">No delays detected â€” schedule is on track.</p>
       ) : (
         <div className="space-y-2">
           {delays.map((d) => (
@@ -857,14 +857,14 @@ function DelayAnalysisPanel({ scheduleId, onClose }: any) {
                 </div>
               </div>
               <div className="grid grid-cols-4 gap-2 text-xs text-zinc-400">
-                <div>Baseline: <span className="font-mono text-zinc-300">{d.baseline_finish_date?.slice(0,10) || "—"}</span></div>
-                <div>Actual: <span className="font-mono text-zinc-300">{d.actual_finish_date?.slice(0,10) || "—"}</span></div>
-                <div>Forecast: <span className="font-mono text-zinc-300">{d.forecast_finish_date?.slice(0,10) || "—"}</span></div>
+                <div>Baseline: <span className="font-mono text-zinc-300">{d.baseline_finish_date?.slice(0,10) || "â€”"}</span></div>
+                <div>Actual: <span className="font-mono text-zinc-300">{d.actual_finish_date?.slice(0,10) || "â€”"}</span></div>
+                <div>Forecast: <span className="font-mono text-zinc-300">{d.forecast_finish_date?.slice(0,10) || "â€”"}</span></div>
                 <div>% Complete: <span className="font-mono text-zinc-300">{Math.round(d.physical_pct_complete || 0)}%</span></div>
               </div>
               {d.attributions?.length > 0 && (
                 <div className="mt-2 text-xs text-zinc-400">
-                  Cause: {d.attributions[0].cause} · Attributed to: <span className="text-zinc-200">{d.attributions[0].attributable_to}</span>
+                  Cause: {d.attributions[0].cause} Â· Attributed to: <span className="text-zinc-200">{d.attributions[0].attributable_to}</span>
                 </div>
               )}
             </div>
@@ -874,3 +874,4 @@ function DelayAnalysisPanel({ scheduleId, onClose }: any) {
     </motion.div>
   );
 }
+

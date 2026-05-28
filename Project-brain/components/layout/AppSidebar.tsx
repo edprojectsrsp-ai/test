@@ -17,6 +17,7 @@ import {
   CheckSquare,
   Truck,
   Receipt,
+  FileText,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -86,6 +87,13 @@ export default function AppSidebar() {
                   >
                     <ClipboardList size={18} className="text-cyan-500 group-hover:text-cyan-400" />
                     <span className="font-semibold tracking-wide">Plan Engine</span>
+                  </Link>
+                  <Link
+                    href="/appendix-2"
+                    className="flex items-center gap-3 w-full text-left px-4 py-3 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors group"
+                  >
+                    <FileText size={18} className="text-cyan-500 group-hover:text-cyan-400" />
+                    <span className="font-semibold tracking-wide">Appendix-2</span>
                   </Link>
                 </div>
               )}

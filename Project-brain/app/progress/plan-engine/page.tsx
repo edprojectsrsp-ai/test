@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 /**
- * MASTER PLAN ENGINE — The Grid Planner
- * GOD MODE v2.1 — Sprint 2
+ * MASTER PLAN ENGINE â€” The Grid Planner
+ * GOD MODE v2.1 â€” Sprint 2
  *
- * - Pick a package → planner opens
+ * - Pick a package â†’ planner opens
  * - Activity grid: rows = activities, cols = months
  * - Live weightage validation (must sum to 100)
  * - Live S-curve preview
@@ -21,8 +21,9 @@ import {
   TrendingUp, TrendingDown, Minus,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Area, AreaChart } from "recharts";
+import SeedActivitiesPanel from "@/components/plan/SeedActivitiesPanel";
 
-const API = "http://localhost:8000/api/v1";
+const API = "http://localhost:8002/api/v1";
 
 // =============================================================================
 //   TYPES
@@ -95,7 +96,7 @@ export default function PlanEnginePage() {
       .then((data) => Array.isArray(data) && setSchemes(data));
   }, []);
 
-  // When scheme changes → load packages
+  // When scheme changes â†’ load packages
   useEffect(() => {
     if (!selectedSchemeId) return;
     fetch(`${API}/schemes/${selectedSchemeId}/full`)
@@ -108,10 +109,10 @@ export default function PlanEnginePage() {
       });
   }, [selectedSchemeId]);
 
-  // When package changes → load plans
+  // When package changes â†’ load plans
   useEffect(() => {
     if (!selectedPackageId) return;
-    fetch(`${API}/plans/packages/${selectedPackageId}/plans`)
+    fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`)
       .then((r) => r.json())
       .then((d) => {
         const arr = Array.isArray(d) ? d : [];
@@ -121,14 +122,14 @@ export default function PlanEnginePage() {
       });
   }, [selectedPackageId]);
 
-  // When plan changes → load full data
+  // When plan changes â†’ load full data
   useEffect(() => {
     if (!selectedPlanId) return;
     loadPlanFull();
   }, [selectedPlanId]);
 
   const loadPlanFull = async () => {
-    const r = await fetch(`${API}/plans/plans/${selectedPlanId}/full`);
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/full`);
     const d = await r.json();
     setPlanData(d);
     setLocalCells({ ...d.monthly_cells });
@@ -197,7 +198,7 @@ export default function PlanEnginePage() {
   };
 
   const createPlan = async (fields: any) => {
-    const r = await fetch(`${API}/plans/packages/${selectedPackageId}/plans`, {
+    const r = await fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(fields),
     });
@@ -206,7 +207,7 @@ export default function PlanEnginePage() {
       showToast("Plan created");
       setShowCreatePlan(false);
       // reload plans
-      const rr = await fetch(`${API}/plans/packages/${selectedPackageId}/plans`);
+      const rr = await fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`);
       const data = await rr.json();
       setPlans(data);
       setSelectedPlanId(d.progress_plan_id);
@@ -216,7 +217,7 @@ export default function PlanEnginePage() {
   };
 
   const addActivity = async () => {
-    const r = await fetch(`${API}/plans/plans/${selectedPlanId}/activities`, {
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/activities`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         activity_name: "New Activity",
@@ -233,7 +234,7 @@ export default function PlanEnginePage() {
   };
 
   const updateActivity = async (aid: number, patch: any) => {
-    const r = await fetch(`${API}/plans/activities/${aid}`, {
+    const r = await fetch(`${API}/plan-engine/activities/${aid}`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     });
@@ -243,7 +244,7 @@ export default function PlanEnginePage() {
 
   const deleteActivity = async (aid: number) => {
     if (!confirm("Delete this activity? All monthly cells will be lost.")) return;
-    const r = await fetch(`${API}/plans/activities/${aid}`, { method: "DELETE" });
+    const r = await fetch(`${API}/plan-engine/activities/${aid}`, { method: "DELETE" });
     if (r.ok) { showToast("Deleted"); loadPlanFull(); }
     else { const d = await r.json(); showToast(d.detail || "Failed", "err"); }
   };
@@ -268,7 +269,7 @@ export default function PlanEnginePage() {
         });
       });
     });
-    const r = await fetch(`${API}/plans/plans/${selectedPlanId}/cells`, {
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/cells`, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cells }),
     });
@@ -288,26 +289,26 @@ export default function PlanEnginePage() {
       return;
     }
     if (!confirm("Lock this plan as the baseline? It can be unlocked later by admin.")) return;
-    const r = await fetch(`${API}/plans/plans/${selectedPlanId}/lock`, { method: "POST" });
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/lock`, { method: "POST" });
     if (r.ok) { showToast("Plan locked as baseline"); loadPlanFull();
-      const rr = await fetch(`${API}/plans/packages/${selectedPackageId}/plans`);
+      const rr = await fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`);
       setPlans(await rr.json());
     } else { const d = await r.json(); showToast(d.detail || "Lock failed", "err"); }
   };
 
   const unlockPlan = async () => {
     if (!confirm("Unlock this plan for editing? This will allow changes to baseline.")) return;
-    const r = await fetch(`${API}/plans/plans/${selectedPlanId}/unlock`, { method: "POST" });
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/unlock`, { method: "POST" });
     if (r.ok) {
       showToast("Plan unlocked");
       loadPlanFull();
-      const rr = await fetch(`${API}/plans/packages/${selectedPackageId}/plans`);
+      const rr = await fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`);
       setPlans(await rr.json());
     }
   };
 
   const submitActual = async () => {
-    const r = await fetch(`${API}/plans/activities/${actualForm.activity_id}/daily-actual`, {
+    const r = await fetch(`${API}/plan-engine/activities/${actualForm.activity_id}/daily-actual`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         actual_date: actualForm.actual_date,
@@ -365,7 +366,7 @@ export default function PlanEnginePage() {
               onChange={(e) => setSelectedSchemeId(parseInt(e.target.value) || null)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:border-cyan-500/50 outline-none"
             >
-              <option value="">— Select Scheme —</option>
+              <option value="">â€” Select Scheme â€”</option>
               {schemes.map((s) => (
                 <option key={s.scheme_id} value={s.scheme_id}>
                   #{s.scheme_id} {s.scheme_name.substring(0, 50)}
@@ -390,7 +391,7 @@ export default function PlanEnginePage() {
               disabled={!packages.length}
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:border-cyan-500/50 outline-none disabled:opacity-50"
             >
-              <option value="">— Select Package —</option>
+              <option value="">â€” Select Package â€”</option>
               {packages.map((p: any) => (
                 <option key={p.package_id} value={p.package_id}>
                   #{p.package_no} {p.package_name.substring(0, 45)}{p.is_scheme_mirror ? " [mirror]" : ""}
@@ -409,10 +410,10 @@ export default function PlanEnginePage() {
                 disabled={!plans.length}
                 className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:border-cyan-500/50 outline-none disabled:opacity-50"
               >
-                <option value="">— Select / Create —</option>
+                <option value="">â€” Select / Create â€”</option>
                 {plans.map((p) => (
                   <option key={p.progress_plan_id} value={p.progress_plan_id}>
-                    v{p.plan_version} {p.plan_name} {p.is_locked && "🔒"}
+                    v{p.plan_version} {p.plan_name} {p.is_locked && "ðŸ”’"}
                   </option>
                 ))}
               </select>
@@ -440,7 +441,7 @@ export default function PlanEnginePage() {
               <div className="text-right">
                 <div className="text-xs uppercase text-zinc-500 font-medium">Total Portfolio</div>
                 <div className="font-bold text-cyan-400 text-lg">
-                  ₹{packages.filter((p: any) => !p.is_scheme_mirror).reduce((s: number, p: any) => s + (p.package_value_cr || 0), 0).toFixed(2)} Cr
+                  â‚¹{packages.filter((p: any) => !p.is_scheme_mirror).reduce((s: number, p: any) => s + (p.package_value_cr || 0), 0).toFixed(2)} Cr
                 </div>
               </div>
             </div>
@@ -468,10 +469,10 @@ export default function PlanEnginePage() {
                   </div>
                   <div className="font-bold text-white text-sm mb-1 line-clamp-2">{p.package_name}</div>
                   {p.executing_agency && (
-                    <div className="text-[11px] text-zinc-500 line-clamp-1 mb-1">🏢 {p.executing_agency}</div>
+                    <div className="text-[11px] text-zinc-500 line-clamp-1 mb-1">ðŸ¢ {p.executing_agency}</div>
                   )}
                   {p.package_value_cr && (
-                    <div className="text-xs text-cyan-400 font-bold">₹{Number(p.package_value_cr).toFixed(2)} Cr</div>
+                    <div className="text-xs text-cyan-400 font-bold">â‚¹{Number(p.package_value_cr).toFixed(2)} Cr</div>
                   )}
                 </button>
               ))}
@@ -496,12 +497,12 @@ export default function PlanEnginePage() {
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Plan</div>
                     <div className="font-bold text-white">{planData.header.plan_name}</div>
-                    <div className="text-xs text-zinc-500">v{planData.header.plan_version} · {planData.header.financial_year || "—"}</div>
+                    <div className="text-xs text-zinc-500">v{planData.header.plan_version} Â· {planData.header.financial_year || "â€”"}</div>
                   </div>
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Range</div>
                     <div className="font-bold text-white text-sm">
-                      {fmtMonth(planData.header.contract_start_month)} → {fmtMonth(planData.header.expected_completion_month)}
+                      {fmtMonth(planData.header.contract_start_month)} â†’ {fmtMonth(planData.header.expected_completion_month)}
                     </div>
                     <div className="text-xs text-zinc-500">{planData.months.length} months</div>
                   </div>
@@ -564,9 +565,18 @@ export default function PlanEnginePage() {
               </div>
             </div>
 
+            {selectedPlanId && selectedPackageId && (
+              <SeedActivitiesPanel
+                planId={selectedPlanId}
+                packageId={selectedPackageId}
+                isLocked={planData?.header?.is_locked}
+                onSeeded={() => loadPlanFull()}
+              />
+            )}
+
             {/* GRID + S-CURVE LAYOUT */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {/* GRID — 2 cols */}
+              {/* GRID â€” 2 cols */}
               <div className="lg:col-span-2 bg-zinc-900/30 border border-zinc-800 rounded-2xl overflow-hidden">
                 <div className="overflow-x-auto">
                   <table className="text-xs w-full border-collapse">
@@ -640,7 +650,7 @@ export default function PlanEnginePage() {
                                     className="bg-zinc-900 border border-zinc-800 rounded px-1 py-0.5 text-zinc-200 outline-none w-[70px] text-right text-xs focus:border-cyan-500/50 disabled:cursor-not-allowed"
                                   />
                                   {actualVal > 0 && (
-                                    <div className="text-[9px] text-emerald-400 mt-0.5">▲ {actualVal}</div>
+                                    <div className="text-[9px] text-emerald-400 mt-0.5">â–² {actualVal}</div>
                                   )}
                                 </td>
                               );
@@ -673,7 +683,7 @@ export default function PlanEnginePage() {
                           });
                           return <td key={m} className="px-2 py-2 text-right text-zinc-400">{monthTotal.toFixed(2)}</td>;
                         })}
-                        <td className="px-2 py-2 text-right text-zinc-400 border-l border-zinc-800">—</td>
+                        <td className="px-2 py-2 text-right text-zinc-400 border-l border-zinc-800">â€”</td>
                         <td></td>
                       </tr>
                     </tbody>
@@ -691,7 +701,7 @@ export default function PlanEnginePage() {
                 )}
               </div>
 
-              {/* S-CURVE — 1 col */}
+              {/* S-CURVE â€” 1 col */}
               <div className="bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-white">S-Curve Preview</h3>
@@ -815,7 +825,7 @@ function DailyActualModal({ activities, form, setForm, onClose, onSubmit }: any)
               onChange={(e) => setForm({ ...form, activity_id: parseInt(e.target.value) })}
               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm"
             >
-              <option value={0}>— Select Activity —</option>
+              <option value={0}>â€” Select Activity â€”</option>
               {activities.map((a: any) => (
                 <option key={a.plan_activity_id} value={a.plan_activity_id}>
                   {a.activity_name} ({a.uom})
@@ -882,3 +892,4 @@ function CurveStat({ label, value, color, showSign }: any) {
     </div>
   );
 }
+

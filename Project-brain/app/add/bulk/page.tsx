@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useRef } from "react";
 import { UploadCloud, FileSpreadsheet, CheckCircle, AlertTriangle, Download, ArrowLeft, X } from "lucide-react";
@@ -14,7 +14,7 @@ export default function BulkUploadPage() {
 
   const handleDownload = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/v1/schemes/template");
+      const res = await fetch("http://localhost:8002/api/v1/schemes/template");
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -41,7 +41,7 @@ export default function BulkUploadPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/schemes/bulk-upload", {
+      const res = await fetch("http://localhost:8002/api/v1/schemes/bulk-upload", {
         method: "POST",
         body: formData,
       });

@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-const API_URL = "http://localhost:8000/api/v1/schemes/all";
+const API_URL = "http://localhost:8002/api/v1/schemes/all";
 
 interface Scheme {
   scheme_id: number;

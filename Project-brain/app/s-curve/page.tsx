@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -7,7 +7,7 @@ import {
 import { motion } from "framer-motion";
 import { TrendingUp, AlertTriangle, Calendar, Target, Activity } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8002";
 
 type SCurvePoint = {
   month_date: string;
@@ -71,7 +71,7 @@ export default function SCurvePage() {
           <div className="flex items-center gap-3 mb-2">
             <TrendingUp className="w-8 h-8 text-indigo-400" />
             <h1 className="text-3xl font-bold">S-Curve Predict</h1>
-            <span className="px-2 py-0.5 text-xs font-mono rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">SPRINT 5 · PREDICT</span>
+            <span className="px-2 py-0.5 text-xs font-mono rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">SPRINT 5 Â· PREDICT</span>
           </div>
           <p className="text-zinc-400 mb-6">
             Cumulative progress curve with linear-regression forecast. Friend's app shows tables; we show the future.
@@ -87,7 +87,7 @@ export default function SCurvePage() {
           >
             {packages.map(p => (
               <option key={p.package_id} value={p.package_id}>
-                {p.scheme_name} — {p.package_name}
+                {p.scheme_name} â€” {p.package_name}
               </option>
             ))}
             {packages.length === 0 && <option value={1}>Package #1</option>}
@@ -102,13 +102,13 @@ export default function SCurvePage() {
             {/* KPI cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <Card icon={<Target className="w-5 h-5 text-indigo-400" />} label="Planned (today)"
-                    value={`${data.today_planned_pct?.toFixed(1) ?? "—"}%`} />
+                    value={`${data.today_planned_pct?.toFixed(1) ?? "â€”"}%`} />
               <Card icon={<Activity className="w-5 h-5 text-emerald-400" />} label="Actual (today)"
-                    value={`${data.today_actual_pct?.toFixed(1) ?? "—"}%`} />
+                    value={`${data.today_actual_pct?.toFixed(1) ?? "â€”"}%`} />
               <Card icon={<AlertTriangle className={`w-5 h-5 ${varianceColor}`} />} label="Variance"
                     value={`${variance > 0 ? "+" : ""}${variance.toFixed(1)}%`} className={varianceColor} />
               <Card icon={<Calendar className="w-5 h-5 text-purple-400" />} label="Forecast Completion"
-                    value={data.forecast_completion_date ?? "Need ≥3 data points"} small />
+                    value={data.forecast_completion_date ?? "Need â‰¥3 data points"} small />
             </div>
 
             {/* Chart */}
@@ -165,3 +165,4 @@ function Card({ icon, label, value, className = "", small = false }: {
     </div>
   );
 }
+

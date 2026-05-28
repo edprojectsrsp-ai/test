@@ -46,6 +46,13 @@ def _safe_dict(obj, fields):
     return out
 
 
+def _table_exists(db: Session, table_name: str) -> bool:
+    """True if a relation exists (table or view) in public schema."""
+    return bool(
+        db.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f"public.{table_name}"}).scalar()
+    )
+
+
 # ============================================================================
 # 1) GET /all  → list view (unchanged)
 # ============================================================================
@@ -61,14 +68,19 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 COUNT(DISTINCT p.package_id) AS package_count,
                 COALESCE(SUM(c.contract_value_cr), 0) AS total_contract_value_cr,
                 MIN(c.effective_date) AS earliest_effective_date,
-                MAX(c.scheduled_completion_date) AS latest_scheduled_completion,
-                MAX(c.likely_completion_date) AS latest_likely_completion
+                MAX(c.schedule_completion_date) AS latest_scheduled_completion,
+                NULL::date AS latest_likely_completion
             FROM public.scheme_master sm
             LEFT JOIN public.packages p
               ON p.scheme_id = sm.scheme_id AND p.is_deleted = FALSE
-            LEFT JOIN public.contracts c ON c.package_id = p.package_id
+            LEFT JOIN public.contracts c
+              ON c.package_id = p.package_id AND c.is_deleted = FALSE
             WHERE sm.is_deleted = FALSE
-            GROUP BY sm.scheme_id
+            GROUP BY
+                sm.scheme_id, sm.scheme_name, sm.scheme_type, sm.current_status,
+                sm.estimated_cost_cr, sm.sanctioned_cost_cr, sm.anticipated_cost_cr,
+                sm.amr_no, sm.wbs_element, sm.has_multiple_packages,
+                sm.scheme_owner_name, sm.created_at
             ORDER BY
                 CASE sm.current_status
                     WHEN 'ongoing' THEN 1 WHEN 'under_stage2' THEN 2
@@ -82,10 +94,8 @@ def get_all_schemes(db: Session = Depends(get_db)):
         out = []
         for r in results:
             delay_status, delay_days = "N/A", 0
-            sc = _to_date(r.latest_scheduled_completion)
-            lc = _to_date(r.latest_likely_completion)
-            if sc and lc:
-                delta = (lc - sc).days
+            if r.latest_scheduled_completion and r.latest_likely_completion:
+                delta = (r.latest_likely_completion - r.latest_scheduled_completion).days
                 delay_status = "On Time" if delta <= 0 else ("Delayed < 1 Year" if delta < 365 else "Delayed > 1 Year")
                 delay_days = delta
 
@@ -107,7 +117,9 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 "package_count": r.package_count or 0,
                 "total_contract_value_cr": _num(r.total_contract_value_cr) or 0.0,
                 "scheduled_completion": r.latest_scheduled_completion.strftime("%d %b %Y") if r.latest_scheduled_completion else "TBD",
-                "expected_completion": r.latest_likely_completion.strftime("%d %b %Y") if r.latest_likely_completion else "TBD",
+                "expected_completion": r.latest_likely_completion.strftime("%d %b %Y") if r.latest_likely_completion else (
+                    r.latest_scheduled_completion.strftime("%d %b %Y") if r.latest_scheduled_completion else "TBD"
+                ),
                 "effective_date": r.earliest_effective_date.strftime("%d %b %Y") if r.earliest_effective_date else "TBD",
                 "delay_status": delay_status,
                 "delay_days": delay_days,

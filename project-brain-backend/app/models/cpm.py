@@ -1,72 +1,125 @@
-# app/api/schedule/upload/route.py
-# from flask import Flask, request, jsonify
-# from flask_cors import CORS
+"""Critical Path Method (CPM) engine for project schedule analysis."""
 import os
 import json
-import sqlite3
 from datetime import datetime, date, timedelta
 from collections import defaultdict, deque
 import re
 import xml.etree.ElementTree as ET
 
-# app = Flask(__name__)
-# CORS(app)
+# Database models now use PostgreSQL via SQLAlchemy
+from app.core.database import SessionLocal
+from app.models.schedule import ScheduleImport, ScheduleActivity
 
-# Database setup
-DB_PATH = 'project_brain.db'
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ============================================================================
+# Database Functions (PostgreSQL via SQLAlchemy)
+# ============================================================================
 
-def init_schedule_tables():
-    conn = get_db_connection()
-    c = conn.cursor()
-    
-    # Schedule imports table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS schedule_imports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER,
-            file_name TEXT,
-            imported_at TEXT,
-            FOREIGN KEY (project_id) REFERENCES projects(id)
+def save_schedule_to_db(project_id, filename, activities):
+    """Save parsed schedule activities to PostgreSQL database."""
+    db = SessionLocal()
+    try:
+        # Create import record
+        import_record = ScheduleImport(
+            project_id=int(project_id),
+            file_name=filename,
+            imported_at=datetime.utcnow()
         )
-    ''')
-    
-    # Schedule activities table
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS schedule_activities (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            schedule_id INTEGER,
-            activity_uid TEXT,
-            activity_code TEXT,
-            activity_name TEXT,
-            wbs TEXT,
-            duration_days REAL,
-            start_date TEXT,
-            finish_date TEXT,
-            actual_start TEXT,
-            actual_finish TEXT,
-            percent_complete REAL,
-            predecessors TEXT,
-            successors TEXT,
-            early_start TEXT,
-            early_finish TEXT,
-            late_start TEXT,
-            late_finish TEXT,
-            total_float REAL,
-            is_critical TEXT,
-            raw_data TEXT,
-            FOREIGN KEY (schedule_id) REFERENCES schedule_imports(id)
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
+        db.add(import_record)
+        db.flush()  # Get the ID without committing
+        
+        # Add activities
+        for activity in activities:
+            act = ScheduleActivity(
+                schedule_id=import_record.id,
+                activity_uid=activity.get("activity_uid"),
+                activity_code=activity.get("activity_code"),
+                activity_name=activity.get("activity_name"),
+                wbs=activity.get("wbs"),
+                duration_days=float(activity.get("duration_days") or 0),
+                start_date=to_storage_date(activity.get("start_date")),
+                finish_date=to_storage_date(activity.get("finish_date")),
+                actual_start=to_storage_date(activity.get("actual_start")),
+                actual_finish=to_storage_date(activity.get("actual_finish")),
+                percent_complete=float(activity.get("percent_complete") or 0),
+                predecessors=activity.get("predecessors"),
+                successors=activity.get("successors"),
+                early_start=to_storage_date(activity.get("early_start")),
+                early_finish=to_storage_date(activity.get("early_finish")),
+                late_start=to_storage_date(activity.get("late_start")),
+                late_finish=to_storage_date(activity.get("late_finish")),
+                total_float=float(activity.get("total_float") or 0),
+                is_critical=activity.get("is_critical") or "No",
+                raw_data=json.dumps(activity.get("raw_data") or {}, default=str)
+            )
+            db.add(act)
+        
+        db.commit()
+        return import_record.id
+    finally:
+        db.close()
 
-init_schedule_tables()
+
+def get_schedule_from_db(schedule_id):
+    """Retrieve schedule activities from PostgreSQL."""
+    db = SessionLocal()
+    try:
+        activities = db.query(ScheduleActivity).filter(
+            ScheduleActivity.schedule_id == schedule_id
+        ).all()
+        return [
+            {
+                'id': a.id,
+                'activity_uid': a.activity_uid,
+                'activity_code': a.activity_code,
+                'activity_name': a.activity_name,
+                'wbs': a.wbs,
+                'duration_days': a.duration_days,
+                'start_date': a.start_date,
+                'finish_date': a.finish_date,
+                'actual_start': a.actual_start,
+                'actual_finish': a.actual_finish,
+                'percent_complete': a.percent_complete,
+                'predecessors': a.predecessors,
+                'successors': a.successors,
+                'early_start': a.early_start,
+                'early_finish': a.early_finish,
+                'late_start': a.late_start,
+                'late_finish': a.late_finish,
+                'total_float': a.total_float,
+                'is_critical': a.is_critical,
+                'raw_data': json.loads(a.raw_data) if a.raw_data else {}
+            }
+            for a in activities
+        ]
+    finally:
+        db.close()
+
+
+def get_latest_schedule(project_id):
+    """Get the latest imported schedule for a project."""
+    db = SessionLocal()
+    try:
+        import_record = db.query(ScheduleImport).filter(
+            ScheduleImport.project_id == project_id
+        ).order_by(ScheduleImport.id.desc()).first()
+        
+        if not import_record:
+            return None
+        
+        return {
+            'id': import_record.id,
+            'project_id': import_record.project_id,
+            'file_name': import_record.file_name,
+            'imported_at': import_record.imported_at.isoformat()
+        }
+    finally:
+        db.close()
+
+
+# ============================================================================
+# CPM Algorithm & Date Utilities
+# ============================================================================
 
 # CPM Engine Logic (from schedule.py)
 def parse_app_date(date_str):
@@ -344,30 +397,16 @@ def calculate_cpm(activities):
     return activities
 
 # API Routes
-#@app.route('/api/projects', methods=['GET'])
-def get_projects():
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, name, type, status FROM projects WHERE type IN ('corporate', 'plant')")
-    projects = [dict(row) for row in c.fetchall()]
-    conn.close()
-    return jsonify(projects)
 
 #@app.route('/api/schedule/<int:project_id>', methods=['GET'])
 def get_schedule(project_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT id FROM schedule_imports WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,))
-    schedule = c.fetchone()
+    schedule = get_latest_schedule(project_id)
     
     if schedule:
-        c.execute("SELECT * FROM schedule_activities WHERE schedule_id = ?", (schedule['id'],))
-        activities = [dict(row) for row in c.fetchall()]
-        conn.close()
-        return jsonify({'schedule_id': schedule['id'], 'activities': activities})
+        activities = get_schedule_from_db(schedule['id'])
+        return {'schedule_id': schedule['id'], 'activities': activities}
     
-    conn.close()
-    return jsonify({'schedule_id': None, 'activities': []})
+    return {'schedule_id': None, 'activities': []}
 
 #@app.route('/api/schedule/upload', methods=['POST'])
 def upload_schedule():
@@ -395,48 +434,8 @@ def upload_schedule():
         # Calculate CPM
         activities = calculate_cpm(activities)
         
-        # Save to database
-        conn = get_db_connection()
-        c = conn.cursor()
-        c.execute(
-            "INSERT INTO schedule_imports (project_id, file_name, imported_at) VALUES (?, ?, ?)",
-            (project_id, file.filename, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-        )
-        schedule_id = c.lastrowid
-        
-        for activity in activities:
-            c.execute('''
-                INSERT INTO schedule_activities (
-                    schedule_id, activity_uid, activity_code, activity_name, wbs, duration_days,
-                    start_date, finish_date, actual_start, actual_finish, percent_complete,
-                    predecessors, successors, early_start, early_finish, late_start, late_finish,
-                    total_float, is_critical, raw_data
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                schedule_id,
-                activity.get("activity_uid"),
-                activity.get("activity_code"),
-                activity.get("activity_name"),
-                activity.get("wbs"),
-                activity.get("duration_days") or 0,
-                to_storage_date(activity.get("start_date")),
-                to_storage_date(activity.get("finish_date")),
-                to_storage_date(activity.get("actual_start")),
-                to_storage_date(activity.get("actual_finish")),
-                float(activity.get("percent_complete") or 0),
-                activity.get("predecessors"),
-                activity.get("successors"),
-                to_storage_date(activity.get("early_start")),
-                to_storage_date(activity.get("early_finish")),
-                to_storage_date(activity.get("late_start")),
-                to_storage_date(activity.get("late_finish")),
-                float(activity.get("total_float") or 0),
-                activity.get("is_critical") or "N",
-                json.dumps(activity.get("raw_data") or {}, default=str),
-            ))
-        
-        conn.commit()
-        conn.close()
+        # Save to PostgreSQL database
+        schedule_id = save_schedule_to_db(project_id, file.filename, activities)
         
         os.remove(temp_path)
         return jsonify({'success': True, 'activity_count': len(activities)})
@@ -446,26 +445,22 @@ def upload_schedule():
 
 #@app.route('/api/schedule/analyze/<int:schedule_id>', methods=['GET'])
 def analyze_schedule(schedule_id):
-    conn = get_db_connection()
-    c = conn.cursor()
-    c.execute("SELECT * FROM schedule_activities WHERE schedule_id = ?", (schedule_id,))
-    activities = [dict(row) for row in c.fetchall()]
-    conn.close()
+    activities = get_schedule_from_db(schedule_id)
     
     if not activities:
-        return jsonify({'error': 'No activities found'}), 404
+        return {'error': 'No activities found'}
     
     # Calculate statistics
-    critical_count = sum(1 for a in activities if a.get('is_critical') == 'Y')
-    completed_count = sum(1 for a in float(a.get('percent_complete') or 0) >= 100)
+    critical_count = sum(1 for a in activities if a.get('is_critical') == 'Yes')
+    completed_count = sum(1 for a in activities if float(a.get('percent_complete') or 0) >= 100)
     avg_progress = sum(float(a.get('percent_complete') or 0) for a in activities) / max(1, len(activities))
     total_duration = sum(float(a.get('duration_days') or 0) for a in activities)
     
     # Find critical path activities
-    critical_path = [a for a in activities if a.get('is_critical') == 'Y']
+    critical_path = [a for a in activities if a.get('is_critical') == 'Yes']
     critical_path.sort(key=lambda x: parse_app_date(x.get('early_start')) or date.today())
     
-    analysis = {
+    return {
         'total_activities': len(activities),
         'critical_activities': critical_count,
         'completed_activities': completed_count,
@@ -481,8 +476,3 @@ def analyze_schedule(schedule_id):
             } for a in critical_path[:50]
         ]
     }
-    
-    return jsonify(analysis)
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)

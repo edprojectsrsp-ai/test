@@ -1,4 +1,4 @@
-const API_BASE = "http://localhost:8000/api/v1";
+﻿const API_BASE = "http://localhost:8002/api/v1";
 
 export const capexApi = {
   getData: async () => {
@@ -35,3 +35,4 @@ export const api = {
     return res.json();
   }
 };
+

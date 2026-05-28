@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -7,7 +7,7 @@ import {
   Inbox, Archive, FileCheck2
 } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8002";
 const USER_ID = 1; // TODO: from auth
 
 type Notesheet = {
@@ -94,7 +94,7 @@ export default function NotesheetPage() {
             <FileText className="w-8 h-8 text-indigo-400" />
             <h1 className="text-3xl font-bold">e-NoteSheet</h1>
             <span className="px-2 py-0.5 text-xs font-mono rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              SPRINT 9A · DIGITAL FILE NOTING
+              SPRINT 9A Â· DIGITAL FILE NOTING
             </span>
           </div>
           <p className="text-zinc-400">
@@ -173,7 +173,7 @@ export default function NotesheetPage() {
                       <Clock className="w-3 h-3" />{ns.days_pending}d pending
                     </span>
                     {ns.cost_implication_cr != null && (
-                      <span className="text-amber-400">₹{Number(ns.cost_implication_cr).toFixed(2)} Cr</span>
+                      <span className="text-amber-400">â‚¹{Number(ns.cost_implication_cr).toFixed(2)} Cr</span>
                     )}
                   </div>
                 </div>
@@ -198,7 +198,7 @@ function TabBtn({ active, onClick, children, icon }: any) {
 }
 
 // ============================================================================
-// DETAIL VIEW — full file with notes timeline + action panel
+// DETAIL VIEW â€” full file with notes timeline + action panel
 // ============================================================================
 function DetailView({ data, onBack }: any) {
   const ns = data.notesheet;
@@ -231,7 +231,7 @@ function DetailView({ data, onBack }: any) {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-5xl mx-auto">
         <button onClick={onBack} className="text-zinc-400 hover:text-zinc-200 mb-4 flex items-center gap-1 text-sm">
-          ← Back to list
+          â† Back to list
         </button>
 
         {/* Header */}
@@ -252,7 +252,7 @@ function DetailView({ data, onBack }: any) {
                 <span>Category: <strong className="text-zinc-200">{ns.category}</strong></span>
                 {ns.scheme_name && <span>Scheme: <strong className="text-zinc-200">{ns.scheme_name}</strong></span>}
                 {ns.workflow_name && <span>Workflow: <strong className="text-zinc-200">{ns.workflow_name}</strong></span>}
-                {ns.cost_implication_cr != null && <span>Cost: <strong className="text-amber-400">₹{Number(ns.cost_implication_cr).toFixed(2)} Cr</strong></span>}
+                {ns.cost_implication_cr != null && <span>Cost: <strong className="text-amber-400">â‚¹{Number(ns.cost_implication_cr).toFixed(2)} Cr</strong></span>}
               </div>
             </div>
           </div>
@@ -293,8 +293,8 @@ function DetailView({ data, onBack }: any) {
                 <span className="font-mono text-xs text-zinc-500 mt-0.5 w-8">#{t.seq_no}</span>
                 <div className="flex-1">
                   <span className="text-zinc-300">{t.actor_name}</span>
-                  <span className="text-zinc-500"> · {t.action}</span>
-                  {t.to_user_name && <span className="text-zinc-500"> → {t.to_user_name}</span>}
+                  <span className="text-zinc-500"> Â· {t.action}</span>
+                  {t.to_user_name && <span className="text-zinc-500"> â†’ {t.to_user_name}</span>}
                   {t.remarks && <p className="text-xs text-zinc-400 mt-0.5">{t.remarks}</p>}
                 </div>
                 <span className="text-xs text-zinc-600">{new Date(t.occurred_at).toLocaleString()}</span>
@@ -392,7 +392,7 @@ function CreateView({ onDone, onCancel }: any) {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-3xl mx-auto">
-        <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-200 mb-4 text-sm">← Cancel</button>
+        <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-200 mb-4 text-sm">â† Cancel</button>
         <h2 className="text-2xl font-bold mb-6">Initiate New File</h2>
 
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-4">
@@ -429,7 +429,7 @@ function CreateView({ onDone, onCancel }: any) {
           <FormField label="Workflow (optional)">
             <select value={form.workflow_template_id} onChange={e => field("workflow_template_id", e.target.value)}
               className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg">
-              <option value="">— No workflow (manual forward) —</option>
+              <option value="">â€” No workflow (manual forward) â€”</option>
               {workflows.map(w => <option key={w.template_id} value={w.template_id}>{w.template_name}</option>)}
             </select>
           </FormField>
@@ -439,7 +439,7 @@ function CreateView({ onDone, onCancel }: any) {
               <input value={form.scheme_id} onChange={e => field("scheme_id", e.target.value)}
                 type="number" className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg" />
             </FormField>
-            <FormField label="Cost Impact (₹ Cr)">
+            <FormField label="Cost Impact (â‚¹ Cr)">
               <input value={form.cost_implication_cr} onChange={e => field("cost_implication_cr", e.target.value)}
                 type="number" step="0.01" className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg" />
             </FormField>
@@ -478,3 +478,4 @@ function FormField({ label, children }: any) {
     </div>
   );
 }
+

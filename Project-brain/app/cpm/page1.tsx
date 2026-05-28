@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { BarChart3, Calendar as CalendarIcon, Link as LinkIcon, Plus } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/v1";
+const API_URL = "http://localhost:8002/api/v1";
 
 type Scheme = {
   id: number;
@@ -228,3 +228,4 @@ export default function CPMEngine() {
     </div>
   );
 }
+

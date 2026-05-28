@@ -19,11 +19,14 @@ import logging
 from typing import Optional
 import psycopg2
 import psycopg2.extras
+from dotenv import load_dotenv
 from app.providers.router import get_router
 from app.providers.base import ChatMessage
 from app.services.embeddings_service import embed_text
 
 logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 
 # ============================================================================
@@ -183,8 +186,11 @@ Output JSON only:
 # ============================================================================
 
 def get_db():
-    dsn = os.environ.get("PROJECT_BRAIN_DB_URL",
-                        "postgresql://postgres:abc123@127.0.0.1:5433/project_brain")
+    dsn = (
+        os.environ.get("PROJECT_BRAIN_DB_URL")
+        or os.environ.get("DATABASE_URL")
+        or "postgresql://postgres:abc123@127.0.0.1:5432/project_brain"
+    )
     return psycopg2.connect(dsn)
 
 

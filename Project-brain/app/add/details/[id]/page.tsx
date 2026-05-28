@@ -56,7 +56,7 @@ export default function RegistrationStep2() {
   useEffect(() => {
     const fetchScheme = async () => {
       try {
-        const res = await fetch(`http://localhost:8000/api/v1/schemes/${schemeId}`);
+        const res = await fetch(`http://localhost:8002/api/v1/schemes/${schemeId}`);
         if (res.ok) {
           const data = await res.json();
           setSchemeStatus(data.current_status);
@@ -100,7 +100,7 @@ export default function RegistrationStep2() {
 
     try {
       const payload = Object.fromEntries(Object.entries(formData).filter(([_, value]) => value !== ""));
-      const res = await fetch(`http://localhost:8000/api/v1/schemes/step2/${schemeId}`, {
+      const res = await fetch(`http://localhost:8002/api/v1/schemes/step2/${schemeId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)

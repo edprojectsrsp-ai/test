@@ -13,16 +13,22 @@ from typing import Any, Optional
 import psycopg2
 import psycopg2.extras
 from datetime import date, datetime
+from dotenv import load_dotenv
 
 
 # ============================================================================
 # DB CONNECTION (read-only by default)
 # ============================================================================
 
+load_dotenv()
+
 def get_db_conn():
     """Get a fresh read-only DB connection."""
-    dsn = os.environ.get("PROJECT_BRAIN_DB_URL",
-                        "postgresql://postgres:abc123@127.0.0.1:5433/project_brain")
+    dsn = (
+        os.environ.get("PROJECT_BRAIN_DB_URL")
+        or os.environ.get("DATABASE_URL")
+        or "postgresql://postgres:abc123@127.0.0.1:5432/project_brain"
+    )
     conn = psycopg2.connect(dsn)
     conn.set_session(readonly=True, autocommit=True)
     return conn

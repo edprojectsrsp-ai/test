@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -63,7 +63,7 @@ export default function SCurveDashboard() {
     if (!scheme) return;
     setError(null);
     setData(null);
-    fetch(`http://localhost:8000/api/v1/s-curve/${scheme}`)
+    fetch(`http://localhost:8002/api/v1/s-curve/${scheme}`)
       .then((res) => {
         if (res.status === 404) {
           throw new Error("No active corporate plan for this scheme.");
@@ -94,7 +94,7 @@ export default function SCurveDashboard() {
           {error ? (
             <p className="text-rose-400">{error}</p>
           ) : !data ? (
-            <p className="text-zinc-400">Loading scheme #{scheme}…</p>
+            <p className="text-zinc-400">Loading scheme #{scheme}â€¦</p>
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
@@ -115,7 +115,7 @@ export default function SCurveDashboard() {
         <div className="glass-input p-6 rounded-2xl">
           <h2 className="text-xl font-semibold mb-4">AI DPR Insights</h2>
           <div className="space-y-4 text-sm text-zinc-300">
-            <p>Analyzing scheme #{scheme} progress…</p>
+            <p>Analyzing scheme #{scheme} progressâ€¦</p>
             <p className="p-3 bg-zinc-800 rounded-lg border-l-4 border-amber-500">
               Notice: compare planned vs actual from the live S-curve endpoint once actuals are
               captured in corporate actuals.
@@ -128,3 +128,4 @@ export default function SCurveDashboard() {
     </div>
   );
 }
+

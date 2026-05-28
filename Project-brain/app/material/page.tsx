@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import { FormEvent, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { AlertCircle, ArrowDownToLine, ArrowUpFromLine, Package, Plus } from "lucide-react";
 
-const API_URL = "http://localhost:8000/api/v1";
+const API_URL = "http://localhost:8002/api/v1";
 
 type Scheme = {
   id: number;
@@ -245,3 +245,4 @@ export default function MaterialTracking() {
     </div>
   );
 }
+
