@@ -76,6 +76,7 @@ export default function DPREntry() {
   const [mode, setMode] = useState<"legacy" | "multi">("multi");
   const [canWrite, setCanWrite] = useState(false);
   const [username, setUsername] = useState("user");
+  const [hasActivePlan, setHasActivePlan] = useState<boolean | null>(null);
 
   useEffect(() => {
     // Prefer /schemes/all (present in the main backend). Fall back to /view/all for older builds.
@@ -98,6 +99,20 @@ export default function DPREntry() {
 
     load();
   }, []);
+
+  // Check if the selected scheme has any locked plan
+  useEffect(() => {
+    if (!selectedScheme) { setHasActivePlan(null); return; }
+    setHasActivePlan(null);
+    fetch(`${API_URL}/plan-engine/schemes/${selectedScheme}/progress`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) { setHasActivePlan(false); return; }
+        const hasPlan = Array.isArray(d.packages) && d.packages.some((p: any) => p.has_plan);
+        setHasActivePlan(hasPlan);
+      })
+      .catch(() => setHasActivePlan(false));
+  }, [selectedScheme]);
 
   useEffect(() => {
     const token = typeof window !== "undefined" ? localStorage.getItem("brain_token") : null;
@@ -161,6 +176,24 @@ export default function DPREntry() {
           </select>
         </div>
       </div>
+
+      {/* DPR gate: warn if no locked plan */}
+      {selectedScheme && hasActivePlan === false && (
+        <div className="mb-6 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 text-sm text-amber-300">
+          <span className="text-lg shrink-0">⚠️</span>
+          <div>
+            <span className="font-bold">No active baseline plan found for this scheme.</span>
+            <span className="ml-2 text-amber-400/80">
+              DPR entries cannot be linked to progress without a locked plan.
+              Please go to{" "}
+              <a href="/progress/plan-engine" className="underline font-bold hover:text-amber-200">
+                Plan Engine
+              </a>{" "}
+              to create and lock a plan first.
+            </span>
+          </div>
+        </div>
+      )}
 
       {!selectedScheme ? (
         <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/40 p-12 text-center text-zinc-500">

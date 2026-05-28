@@ -18,7 +18,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   Plus, Trash2, Lock, Unlock, Save, ChevronDown, ChevronRight,
   Activity, Calendar, AlertTriangle, CheckCircle2, RefreshCw,
-  TrendingUp, TrendingDown, Minus,
+  TrendingUp, TrendingDown, Minus, Wand2,
 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend, Area, AreaChart } from "recharts";
 import SeedActivitiesPanel from "@/components/plan/SeedActivitiesPanel";
@@ -85,6 +85,7 @@ export default function PlanEnginePage() {
   const [showCreatePlan, setShowCreatePlan] = useState(false);
   const [toast, setToast] = useState<{ msg: string; kind: "ok" | "err" | "info" } | null>(null);
   const [showActuals, setShowActuals] = useState(false);
+  const [distributing, setDistributing] = useState(false);
   const [actualForm, setActualForm] = useState({ activity_id: 0, actual_date: new Date().toISOString().split("T")[0], actual_qty: 0, remarks: "" });
 
   // ---------------------------------------------------------------
@@ -294,6 +295,20 @@ export default function PlanEnginePage() {
       const rr = await fetch(`${API}/plan-engine/packages/${selectedPackageId}/plans`);
       setPlans(await rr.json());
     } else { const d = await r.json(); showToast(d.detail || "Lock failed", "err"); }
+  };
+
+  const autoDistribute = async () => {
+    if (!confirm("Auto-distribute scope across months using appendix-2 commencement/completion dates? This will overwrite existing monthly cells.")) return;
+    setDistributing(true);
+    const r = await fetch(`${API}/plan-engine/plans/${selectedPlanId}/auto-distribute`, { method: "POST" });
+    const d = await r.json();
+    if (r.ok) {
+      showToast(`Distributed ${d.activities_distributed} activities (${d.cells_written} cells written)`, "ok");
+      loadPlanFull();
+    } else {
+      showToast(d.detail || "Auto-distribute failed", "err");
+    }
+    setDistributing(false);
   };
 
   const unlockPlan = async () => {
@@ -543,6 +558,14 @@ export default function PlanEnginePage() {
                         }`}
                       >
                         <Save size={14} /> {saving ? "Saving..." : dirty ? "Save grid" : "All saved"}
+                      </button>
+                      <button
+                        onClick={autoDistribute}
+                        disabled={distributing}
+                        className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 rounded-lg text-xs flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Auto-distribute scope across months from appendix-2 schedule"
+                      >
+                        <Wand2 size={14} /> {distributing ? "Working..." : "Auto-distribute"}
                       </button>
                       <button
                         onClick={lockPlan}

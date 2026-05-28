@@ -5,6 +5,7 @@ import { motion } from "framer-motion";
 import {
   LayoutDashboard, AlertTriangle, CheckCircle, TrendingUp,
   IndianRupee, Layers, Clock, Building2, Bot, User, Send,
+  ChevronDown, Activity, TrendingDown, FileText,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -46,6 +47,19 @@ const BADGE_MAP: Record<string, string> = {
   gray: "bg-zinc-800 text-zinc-400 border-zinc-700",
 };
 
+function generateMonthOptions() {
+  const months: { value: string; label: string }[] = [];
+  const d = new Date();
+  for (let i = 0; i < 24; i++) {
+    const yr = d.getFullYear();
+    const mo = d.getMonth() + 1;
+    const label = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+    months.push({ value: `${yr}-${String(mo).padStart(2, "0")}`, label });
+    d.setMonth(d.getMonth() - 1);
+  }
+  return months;
+}
+
 export default function DashboardPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [cards, setCards] = useState<SchemeCard[]>([]);
@@ -57,6 +71,17 @@ export default function DashboardPage() {
   const [chatInput, setChatInput] = useState("");
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // Physical-Financial state
+  const [selectedSchemeId, setSelectedSchemeId] = useState<number | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [physFin, setPhysFin] = useState<any>(null);
+  const [capexSnap, setCapexSnap] = useState<any>(null);
+  const [dprSummary, setDprSummary] = useState<any[]>([]);
+  const [physLoading, setPhysLoading] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -78,6 +103,20 @@ export default function DashboardPage() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatMessages, isTyping]);
+
+  useEffect(() => {
+    if (!selectedSchemeId) { setPhysFin(null); setCapexSnap(null); setDprSummary([]); return; }
+    setPhysLoading(true);
+    Promise.all([
+      fetch(`${API}/dashboard/physical-financial?scheme_id=${selectedSchemeId}&month=${selectedMonth}`).then(r => r.json()),
+      fetch(`${API}/dashboard/capex-snapshot?scheme_id=${selectedSchemeId}`).then(r => r.json()),
+      fetch(`${API}/dashboard/dpr-summary?scheme_id=${selectedSchemeId}`).then(r => r.json()),
+    ]).then(([pf, cs, dpr]) => {
+      setPhysFin(pf);
+      setCapexSnap(cs);
+      setDprSummary(Array.isArray(dpr) ? dpr : []);
+    }).finally(() => setPhysLoading(false));
+  }, [selectedSchemeId, selectedMonth]);
 
   const sendMessage = async () => {
     if (!chatInput.trim()) return;
@@ -339,6 +378,155 @@ export default function DashboardPage() {
                 })}
               </div>
             </div>
+          </div>
+
+          {/* ── PHYSICAL-FINANCIAL PANEL ── */}
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 backdrop-blur-md overflow-hidden">
+            {/* Header row: scheme selector + month picker */}
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3">
+              <h2 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
+                <Activity className="h-4 w-4 text-cyan-400" /> Physical-Financial Summary
+              </h2>
+              <div className="flex items-center gap-2">
+                <select
+                  value={selectedSchemeId || ""}
+                  onChange={(e) => setSelectedSchemeId(parseInt(e.target.value) || null)}
+                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-cyan-500/50 max-w-[200px] truncate"
+                >
+                  <option value="">— Select Scheme —</option>
+                  {cards.map((c) => (
+                    <option key={c.id} value={c.id}>#{c.id} {c.name.substring(0, 45)}</option>
+                  ))}
+                </select>
+                <select
+                  value={selectedMonth}
+                  onChange={(e) => setSelectedMonth(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-cyan-500/50"
+                >
+                  {generateMonthOptions().map((m) => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {!selectedSchemeId ? (
+              <p className="text-xs text-zinc-500 py-6 text-center">Select a scheme to view physical-financial data</p>
+            ) : physLoading ? (
+              <p className="text-xs text-zinc-500 py-6 text-center animate-pulse">Loading...</p>
+            ) : !physFin?.has_active_plan ? (
+              <div className="px-5 py-4 text-xs text-amber-400 bg-amber-500/5 border-t border-amber-500/20 flex items-center gap-2">
+                <AlertTriangle size={14} /> No locked baseline plan found for this scheme. Go to Plan Engine to create and lock a plan.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs border-collapse">
+                  <thead className="bg-zinc-900/70">
+                    <tr>
+                      {["Activity", "Pkg", "Scope", "Till LFY", "MTD Plan", "MTD Act", "FY Plan", "FY Act", "Cum Plan", "Cum Act"].map((h) => (
+                        <th key={h} className="px-2.5 py-2 text-left text-zinc-400 font-bold uppercase tracking-wide whitespace-nowrap border-b border-zinc-800 text-[10px]">{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {physFin.activities.map((a: any, i: number) => {
+                      const dev = a.cum_act - a.cum_plan;
+                      const devCls = dev >= 0 ? "text-emerald-400" : dev >= -5 ? "text-amber-400" : "text-red-400";
+                      return (
+                        <tr key={a.activity_id} className={`border-b border-zinc-800/40 hover:bg-zinc-900/40 ${i % 2 === 0 ? "" : "bg-zinc-900/20"}`}>
+                          <td className="px-2.5 py-1.5 text-zinc-200 max-w-[140px] truncate" title={a.activity_name}>{a.activity_name}</td>
+                          <td className="px-2.5 py-1.5 text-zinc-400 text-[10px] max-w-[80px] truncate" title={a.package_name}>{a.package_name?.split(" - ")[1] || a.package_name}</td>
+                          <td className="px-2.5 py-1.5 text-zinc-300 text-right">{a.scope}</td>
+                          <td className="px-2.5 py-1.5 text-zinc-400 text-right">{a.till_last_fy}</td>
+                          <td className="px-2.5 py-1.5 text-cyan-300 text-right">{a.mtd_plan}</td>
+                          <td className="px-2.5 py-1.5 text-emerald-300 text-right">{a.mtd_act}</td>
+                          <td className="px-2.5 py-1.5 text-cyan-400 text-right">{a.fy_plan}</td>
+                          <td className="px-2.5 py-1.5 text-emerald-400 text-right">{a.fy_act}</td>
+                          <td className="px-2.5 py-1.5 text-cyan-300 font-medium text-right">{a.cum_plan}</td>
+                          <td className={`px-2.5 py-1.5 font-bold text-right ${devCls}`}>{a.cum_act}</td>
+                        </tr>
+                      );
+                    })}
+                    {physFin.total && (
+                      <tr className="bg-zinc-900 font-bold border-t-2 border-zinc-700">
+                        <td className="px-2.5 py-2 text-zinc-200 uppercase tracking-wide">TOTAL</td>
+                        <td className="px-2.5 py-2"></td>
+                        <td className="px-2.5 py-2 text-right text-zinc-200">{physFin.total.scope}</td>
+                        <td className="px-2.5 py-2 text-right text-zinc-400">{physFin.total.till_last_fy}</td>
+                        <td className="px-2.5 py-2 text-right text-cyan-300">{physFin.total.mtd_plan}</td>
+                        <td className="px-2.5 py-2 text-right text-emerald-300">{physFin.total.mtd_act}</td>
+                        <td className="px-2.5 py-2 text-right text-cyan-400">{physFin.total.fy_plan}</td>
+                        <td className="px-2.5 py-2 text-right text-emerald-400">{physFin.total.fy_act}</td>
+                        <td className="px-2.5 py-2 text-right text-cyan-300">{physFin.total.cum_plan}</td>
+                        <td className={`px-2.5 py-2 text-right font-bold ${(physFin.total.deviation || 0) >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                          {physFin.total.cum_act}
+                          <span className="ml-1 text-[9px]">({(physFin.total.deviation || 0) >= 0 ? "+" : ""}{physFin.total.deviation})</span>
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* CAPEX + DPR row */}
+            {selectedSchemeId && !physLoading && (
+              <div className="grid grid-cols-2 gap-0 border-t border-zinc-800">
+                {/* CAPEX Snapshot */}
+                <div className="p-4 border-r border-zinc-800">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3 flex items-center gap-1.5">
+                    <IndianRupee size={12} className="text-violet-400" /> CAPEX Snapshot
+                    {capexSnap?.pct_spent > 0 && (
+                      <span className={`ml-auto px-2 py-0.5 rounded text-[9px] font-bold ${capexSnap.pct_spent > 90 ? "bg-red-500/10 text-red-400" : capexSnap.pct_spent > 70 ? "bg-amber-500/10 text-amber-400" : "bg-emerald-500/10 text-emerald-400"}`}>
+                        {capexSnap.pct_spent}% spent
+                      </span>
+                    )}
+                  </h3>
+                  {capexSnap ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: "Sanctioned", value: capexSnap.sanctioned_cost_cr, color: "text-zinc-300" },
+                        { label: "Till Last FY", value: capexSnap.expenditure_till_last_fy, color: "text-zinc-400" },
+                        { label: "BE Current FY", value: capexSnap.be_current_fy, color: "text-cyan-400" },
+                        { label: "RE Current FY", value: capexSnap.re_current_fy, color: "text-blue-400" },
+                        { label: "Actuals FY", value: capexSnap.actuals_current_fy, color: "text-emerald-400" },
+                        { label: "Total Spent", value: capexSnap.total_spent, color: "text-violet-400" },
+                      ].map(({ label, value, color }) => (
+                        <div key={label} className="bg-zinc-950 rounded-lg px-3 py-2">
+                          <div className="text-[9px] text-zinc-500 uppercase">{label}</div>
+                          <div className={`text-sm font-bold ${color}`}>₹{Number(value).toFixed(2)} Cr</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-zinc-500">No CAPEX data</p>
+                  )}
+                </div>
+
+                {/* DPR Summary */}
+                <div className="p-4">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-400 mb-3 flex items-center gap-1.5">
+                    <FileText size={12} className="text-emerald-400" /> Recent DPR Entries
+                  </h3>
+                  {dprSummary.length === 0 ? (
+                    <p className="text-xs text-zinc-500">No DPR entries yet</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {dprSummary.map((d, i) => (
+                        <div key={i} className="flex items-start gap-2 text-xs border-b border-zinc-800/50 pb-1.5 last:border-0">
+                          <span className="text-zinc-500 shrink-0 font-mono">{d.date}</span>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-zinc-300 truncate font-medium">{d.activity_name}</div>
+                            <div className="text-zinc-500 truncate">{d.area_of_work || d.remarks || "—"}</div>
+                          </div>
+                          <span className="shrink-0 text-emerald-400 font-bold">{d.actual_qty}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* SCHEME CARDS */}

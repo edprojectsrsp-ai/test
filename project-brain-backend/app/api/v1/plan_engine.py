@@ -508,7 +508,7 @@ def get_package_progress(package_id: int, as_of: Optional[str] = None, db: Sessi
         SELECT plan_id, plan_name, plan_version
         FROM progress_plans
         WHERE package_id = :pid AND is_locked = TRUE AND is_deleted = FALSE
-        ORDER BY is_current DESC, plan_version::int DESC LIMIT 1
+        ORDER BY is_current DESC, updated_at DESC LIMIT 1
     """), {"pid": package_id}).first()
 
     if not plan:
@@ -611,3 +611,112 @@ def get_scheme_progress(scheme_id: int, as_of: Optional[str] = None, db: Session
         "scheme_deviation_pct": round(weighted_plan - weighted_actual, 2),
         "packages": pkg_results,
     }
+
+
+# ============================================================================
+# 13) POST /plans/{plan_id}/auto-distribute
+#     Distribute scope_qty evenly across planned months per activity.
+#     Uses commencement_months/completion_months from appendix2_items if linked,
+#     otherwise spreads evenly across all plan months.
+# ============================================================================
+@router.post("/plans/{plan_id}/auto-distribute")
+def auto_distribute(plan_id: int, db: Session = Depends(get_db)):
+    try:
+        plan = db.execute(text("""
+            SELECT plan_id, is_locked, plan_start_date, plan_end_date
+            FROM progress_plans WHERE plan_id = :pid
+        """), {"pid": plan_id}).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        if plan.is_locked:
+            raise HTTPException(status_code=403, detail="Plan is locked. Unlock before auto-distributing.")
+
+        if not plan.plan_start_date:
+            raise HTTPException(status_code=400, detail="Plan has no start date. Set plan dates first.")
+
+        # Build list of all plan months (first-of-month dates)
+        all_months = list(_month_range(plan.plan_start_date, plan.plan_end_date or plan.plan_start_date))
+
+        # Get activities + their appendix2 link
+        activities = db.execute(text("""
+            SELECT pa.activity_id, pa.scope_qty, pa.appendix2_item_id
+            FROM plan_activities pa
+            WHERE pa.plan_id = :pid AND pa.is_deleted = FALSE
+        """), {"pid": plan_id}).fetchall()
+
+        if not activities:
+            return {"ok": True, "activities_distributed": 0, "cells_written": 0}
+
+        # Fetch commencement/completion months for linked appendix2 items
+        item_ids = [a.appendix2_item_id for a in activities if a.appendix2_item_id]
+        appendix2_meta = {}
+        if item_ids:
+            id_list = ",".join(str(x) for x in item_ids)
+            rows = db.execute(text(f"""
+                SELECT item_id, commencement_months, completion_months
+                FROM appendix2_items WHERE item_id IN ({id_list})
+            """)).fetchall()
+            appendix2_meta = {r.item_id: r for r in rows}
+
+        upsert = text("""
+            INSERT INTO monthly_plan_entries
+                (activity_id, month_date, planned_qty, row_type, created_at, updated_at)
+            VALUES (:aid, :mo, :qty, 'plan', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ON CONFLICT (activity_id, month_date, row_type)
+            DO UPDATE SET planned_qty = EXCLUDED.planned_qty, updated_at = CURRENT_TIMESTAMP
+        """)
+
+        cells_written = 0
+        distributed = 0
+
+        update_scope = text("""
+            UPDATE plan_activities SET scope_qty = 100, updated_at = CURRENT_TIMESTAMP
+            WHERE activity_id = :aid AND (scope_qty IS NULL OR scope_qty = 0)
+        """)
+
+        for a in activities:
+            scope = float(a.scope_qty or 0)
+            if scope <= 0:
+                # Default to 100% scale for weight-only activities
+                db.execute(update_scope, {"aid": a.activity_id})
+                scope = 100.0
+
+            # Determine which months this activity spans
+            if a.appendix2_item_id and a.appendix2_item_id in appendix2_meta:
+                meta = appendix2_meta[a.appendix2_item_id]
+                cm = int(meta.commencement_months or 0)
+                comp = int(meta.completion_months or 0)
+                if cm >= 0 and comp > cm and all_months:
+                    start_idx = min(cm, len(all_months) - 1)
+                    end_idx = min(comp, len(all_months) - 1)
+                    activity_months = all_months[start_idx:end_idx + 1]
+                else:
+                    activity_months = all_months
+            else:
+                activity_months = all_months
+
+            if not activity_months:
+                continue
+
+            qty_per_month = round(scope / len(activity_months), 6)
+            last_idx = len(activity_months) - 1
+
+            for i, mo in enumerate(activity_months):
+                # Put any rounding remainder in the last month
+                if i == last_idx:
+                    already = qty_per_month * last_idx
+                    qty = round(scope - already, 6)
+                else:
+                    qty = qty_per_month
+                db.execute(upsert, {"aid": a.activity_id, "mo": mo.isoformat(), "qty": qty})
+                cells_written += 1
+
+            distributed += 1
+
+        db.commit()
+        return {"ok": True, "activities_distributed": distributed, "cells_written": cells_written}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Auto-distribute failed: {e}")
