@@ -80,17 +80,36 @@ function mergeForChart(planned: SeriesPoint[], actual: SeriesPoint[]) {
   }));
 }
 
+// Generate FY options: current + prev 2 + next 1
+function fyOptions() {
+  const now = new Date();
+  const curFyStart = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
+  return [-2, -1, 0, 1].map(offset => {
+    const y = curFyStart + offset;
+    return { label: `FY${String(y).slice(2)}-${String(y+1).slice(2)}`, value: `FY${y}-${y+1}` };
+  });
+}
+
 export default function SCurveClient() {
   const params = useParams();
   const schemeId = typeof params?.scheme_id === "string" ? params.scheme_id : "";
   const [data, setData] = useState<SCurveResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fyMode, setFyMode] = useState(false);
+  const [selectedFy, setSelectedFy] = useState(() => {
+    const d = new Date();
+    const y = d.getMonth() >= 3 ? d.getFullYear() : d.getFullYear() - 1;
+    return `FY${y}-${y+1}`;
+  });
 
   useEffect(() => {
     if (!schemeId) return;
     setError(null);
     setData(null);
-    fetch(`${API_BASE}/api/v1/s-curve/${schemeId}`)
+    const url = fyMode
+      ? `${API_BASE}/api/v1/s-curve/fy/${schemeId}?fy=${selectedFy}`
+      : `${API_BASE}/api/v1/s-curve/${schemeId}`;
+    fetch(url)
       .then((res) => {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         return res.json();
@@ -101,7 +120,7 @@ export default function SCurveClient() {
           "Could not load S-curve. Is the backend running and is there an active plan?"
         )
       );
-  }, [schemeId]);
+  }, [schemeId, fyMode, selectedFy]);
 
   const chartData = useMemo(() => {
     if (!data) return [];
@@ -133,12 +152,45 @@ export default function SCurveClient() {
     <div className="p-8 bg-zinc-900 min-h-screen text-white">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <h1 className="text-2xl font-bold">S-Curve Analysis: Scheme #{schemeId}</h1>
-        <Link
-          href="/physical"
-          className="text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800 rounded-lg px-4 py-2"
-        >
-          Back to hub
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          {/* FY toggle */}
+          <div className="inline-flex rounded-xl border border-zinc-700 bg-zinc-800 p-1 text-xs">
+            <button
+              onClick={() => setFyMode(false)}
+              className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${!fyMode ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-400 hover:text-white"}`}
+            >
+              All-time
+            </button>
+            <button
+              onClick={() => setFyMode(true)}
+              className={`rounded-lg px-3 py-1.5 font-medium transition-colors ${fyMode ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-400 hover:text-white"}`}
+            >
+              By FY
+            </button>
+          </div>
+          {fyMode && (
+            <select
+              value={selectedFy}
+              onChange={e => setSelectedFy(e.target.value)}
+              className="rounded-xl border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs text-cyan-300 outline-none focus:border-cyan-500"
+            >
+              {fyOptions().map(opt => (
+                <option key={opt.value} value={opt.value}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+          {fyMode && data && (data as any).packages?.length > 0 && (
+            <span className="text-xs text-zinc-500">
+              Carry-forward: {(data as any).packages[0]?.carry_forward_pct?.toFixed(1)}%
+            </span>
+          )}
+          <Link
+            href="/physical"
+            className="text-sm text-cyan-400 hover:text-cyan-300 border border-cyan-800 rounded-lg px-4 py-2"
+          >
+            Back to hub
+          </Link>
+        </div>
       </div>
 
       {isEmpty ? (

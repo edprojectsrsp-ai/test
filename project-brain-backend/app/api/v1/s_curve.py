@@ -289,3 +289,163 @@ def get_s_curve_data(scheme_id: int, db: Session = Depends(get_db)):
         "actual": actual_out,
         "packages": package_breakdown,
     }
+
+
+# ─────────────── FY-filtered S-curve (Sprint 2) ───────────────────────────────
+
+from fastapi import Query as _Query
+from sqlalchemy import text as _text
+
+
+def _fy_date_range(fy: str) -> tuple[date, date]:
+    """Parse 'FY25-26' or '2025-26' → (2025-04-01, 2026-03-31)."""
+    import re
+    m = re.search(r"(\d{4})[-/](\d{2,4})", fy.replace("FY", ""))
+    if m:
+        y = int(m.group(1))
+    else:
+        y = date.today().year if date.today().month >= 4 else date.today().year - 1
+    return date(y, 4, 1), date(y + 1, 3, 31)
+
+
+@router.get("/fy/{scheme_id}")
+def get_fy_s_curve(
+    scheme_id: int,
+    fy: str = _Query(..., description="Financial year, e.g. FY25-26 or 2025-26"),
+    db: Session = Depends(get_db),
+):
+    """
+    FY-filtered scheme S-curve with carry-forward.
+    - Planned: monthly_plan_entries within the FY date range
+    - Actual:  daily_actuals within the FY date range
+    - Carry-forward offset: actuals_till_last_fy per activity (cumulative before this FY)
+    Result curves start at the carry-forward % so the graph continues from where
+    last FY ended, not from zero.
+    """
+    fy_start, fy_end = _fy_date_range(fy)
+
+    rows = db.execute(_text("""
+        WITH pkg_plans AS (
+            SELECT pp.plan_id, p.package_id, p.package_name,
+                   COALESCE(
+                       CASE WHEN (p.extra_fields->>'scheme_rollup_weight') IS NOT NULL
+                            AND (p.extra_fields->>'scheme_rollup_weight') != ''
+                       THEN (p.extra_fields->>'scheme_rollup_weight')::float END,
+                       p.package_value_cr, p.package_estimate_cr, 1.0
+                   ) AS pkg_weight
+            FROM progress_plans pp
+            JOIN packages p ON pp.package_id = p.package_id
+            WHERE p.scheme_id  = :s_id
+              AND NOT p.is_deleted
+              AND pp.is_current = TRUE
+              AND NOT pp.is_deleted
+        ),
+        act_base AS (
+            SELECT pa.activity_id, pa.plan_id, pa.weight_pct,
+                   pa.scope_qty, pa.actuals_till_last_fy
+            FROM plan_activities pa
+            JOIN pkg_plans pp2 ON pa.plan_id = pp2.plan_id
+            WHERE NOT pa.is_deleted AND pa.scope_qty > 0
+        ),
+        pkg_denom AS (
+            SELECT ab.plan_id, SUM(ab.weight_pct * ab.scope_qty) AS denom
+            FROM act_base ab
+            GROUP BY ab.plan_id
+        ),
+        carry_forward AS (
+            SELECT ab.plan_id,
+                   SUM(ab.weight_pct * ab.actuals_till_last_fy) AS cf_contrib
+            FROM act_base ab
+            GROUP BY ab.plan_id
+        ),
+        monthly_planned AS (
+            SELECT ab.plan_id,
+                   DATE_TRUNC('month', mpe.month_date)::date AS mth,
+                   SUM(ab.weight_pct * mpe.planned_qty) AS contrib
+            FROM monthly_plan_entries mpe
+            JOIN act_base ab ON mpe.activity_id = ab.activity_id
+            WHERE mpe.month_date BETWEEN :fy_start AND :fy_end
+            GROUP BY ab.plan_id, mth
+        ),
+        monthly_actual AS (
+            SELECT ab.plan_id,
+                   DATE_TRUNC('month', da.actual_date)::date AS mth,
+                   SUM(ab.weight_pct * da.actual_qty) AS contrib
+            FROM daily_actuals da
+            JOIN act_base ab ON da.activity_id = ab.activity_id
+            WHERE da.actual_date BETWEEN :fy_start AND :fy_end
+            GROUP BY ab.plan_id, mth
+        )
+        SELECT
+            pp2.package_id,
+            pp2.package_name,
+            pp2.pkg_weight,
+            pd.denom,
+            COALESCE(cf.cf_contrib, 0) AS cf_contrib,
+            COALESCE(mp.mth, ma.mth) AS mth,
+            COALESCE(mp.contrib, 0) AS plan_contrib,
+            COALESCE(ma.contrib, 0) AS act_contrib
+        FROM pkg_plans pp2
+        JOIN pkg_denom  pd  ON pd.plan_id  = pp2.plan_id
+        LEFT JOIN carry_forward cf ON cf.plan_id = pp2.plan_id
+        FULL OUTER JOIN monthly_planned mp ON mp.plan_id = pp2.plan_id
+        FULL OUTER JOIN monthly_actual  ma ON ma.plan_id = pp2.plan_id
+                                           AND ma.mth = mp.mth
+        ORDER BY pp2.package_id, mth
+    """), {"s_id": scheme_id, "fy_start": fy_start, "fy_end": fy_end}).mappings().all()
+
+    # Aggregate by month across packages
+    from collections import defaultdict
+    pkg_meta: dict = {}        # package_id -> {weight, denom, cf_contrib}
+    pkg_monthly_plan: dict = defaultdict(dict)   # package_id -> {mth: contrib}
+    pkg_monthly_act: dict  = defaultdict(dict)
+
+    for r in rows:
+        pid = r["package_id"]
+        if pid not in pkg_meta:
+            pkg_meta[pid] = {
+                "name": r["package_name"],
+                "weight": float(r["pkg_weight"] or 1),
+                "denom":  float(r["denom"] or 1),
+                "cf":     float(r["cf_contrib"] or 0),
+            }
+        if r["mth"]:
+            m = r["mth"]
+            pkg_monthly_plan[pid][m] = pkg_monthly_plan[pid].get(m, 0) + float(r["plan_contrib"] or 0)
+            pkg_monthly_act[pid][m]  = pkg_monthly_act[pid].get(m, 0)  + float(r["act_contrib"]  or 0)
+
+    if not pkg_meta:
+        return {"planned": [], "actual": [], "fy": fy, "note": "No plan data for this FY"}
+
+    total_weight = sum(m["weight"] for m in pkg_meta.values())
+    all_months = sorted({m for pd in [*pkg_monthly_plan.values(), *pkg_monthly_act.values()] for m in pd})
+
+    planned_out, actual_out = [], []
+    for month in all_months:
+        wp = wa = 0.0
+        for pid, meta in pkg_meta.items():
+            denom = meta["denom"]
+            cf    = meta["cf"]
+            w     = meta["weight"]
+            # running cumulative plan up to this month
+            run_p = cf + sum(v for m, v in pkg_monthly_plan[pid].items() if m <= month)
+            run_a = cf + sum(v for m, v in pkg_monthly_act[pid].items()  if m <= month)
+            pct_p = min(100.0, run_p / denom * 100) if denom > 0 else 0.0
+            pct_a = min(100.0, run_a / denom * 100) if denom > 0 else 0.0
+            wp += w * pct_p
+            wa += w * pct_a
+        planned_out.append({"month": _month_label(month), "value": round(wp / total_weight, 2)})
+        actual_out.append({"month":  _month_label(month), "value": round(wa / total_weight, 2)})
+
+    return {
+        "planned": planned_out,
+        "actual":  actual_out,
+        "fy":      fy,
+        "fy_start": fy_start.isoformat(),
+        "fy_end":   fy_end.isoformat(),
+        "packages": [
+            {"package_id": pid, "package_name": m["name"], "weight": m["weight"],
+             "carry_forward_pct": round(m["cf"] / m["denom"] * 100, 2) if m["denom"] > 0 else 0}
+            for pid, m in pkg_meta.items()
+        ],
+    }
