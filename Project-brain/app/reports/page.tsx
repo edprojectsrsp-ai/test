@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { LineChart, Table, FileText, Bot } from "lucide-react";
+import { LineChart, Table, FileText, Bot, FileSignature } from "lucide-react";
 
 const API_URL = "http://localhost:8002/api/v1/view";
 
@@ -75,6 +75,22 @@ export default function ReportsHub() {
             </button>
           );
         })}
+      </div>
+
+      {/* Portfolio-level editable documents (no scheme selection needed) */}
+      <div className="mt-10">
+        <h2 className="text-xl font-semibold text-zinc-300 mb-4">Status Documents</h2>
+        <button
+          type="button"
+          onClick={() => router.push("/reports/package-n")}
+          className="p-6 rounded-2xl bg-indigo-600 opacity-90 hover:opacity-100 transition-all text-left flex items-center gap-4 w-full max-w-md"
+        >
+          <FileSignature size={40} />
+          <div>
+            <div className="font-bold text-lg">Package-N Status Report</div>
+            <div className="text-sm text-indigo-200">Open, print, or edit in place</div>
+          </div>
+        </button>
       </div>
     </div>
   );
