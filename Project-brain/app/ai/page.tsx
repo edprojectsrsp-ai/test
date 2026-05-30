@@ -14,24 +14,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Brain, Check, ChevronRight, Copy, Cpu, Loader2,
-  RefreshCw, Send, Wrench, X, Zap,
+  Activity, AlertTriangle, Brain, Check, CheckCircle2, ChevronRight,
+  Copy, Cpu, Database, Loader2, RefreshCw, Send, Wrench, X, Zap,
 } from "lucide-react";
 
 const AI_API  = process.env.NEXT_PUBLIC_AI_API_URL || "http://localhost:8001";
 const USER_ID = 1;
 
 const PROVIDERS = [
-  { label: "Auto (Cascade)",        value: "auto",                     note: "Tries each in order" },
-  { label: "Groq · Llama 3 8B",     value: "groq/llama3-8b-8192",      note: "Free · Fast" },
-  { label: "Groq · Llama 3 70B",    value: "groq/llama3-70b-8192",     note: "Free · Best" },
-  { label: "Groq · Mixtral 8×7B",   value: "groq/mixtral-8x7b-32768",  note: "Free · Long ctx" },
-  { label: "Groq · Gemma 7B",       value: "groq/gemma-7b-it",         note: "Free · Google" },
-  { label: "Gemini 1.5 Flash",      value: "gemini/gemini-1.5-flash",  note: "Free · Google" },
-  { label: "Gemini 2.0 Flash",      value: "gemini/gemini-2.0-flash",  note: "Free · Latest" },
-  { label: "Cerebras · Llama 3",    value: "cerebras/llama3.1-8b",     note: "Free · Ultra-fast" },
-  { label: "Ollama · Qwen3 8B",     value: "ollama/qwen3:8b",          note: "Local · No key" },
-  { label: "Ollama · Mistral 7B",   value: "ollama/mistral",           note: "Local · No key" },
+  // Group: Auto
+  { label: "Auto (Smart Cascade)",       value: "auto",                                    note: "Groq → Cerebras → Gemini → fallback" },
+  // Group: Groq (free)
+  { label: "Groq · Llama 3.3 70B",       value: "groq/llama-3.3-70b-versatile",            note: "Free · Best quality" },
+  { label: "Groq · Llama 3.1 8B Instant",value: "groq/llama-3.1-8b-instant",               note: "Free · Fastest Groq" },
+  { label: "Groq · Gemma 2 9B",          value: "groq/gemma2-9b-it",                       note: "Free · Google Gemma" },
+  { label: "Groq · Mixtral 8×7B",        value: "groq/mixtral-8x7b-32768",                 note: "Free · Long context 32K" },
+  // Group: Google (free)
+  { label: "Gemini 2.0 Flash",           value: "gemini/gemini-2.0-flash",                 note: "Free · Best Gemini" },
+  { label: "Gemini 1.5 Flash",           value: "gemini/gemini-1.5-flash",                 note: "Free · Stable" },
+  { label: "Gemini 1.5 Flash-Lite",      value: "gemini/gemini-1.5-flash-8b",              note: "Free · Ultra-light" },
+  // Group: Cerebras (free)
+  { label: "Cerebras · Llama 3.3 70B",   value: "cerebras/llama-3.3-70b",                  note: "Free · 900 tok/s" },
+  // Group: OpenRouter free models
+  { label: "OpenRouter · Qwen 2.5 72B",  value: "openrouter/qwen/qwen-2.5-72b-instruct:free",   note: "Free · Alibaba Qwen" },
+  { label: "OpenRouter · Gemma 3 27B",   value: "openrouter/google/gemma-3-27b-it:free",        note: "Free · Google Gemma" },
+  { label: "OpenRouter · Mistral 7B",    value: "openrouter/mistralai/mistral-7b-instruct:free", note: "Free · Mistral" },
+  // Group: Ollama (local)
+  { label: "Ollama · Phi-3 Mini (local)", value: "ollama/phi3:mini",                        note: "Local · 2.3 GB · No key" },
+  { label: "Ollama · Qwen3 8B (local)",   value: "ollama/qwen3:8b",                         note: "Local · 5 GB · No key" },
 ] as const;
 
 // ─────────────────────── Types ───────────────────────────────────────────────
@@ -40,8 +50,23 @@ type Msg = {
   id: string;
   role: "user" | "assistant";
   content: string;
-  meta?: { provider?: string; model?: string; tokens?: number; tools?: string[] };
+  meta?: { provider?: string; model?: string; tokens?: number; cost_usd?: number; tools?: string[] };
   streaming?: boolean;
+};
+
+type Health = {
+  ok: boolean;
+  providers_configured: string[];
+  default_provider: string;
+  tools_registered: number;
+};
+
+type DiagResult = {
+  verdict: string;
+  summary: { ok: number; degraded: number; error: number; skipped: number };
+  db: { reachable: boolean; error?: string };
+  guidance: string[];
+  tools: { tool: string; status: string; error_message?: string }[];
 };
 
 type StreamEvent =
@@ -60,6 +85,123 @@ const SUGGESTIONS = [
   "What are the ongoing tender cycles?",
   "Find schemes under tendering with cost above 100 Cr.",
 ];
+
+// ─────────────────────── Diagnostics panel ───────────────────────────────────
+
+function DiagnosticsPanel({ onClose }: { onClose: () => void }) {
+  const [diag, setDiag]       = useState<DiagResult | null>(null);
+  const [health, setHealth]   = useState<Health | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    Promise.all([
+      fetch(`${AI_API}/ai/health`).then(r => r.json()).catch(() => null),
+      fetch(`${AI_API}/ai/diagnostics`).then(r => r.json()).catch(() => null),
+    ]).then(([h, d]) => {
+      setHealth(h);
+      setDiag(d);
+      setLoading(false);
+    });
+  }, []);
+
+  const ALL_PROVIDERS = ["groq", "gemini", "openai", "ollama"];
+  const configured = health?.providers_configured ?? [];
+
+  const verdictColor = diag?.verdict === "ok"
+    ? "text-green-400" : diag?.verdict === "errors_present"
+    ? "text-red-400" : "text-amber-400";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: -8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      className="absolute right-4 top-16 z-50 w-96 overflow-hidden rounded-2xl border border-zinc-700 bg-zinc-900 shadow-2xl"
+    >
+      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
+        <span className="flex items-center gap-2 text-sm font-bold text-white">
+          <Activity className="h-4 w-4 text-cyan-400" /> AI Diagnostics
+        </span>
+        <button onClick={onClose}><X className="h-4 w-4 text-zinc-500 hover:text-white" /></button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center gap-2 py-8 text-zinc-500">
+          <Loader2 className="h-4 w-4 animate-spin" /> Running diagnostics…
+        </div>
+      ) : (
+        <div className="space-y-4 p-4 text-sm">
+          {/* Provider keys */}
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-widest text-zinc-500">API Keys / Providers</p>
+            <div className="space-y-1.5">
+              {ALL_PROVIDERS.map(p => {
+                const active = configured.includes(p);
+                return (
+                  <div key={p} className="flex items-center justify-between">
+                    <span className="capitalize text-zinc-300">{p}</span>
+                    {active ? (
+                      <span className="flex items-center gap-1 text-xs text-green-400">
+                        <CheckCircle2 className="h-3.5 w-3.5" /> Configured
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-xs text-zinc-600">
+                        <X className="h-3.5 w-3.5" /> No key
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {configured.length === 0 && (
+              <p className="mt-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">
+                No providers configured! Set GROQ_API_KEY in ai_service/.env
+              </p>
+            )}
+            {configured.length > 0 && !configured.includes("groq") && !configured.includes("gemini") && (
+              <p className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">
+                Only Ollama configured — add GROQ_API_KEY for faster cloud responses
+              </p>
+            )}
+          </div>
+
+          {/* DB + tools */}
+          {diag && (
+            <>
+              <div className="flex items-center justify-between border-t border-zinc-800 pt-3">
+                <span className="text-zinc-400">Database</span>
+                <span className={diag.db.reachable ? "text-green-400" : "text-red-400"}>
+                  {diag.db.reachable ? "Connected" : "UNREACHABLE"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-zinc-400">Tools (16)</span>
+                <span className={verdictColor}>
+                  {diag.summary.ok} ok · {diag.summary.degraded} degraded · {diag.summary.error} errors
+                </span>
+              </div>
+
+              {/* Guidance */}
+              {diag.guidance.map((g, i) => (
+                <p key={i} className="rounded-lg border border-zinc-700 bg-zinc-800/60 px-3 py-2 text-xs text-zinc-400">
+                  {g}
+                </p>
+              ))}
+
+              {/* Errored tools */}
+              {diag.tools.filter(t => t.status === "error").map(t => (
+                <div key={t.tool} className="rounded-lg border border-red-500/20 bg-red-500/5 px-3 py-2 text-xs">
+                  <span className="font-bold text-red-400">{t.tool}</span>
+                  <span className="ml-2 text-red-300/70">{t.error_message?.slice(0, 80)}</span>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
+      )}
+    </motion.div>
+  );
+}
 
 // ─────────────────────── Neural background ───────────────────────────────────
 
@@ -450,10 +592,15 @@ function MessageBubble({
               <Cpu className="h-3 w-3" />
               {msg.meta.provider} / {msg.meta.model?.split("-").slice(-2).join("-")}
             </span>
-            {msg.meta.tokens && <span>{msg.meta.tokens.toLocaleString()} tokens</span>}
+            {msg.meta.tokens != null && (
+              <span>{msg.meta.tokens.toLocaleString()} tokens</span>
+            )}
+            {msg.meta.cost_usd != null && msg.meta.cost_usd > 0 && (
+              <span className="text-zinc-600">${msg.meta.cost_usd.toFixed(4)}</span>
+            )}
             {msg.meta.tools && msg.meta.tools.length > 0 && (
               <span className="flex items-center gap-1 text-cyan-500">
-                <Wrench className="h-3 w-3" /> {msg.meta.tools.join(", ")}
+                <Wrench className="h-3 w-3" /> {[...new Set(msg.meta.tools)].join(", ")}
               </span>
             )}
           </div>
@@ -484,8 +631,18 @@ export default function AIChatPage() {
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
   const [provider, setProvider]     = useState("auto");
+  const [health, setHealth]         = useState<Health | null>(null);
+  const [showDiag, setShowDiag]     = useState(false);
   const endRef                      = useRef<HTMLDivElement>(null);
   const inputRef                    = useRef<HTMLTextAreaElement>(null);
+
+  // Health check on mount
+  useEffect(() => {
+    fetch(`${AI_API}/ai/health`)
+      .then(r => r.json())
+      .then(setHealth)
+      .catch(() => {});
+  }, []);
 
   const startConv = useCallback(() => {
     setError(null);
@@ -522,7 +679,12 @@ export default function AIChatPage() {
     try {
       const body: Record<string, any> = { conversation_id: convId, user_id: USER_ID, message: q };
       if (provider !== "auto") {
-        body.provider = provider.split("/")[0];
+        const parts = provider.split("/");
+        body.provider = parts[0]; // groq | gemini | cerebras | openrouter | ollama
+        // For openrouter, pass the full model path as override
+        if (parts[0] === "openrouter" && parts.length > 1) {
+          body.model_override = parts.slice(1).join("/");
+        }
       }
 
       // Use non-streaming /chat — the streaming endpoint doesn't handle tool calls.
@@ -540,6 +702,7 @@ export default function AIChatPage() {
         provider: data.provider,
         model:    data.model,
         tokens:   data.tokens_used,
+        cost_usd: data.cost_usd,
         tools:    data.tools_called?.map((t: any) => t.tool) ?? [],
       };
 
@@ -636,12 +799,40 @@ export default function AIChatPage() {
             </motion.div>
           )}
 
+          <button
+            onClick={() => setShowDiag(v => !v)}
+            className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
+              showDiag
+                ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-300"
+                : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-white"
+            }`}
+          >
+            <Database className="h-3.5 w-3.5" /> Diagnostics
+          </button>
+
           <button onClick={newChat}
             className="flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white">
             <RefreshCw className="h-3.5 w-3.5" /> New Chat
           </button>
         </div>
       </div>
+
+      {/* Diagnostics panel dropdown */}
+      <AnimatePresence>
+        {showDiag && <DiagnosticsPanel onClose={() => setShowDiag(false)} />}
+      </AnimatePresence>
+
+      {/* No-provider warning */}
+      {health && health.providers_configured.filter(p => p !== "ollama").length === 0 && (
+        <div className="relative z-10 mx-4 mt-2 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>
+            No cloud API keys configured — only local Ollama available.{" "}
+            Add <code className="rounded bg-zinc-800 px-1 py-0.5">GROQ_API_KEY</code> to{" "}
+            <code className="rounded bg-zinc-800 px-1 py-0.5">ai_service/.env</code> for best results.
+          </span>
+        </div>
+      )}
 
       {/* ── Messages ── */}
       <div className="relative z-10 flex-1 overflow-y-auto px-4 py-6 md:px-10">
