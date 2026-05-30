@@ -1,266 +1,373 @@
-"""DPR API — both legacy single-entry and Sprint 14a multi-entry endpoints.
+"""DPR API — Daily Progress Reports (t5 schema).
 
-Old endpoints (kept untouched):
-    GET  /dpr/{scheme_id}           — last 30 days, one per date
-    POST /dpr/{scheme_id}           — upsert today's DPR
+Maps to live t5 tables:
+  daily_actuals        — activity-level quantity entries (one row per activity per date)
+  field_observations   — geotagged site notes, issues, photos
 
-New v2 endpoints (Sprint 14a):
-    GET  /dpr/v2/{scheme_id}              — list entries (last 30 days, with photos)
-    POST /dpr/v2/{scheme_id}              — multipart create (fields + photo files)
-    GET  /dpr/v2/{scheme_id}/areas        — distinct area names for autocomplete
-    DELETE /dpr/v2/entry/{entry_id}       — remove an entry (cascades photos)
-    DELETE /dpr/v2/photo/{photo_id}       — remove one photo from an entry
+Note: plan_activities.uom_id → uom_master.uom_code (no direct uom column).
+      All date parameters use CAST(:param AS date) to avoid SQLAlchemy parsing
+      the PostgreSQL :: cast after a bind param.
 """
 
 from __future__ import annotations
 
-import os
-import uuid
-from datetime import date, datetime
-from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import desc
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.dpr import DPREntry, DPREntryV2, DPRPhoto
 
 router = APIRouter(prefix="/dpr", tags=["DPR"])
 
-# Same env var the main app uses to mount /uploads; falls back to /tmp.
-UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/project_brain/uploads")
-DPR_SUBDIR = "dpr"
-
-ALLOWED_PHOTO_MIME = {"image/jpeg", "image/png", "image/webp", "image/heic"}
-MAX_PHOTO_BYTES = 10 * 1024 * 1024  # 10 MB hard cap per file
+# Shared UoM join fragment reused in multiple queries
+_UOM_JOIN = "LEFT JOIN uom_master um ON um.uom_id = pa.uom_id"
+_UOM_COL  = "COALESCE(um.uom_code, '') AS uom"
 
 
-# ===========================================================================
-# Legacy endpoints — DO NOT change behavior
-# ===========================================================================
-class DPRCreate(BaseModel):
-    report_date: date
-    weather: str
-    manpower: int
-    work_done: str
-    issues: str
+# ─────────────────────── Scheme → packages ───────────────────────────────────
+
+@router.get("/scheme/{scheme_id}/packages")
+def get_scheme_packages(scheme_id: int, db: Session = Depends(get_db)):
+    """Return packages for a scheme with their locked-plan status."""
+    rows = db.execute(text("""
+        SELECT
+            p.package_id,
+            p.package_name,
+            p.package_value_cr,
+            p.planned_end_date,
+            CASE WHEN pp.plan_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_active_plan,
+            pp.plan_name,
+            pp.plan_id
+        FROM packages p
+        LEFT JOIN progress_plans pp
+               ON pp.package_id = p.package_id
+              AND pp.is_locked   = TRUE
+              AND pp.is_current  = TRUE
+        WHERE p.scheme_id = :s_id
+          AND NOT p.is_deleted
+        ORDER BY p.package_id
+    """), {"s_id": scheme_id}).mappings().all()
+    return [dict(r) for r in rows]
 
 
-@router.get("/{scheme_id}")
-def get_dprs(scheme_id: int, db: Session = Depends(get_db)):
-    """Legacy: last 30 daily reports, one per date."""
-    return (
-        db.query(DPREntry)
-        .filter(DPREntry.scheme_id == scheme_id)
-        .order_by(DPREntry.report_date.desc())
-        .limit(30)
-        .all()
-    )
+# ─────────────────────── Plan activities list ────────────────────────────────
+
+@router.get("/packages/{package_id}/activities")
+def get_package_activities(package_id: int, db: Session = Depends(get_db)):
+    """Return plan activities from the locked plan for this package."""
+    rows = db.execute(text("""
+        SELECT
+            pa.activity_id,
+            pa.activity_name,
+            COALESCE(um.uom_code, '') AS uom,
+            pa.scope_qty,
+            pa.planned_start_date,
+            pa.planned_finish_date,
+            pa.weight_pct,
+            pa.sort_order,
+            pp.plan_id,
+            pp.plan_name
+        FROM plan_activities pa
+        JOIN progress_plans pp ON pa.plan_id = pp.plan_id
+        LEFT JOIN uom_master um ON um.uom_id = pa.uom_id
+        WHERE pp.package_id = :pkg_id
+          AND pp.is_locked  = TRUE
+          AND pp.is_current = TRUE
+          AND NOT pa.is_deleted
+        ORDER BY pa.sort_order, pa.activity_id
+    """), {"pkg_id": package_id}).mappings().all()
+    return [dict(r) for r in rows]
 
 
-@router.post("/{scheme_id}")
-def create_or_update_dpr(scheme_id: int, dpr: DPRCreate, db: Session = Depends(get_db)):
-    """Legacy: upsert one DPR per (scheme, date)."""
-    existing = (
-        db.query(DPREntry)
-        .filter(
-            DPREntry.scheme_id == scheme_id,
-            DPREntry.report_date == dpr.report_date,
-        )
-        .first()
-    )
+# ─────────────────────── Get actuals for a package ───────────────────────────
 
-    if existing:
-        existing.weather = dpr.weather
-        existing.manpower = dpr.manpower
-        existing.work_done = dpr.work_done
-        existing.issues = dpr.issues
-        db.commit()
-        db.refresh(existing)
-        return existing
-
-    new_dpr = DPREntry(scheme_id=scheme_id, **dpr.model_dump())
-    db.add(new_dpr)
-    db.commit()
-    db.refresh(new_dpr)
-    return new_dpr
-
-
-# ===========================================================================
-# Sprint 14a — multi-entry v2 endpoints
-# ===========================================================================
-def _serialize_entry(entry: DPREntryV2) -> dict:
-    """Render an entry plus its photo URLs (relative to /uploads mount)."""
-    return {
-        "id": entry.id,
-        "scheme_id": entry.scheme_id,
-        "report_date": entry.report_date.isoformat() if entry.report_date else None,
-        "area_name": entry.area_name,
-        "gps_lat": entry.gps_lat,
-        "gps_lng": entry.gps_lng,
-        "gps_accuracy_m": entry.gps_accuracy_m,
-        "work_done": entry.work_done,
-        "issues": entry.issues,
-        "weather": entry.weather,
-        "manpower": entry.manpower,
-        "created_by": entry.created_by,
-        "created_at": entry.created_at.isoformat() if entry.created_at else None,
-        "photos": [
-            {
-                "id": p.id,
-                "url": f"/uploads/{p.file_path}",
-                "captured_at": p.captured_at.isoformat() if p.captured_at else None,
-            }
-            for p in entry.photos
-        ],
-    }
-
-
-def _safe_photo_name(original: Optional[str]) -> str:
-    """Generate a collision-proof filename, preserving extension if sensible."""
-    ext = ""
-    if original:
-        suffix = Path(original).suffix.lower()
-        if suffix in {".jpg", ".jpeg", ".png", ".webp", ".heic"}:
-            ext = suffix
-    if not ext:
-        ext = ".jpg"
-    return f"{uuid.uuid4().hex}{ext}"
-
-
-@router.get("/v2/{scheme_id}")
-def list_v2_entries(scheme_id: int, db: Session = Depends(get_db)):
-    """List the last 30 days of multi-entry DPRs for one scheme."""
-    entries: List[DPREntryV2] = (
-        db.query(DPREntryV2)
-        .filter(DPREntryV2.scheme_id == scheme_id)
-        .order_by(desc(DPREntryV2.report_date), desc(DPREntryV2.id))
-        .limit(200)  # generous cap; ~6 entries/day × 30 days
-        .all()
-    )
-    return [_serialize_entry(e) for e in entries]
-
-
-@router.get("/v2/{scheme_id}/areas")
-def list_v2_areas(scheme_id: int, db: Session = Depends(get_db)):
-    """Distinct non-empty area names for this scheme (for autocomplete)."""
-    rows = (
-        db.query(DPREntryV2.area_name)
-        .filter(
-            DPREntryV2.scheme_id == scheme_id,
-            DPREntryV2.area_name.isnot(None),
-            DPREntryV2.area_name != "",
-        )
-        .distinct()
-        .all()
-    )
-    # Return as a flat sorted list of strings.
-    return sorted({r[0] for r in rows if r[0]})
-
-
-@router.post("/v2/{scheme_id}")
-async def create_v2_entry(
-    scheme_id: int,
-    report_date: date = Form(...),
-    gps_lat: float = Form(...),
-    gps_lng: float = Form(...),
-    gps_accuracy_m: Optional[float] = Form(None),
-    area_name: Optional[str] = Form(None),
-    work_done: Optional[str] = Form(None),
-    issues: Optional[str] = Form(None),
-    weather: str = Form("Clear"),
-    manpower: int = Form(0),
-    created_by: Optional[str] = Form(None),
-    photos: List[UploadFile] = File(default=[]),
+@router.get("/actuals/{package_id}")
+def get_actuals(
+    package_id: int,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
     db: Session = Depends(get_db),
 ):
-    """Create one DPR entry (with zero-or-more photo files)."""
-    # GPS sanity — server-side mirror of the frontend's "required" rule.
-    if not (-90.0 <= gps_lat <= 90.0) or not (-180.0 <= gps_lng <= 180.0):
-        raise HTTPException(status_code=400, detail="GPS coordinates out of range")
+    """List daily_actuals rows for a package, optionally filtered by date range."""
+    rows = db.execute(text("""
+        SELECT
+            da.daily_actual_id,
+            da.activity_id,
+            da.actual_date,
+            da.actual_qty,
+            da.area_of_work,
+            da.manpower_count,
+            da.equipment_deployed,
+            da.weather_conditions,
+            da.remarks,
+            da.entered_via,
+            da.location_lat,
+            da.location_lng,
+            pa.activity_name,
+            COALESCE(um.uom_code, '') AS uom,
+            pa.scope_qty,
+            pa.sort_order
+        FROM daily_actuals da
+        JOIN plan_activities  pa ON da.activity_id = pa.activity_id
+        JOIN progress_plans   pp ON pa.plan_id      = pp.plan_id
+        LEFT JOIN uom_master  um ON um.uom_id        = pa.uom_id
+        WHERE pp.package_id = :pkg_id
+          AND (:d_from IS NULL OR da.actual_date >= CAST(:d_from AS date))
+          AND (:d_to   IS NULL OR da.actual_date <= CAST(:d_to   AS date))
+        ORDER BY da.actual_date DESC, pa.sort_order
+    """), {
+        "pkg_id": package_id,
+        "d_from": date_from,
+        "d_to":   date_to,
+    }).mappings().all()
+    return [dict(r) for r in rows]
 
-    entry = DPREntryV2(
-        scheme_id=scheme_id,
-        report_date=report_date,
-        gps_lat=gps_lat,
-        gps_lng=gps_lng,
-        gps_accuracy_m=gps_accuracy_m,
-        area_name=(area_name or "").strip() or None,
-        work_done=work_done,
-        issues=issues,
-        weather=weather or "Clear",
-        manpower=manpower or 0,
-        created_by=created_by,
-    )
-    db.add(entry)
-    db.flush()  # we need entry.id for the photo paths
 
-    if photos:
-        ym = report_date.strftime("%Y-%m")
-        target_dir = Path(UPLOAD_DIR) / DPR_SUBDIR / str(scheme_id) / ym
-        target_dir.mkdir(parents=True, exist_ok=True)
+# ─────────────────────── Get actuals for one date ────────────────────────────
 
-        for upload in photos:
-            if not upload or not upload.filename:
-                continue
-            content_type = (upload.content_type or "").lower()
-            if content_type and content_type not in ALLOWED_PHOTO_MIME:
-                # Soft-skip unknown types rather than aborting the whole entry —
-                # the rest of the data is still worth saving.
-                continue
+@router.get("/actuals/{package_id}/date/{actual_date}")
+def get_actuals_for_date(
+    package_id: int,
+    actual_date: str,
+    db: Session = Depends(get_db),
+):
+    """Return actuals + cumulative for a specific date (prefills entry form)."""
+    rows = db.execute(text("""
+        SELECT
+            pa.activity_id,
+            pa.activity_name,
+            COALESCE(um.uom_code, '') AS uom,
+            pa.scope_qty,
+            pa.sort_order,
+            COALESCE(da.actual_qty, 0)         AS actual_qty,
+            COALESCE(da.manpower_count, 0)      AS manpower_count,
+            COALESCE(da.weather_conditions, '') AS weather_conditions,
+            COALESCE(da.area_of_work, '')       AS area_of_work,
+            COALESCE(da.remarks, '')            AS remarks,
+            COALESCE(
+                (SELECT SUM(da2.actual_qty)
+                 FROM daily_actuals da2
+                 WHERE da2.activity_id = pa.activity_id
+                   AND da2.actual_date < CAST(:the_date AS date)
+                ), 0
+            ) AS cumulative_before,
+            COALESCE(
+                (SELECT SUM(mpe.planned_qty)
+                 FROM monthly_plan_entries mpe
+                 WHERE mpe.activity_id = pa.activity_id
+                   AND mpe.month_date = DATE_TRUNC('month', CAST(:the_date AS date))::date
+                ), 0
+            ) AS month_plan_qty
+        FROM plan_activities pa
+        JOIN progress_plans pp ON pa.plan_id = pp.plan_id
+        LEFT JOIN uom_master um ON um.uom_id  = pa.uom_id
+        LEFT JOIN daily_actuals da
+               ON da.activity_id = pa.activity_id
+              AND da.actual_date  = CAST(:the_date AS date)
+        WHERE pp.package_id = :pkg_id
+          AND pp.is_locked  = TRUE
+          AND pp.is_current = TRUE
+          AND NOT pa.is_deleted
+        ORDER BY pa.sort_order, pa.activity_id
+    """), {"pkg_id": package_id, "the_date": actual_date}).mappings().all()
+    return [dict(r) for r in rows]
 
-            data = await upload.read()
-            if not data:
-                continue
-            if len(data) > MAX_PHOTO_BYTES:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"Photo {upload.filename} exceeds 10 MB limit",
-                )
 
-            fname = _safe_photo_name(upload.filename)
-            (target_dir / fname).write_bytes(data)
+# ─────────────────────── Upsert actuals ──────────────────────────────────────
 
-            rel = f"{DPR_SUBDIR}/{scheme_id}/{ym}/{fname}"
-            db.add(DPRPhoto(dpr_entry_id=entry.id, file_path=rel))
+class ActualEntry(BaseModel):
+    activity_id: int
+    actual_date: str
+    actual_qty: float
+    area_of_work: Optional[str] = None
+    manpower_count: Optional[int] = None
+    equipment_deployed: Optional[str] = None
+    weather_conditions: Optional[str] = None
+    remarks: Optional[str] = None
+    entered_via: str = "web"
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
 
+
+class DailySubmission(BaseModel):
+    package_id: int
+    entries: List[ActualEntry]
+
+
+@router.post("/actuals")
+def upsert_actuals(payload: DailySubmission, db: Session = Depends(get_db)):
+    """Upsert daily_actuals rows — one per (activity_id, actual_date)."""
+    upserted = 0
+    for e in payload.entries:
+        db.execute(text("""
+            INSERT INTO daily_actuals
+                (activity_id, actual_date, actual_qty, area_of_work,
+                 manpower_count, equipment_deployed, weather_conditions,
+                 remarks, entered_via, location_lat, location_lng)
+            VALUES
+                (:act_id, CAST(:act_date AS date), :qty, :area,
+                 :manpower, :equip, :weather,
+                 :remarks, :via, :lat, :lng)
+            ON CONFLICT (activity_id, actual_date) DO UPDATE SET
+                actual_qty         = EXCLUDED.actual_qty,
+                area_of_work       = COALESCE(EXCLUDED.area_of_work,       daily_actuals.area_of_work),
+                manpower_count     = COALESCE(EXCLUDED.manpower_count,     daily_actuals.manpower_count),
+                equipment_deployed = COALESCE(EXCLUDED.equipment_deployed, daily_actuals.equipment_deployed),
+                weather_conditions = COALESCE(EXCLUDED.weather_conditions, daily_actuals.weather_conditions),
+                remarks            = COALESCE(EXCLUDED.remarks,            daily_actuals.remarks),
+                entered_via        = EXCLUDED.entered_via,
+                updated_at         = CURRENT_TIMESTAMP
+        """), {
+            "act_id":   e.activity_id,
+            "act_date": e.actual_date,
+            "qty":      e.actual_qty,
+            "area":     e.area_of_work,
+            "manpower": e.manpower_count,
+            "equip":    e.equipment_deployed,
+            "weather":  e.weather_conditions,
+            "remarks":  e.remarks,
+            "via":      e.entered_via,
+            "lat":      e.location_lat,
+            "lng":      e.location_lng,
+        })
+        upserted += 1
     db.commit()
-    db.refresh(entry)
-    return _serialize_entry(entry)
+    return {"ok": True, "upserted": upserted}
 
 
-@router.delete("/v2/entry/{entry_id}")
-def delete_v2_entry(entry_id: int, db: Session = Depends(get_db)):
-    """Hard-delete an entry. Photos cascade via DB; we also unlink the files."""
-    entry = db.query(DPREntryV2).filter(DPREntryV2.id == entry_id).first()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Entry not found")
+# ─────────────────────── Monthly actuals summary ─────────────────────────────
 
-    # Best-effort file cleanup before the DB cascade nukes the rows.
-    for p in list(entry.photos):
-        try:
-            (Path(UPLOAD_DIR) / p.file_path).unlink(missing_ok=True)
-        except Exception:
-            pass
+@router.get("/summary/{package_id}")
+def get_monthly_summary(
+    package_id: int,
+    month: str = Query(..., description="YYYY-MM"),
+    db: Session = Depends(get_db),
+):
+    """Per-activity summary for a month: month_plan / month_actual / cumulative / progress_pct."""
+    year, mon = month.split("-")
+    month_start = f"{year}-{mon}-01"
 
-    db.delete(entry)
+    rows = db.execute(text("""
+        SELECT
+            pa.activity_id,
+            pa.activity_name,
+            COALESCE(um.uom_code, '') AS uom,
+            pa.scope_qty,
+            pa.sort_order,
+            COALESCE(
+                (SELECT SUM(mpe.planned_qty)
+                 FROM monthly_plan_entries mpe
+                 WHERE mpe.activity_id = pa.activity_id
+                   AND mpe.month_date  = CAST(:m_start AS date)
+                ), 0
+            ) AS month_plan,
+            COALESCE(
+                (SELECT SUM(da.actual_qty)
+                 FROM daily_actuals da
+                 WHERE da.activity_id = pa.activity_id
+                   AND DATE_TRUNC('month', da.actual_date) = CAST(:m_start AS date)
+                ), 0
+            ) AS month_actual,
+            COALESCE(
+                (SELECT SUM(da2.actual_qty)
+                 FROM daily_actuals da2
+                 WHERE da2.activity_id = pa.activity_id
+                ), 0
+            ) AS cum_actual
+        FROM plan_activities pa
+        JOIN progress_plans pp ON pa.plan_id = pp.plan_id
+        LEFT JOIN uom_master um ON um.uom_id  = pa.uom_id
+        WHERE pp.package_id = :pkg_id
+          AND pp.is_locked  = TRUE
+          AND pp.is_current = TRUE
+          AND NOT pa.is_deleted
+        ORDER BY pa.sort_order, pa.activity_id
+    """), {"pkg_id": package_id, "m_start": month_start}).mappings().all()
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        scope = float(d["scope_qty"] or 0)
+        d["progress_pct"] = round(float(d["cum_actual"]) / scope * 100, 1) if scope > 0 else 0.0
+        result.append(d)
+    return result
+
+
+# ─────────────────────── Field observations ──────────────────────────────────
+
+class ObservationCreate(BaseModel):
+    package_id: int
+    activity_id: Optional[int] = None
+    observation_type: str = "note"
+    title: Optional[str] = None
+    description: str
+    severity: Optional[str] = None
+    weather: Optional[str] = None
+    location_lat: Optional[float] = None
+    location_lng: Optional[float] = None
+    location_label: Optional[str] = None
+    observed_by: int = 1
+
+
+@router.post("/observations")
+def create_observation(payload: ObservationCreate, db: Session = Depends(get_db)):
+    row = db.execute(text("""
+        INSERT INTO field_observations
+            (package_id, activity_id, observation_type, title, description,
+             severity, weather, location_lat, location_lng, location_label,
+             observed_by)
+        VALUES
+            (:pkg_id, :act_id, :obs_type, :title, :desc,
+             :severity, :weather, :lat, :lng, :label, :obs_by)
+        RETURNING observation_id
+    """), {
+        "pkg_id":   payload.package_id,
+        "act_id":   payload.activity_id,
+        "obs_type": payload.observation_type,
+        "title":    payload.title,
+        "desc":     payload.description,
+        "severity": payload.severity,
+        "weather":  payload.weather,
+        "lat":      payload.location_lat,
+        "lng":      payload.location_lng,
+        "label":    payload.location_label,
+        "obs_by":   payload.observed_by,
+    }).mappings().first()
     db.commit()
-    return {"ok": True, "deleted_id": entry_id}
+    return {"ok": True, "observation_id": row["observation_id"]}
 
 
-@router.delete("/v2/photo/{photo_id}")
-def delete_v2_photo(photo_id: int, db: Session = Depends(get_db)):
-    """Remove a single photo without deleting its parent entry."""
-    photo = db.query(DPRPhoto).filter(DPRPhoto.id == photo_id).first()
-    if not photo:
-        raise HTTPException(status_code=404, detail="Photo not found")
-    try:
-        (Path(UPLOAD_DIR) / photo.file_path).unlink(missing_ok=True)
-    except Exception:
-        pass
-    db.delete(photo)
-    db.commit()
-    return {"ok": True, "deleted_id": photo_id}
+@router.get("/observations/{package_id}")
+def get_observations(
+    package_id: int,
+    limit: int = Query(50),
+    db: Session = Depends(get_db),
+):
+    rows = db.execute(text("""
+        SELECT
+            fo.observation_id,
+            fo.package_id,
+            fo.activity_id,
+            fo.observation_type,
+            fo.title,
+            fo.description,
+            fo.severity,
+            fo.weather,
+            fo.location_lat,
+            fo.location_lng,
+            fo.location_label,
+            fo.photo_urls,
+            fo.is_resolved,
+            fo.observed_at,
+            pa.activity_name
+        FROM field_observations fo
+        LEFT JOIN plan_activities pa ON fo.activity_id = pa.activity_id
+        WHERE fo.package_id = :pkg_id
+          AND NOT fo.is_deleted
+        ORDER BY fo.observed_at DESC
+        LIMIT :lim
+    """), {"pkg_id": package_id, "lim": limit}).mappings().all()
+    return [dict(r) for r in rows]

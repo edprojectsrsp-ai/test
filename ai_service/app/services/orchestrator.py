@@ -210,6 +210,12 @@ async def chat_once(
         last_resp = resp
 
         if resp.tool_calls:
+            # Add the assistant turn with proper tool_calls array (required by OpenAI/Groq format)
+            msgs.append(ChatMessage(
+                role="assistant",
+                content=resp.content,  # may be None or a preamble
+                tool_calls=resp.tool_calls,
+            ))
             for tc in resp.tool_calls:
                 result = call_tool(tc.name, tc.arguments)
                 tools_called.append({"tool": tc.name, "args": tc.arguments, "result": result})
@@ -220,8 +226,13 @@ async def chat_once(
                     cited_document_ids.update(result.get("cited_document_ids") or [])
                     cited_chunk_ids.update(result.get("cited_chunk_ids") or [])
 
-                msgs.append(ChatMessage(role="assistant", content=f"[TOOL CALL] {tc.name} {tc.arguments}"))
-                msgs.append(ChatMessage(role="tool", content=json.dumps(result)))
+                # Tool result MUST include tool_call_id matching the ToolCall.id
+                msgs.append(ChatMessage(
+                    role="tool",
+                    content=json.dumps(result),
+                    tool_call_id=tc.id,
+                    name=tc.name,
+                ))
             continue
 
         final_text = (resp.content or "").strip()

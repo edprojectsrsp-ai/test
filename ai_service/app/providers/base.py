@@ -95,6 +95,28 @@ class LLMProvider(ABC):
         return f"<{self.__class__.__name__} model={self.model_id}>"
 
 
+def _strip_defaults(schema: dict) -> dict:
+    """Recursively remove 'default' keys from JSON Schema.
+
+    Groq (and strict OpenAI-compatible providers) return 400 Bad Request
+    when tool parameter schemas contain 'default' — it is not part of the
+    JSON Schema subset they accept for function calling.
+    """
+    if not isinstance(schema, dict):
+        return schema
+    cleaned = {}
+    for k, v in schema.items():
+        if k == "default":
+            continue  # drop it
+        if isinstance(v, dict):
+            cleaned[k] = _strip_defaults(v)
+        elif isinstance(v, list):
+            cleaned[k] = [_strip_defaults(i) if isinstance(i, dict) else i for i in v]
+        else:
+            cleaned[k] = v
+    return cleaned
+
+
 def normalize_tools_to_openai_schema(tools: list[dict]) -> list[dict]:
     """Convert our internal tool definitions to OpenAI-style schema.
 
@@ -108,7 +130,9 @@ def normalize_tools_to_openai_schema(tools: list[dict]) -> list[dict]:
             "function": {
                 "name": t["name"],
                 "description": t.get("description", ""),
-                "parameters": t.get("parameters", {"type": "object", "properties": {}}),
+                "parameters": _strip_defaults(
+                    t.get("parameters", {"type": "object", "properties": {}})
+                ),
             }
         })
     return out

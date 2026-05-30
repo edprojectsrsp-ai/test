@@ -18,6 +18,7 @@ import {
   Truck,
   Receipt,
   FileText,
+  Brain,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -31,6 +32,7 @@ type ModuleItem = {
 
 const modules: ModuleItem[] = [
   { name: "Dashboard", icon: LayoutDashboard, path: "/dashboard" },
+  { name: "AI Assistant", icon: Brain, path: "/ai" },
   { name: "Reports", icon: BarChart3, path: "/reports" },
   { name: "Add Scheme", icon: Plus, path: "/add" },
   { name: "View Schemes", icon: FolderGit2, path: "/view" },

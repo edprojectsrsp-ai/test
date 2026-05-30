@@ -1,152 +1,193 @@
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+"""Corporate AMR Master API — live-computed from t5 schema.
+
+Correct column names (verified):
+  scheme_master:   sanctioned_cost_cr, planned_completion_date, scheme_owner_name
+  tender_cycles:   cycle_status, awarded_value_cr, estimated_value_cr (keyed by package_id)
+  contracts:       contract_no, effective_date, contract_value_cr (keyed by package_id)
+  packages:        planned_end_date, expected_completion_date
+"""
+
+from __future__ import annotations
+
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from app.core.database import get_db
 
 router = APIRouter()
 
 
-class ActivityData(BaseModel):
-    name: str
-    uom: str
-    scope: float
-    weightage: float
-    months: dict[str, float]
-
-
-class PlanCreateRequest(BaseModel):
-    scheme_id: int
-    fy_year: str
-    plan_name: str
-    revision_number: str
-    effective_month: str
-    plan_status: str
-    activities: list[ActivityData]
-
-
-@router.post("/create")
-def create_corporate_plan(payload: PlanCreateRequest, db: Session = Depends(get_db)):
-    try:
-        effective_month_map = {
-            "Apr": "04",
-            "April": "04",
-            "May": "05",
-            "Jun": "06",
-            "June": "06",
-            "Jul": "07",
-            "July": "07",
-            "Aug": "08",
-            "August": "08",
-            "Sep": "09",
-            "September": "09",
-            "Oct": "10",
-            "October": "10",
-            "Nov": "11",
-            "November": "11",
-            "Dec": "12",
-            "December": "12",
-            "Jan": "01",
-            "January": "01",
-            "Feb": "02",
-            "February": "02",
-            "Mar": "03",
-            "March": "03",
-        }
-        eff_mm = effective_month_map.get(payload.effective_month)
-        if not eff_mm:
-            raise HTTPException(status_code=400, detail="Invalid effective_month value.")
-
-        header_sql = text(
-            """
-            INSERT INTO corporate_plan_header
-            (scheme_id, plan_name, financial_year, is_active, plan_status, version_no, effective_month)
-            VALUES (:s_id, :name, :fy, true, :status, 1, :eff_month)
-            RETURNING plan_id
-            """
+@router.get("/corporate/amr")
+def get_corporate_amr(
+    scheme_type: Optional[str] = Query(None, description="plant|corporate|dummy"),
+    db: Session = Depends(get_db),
+):
+    """Corporate AMR grid — one row per scheme."""
+    rows = db.execute(text("""
+        WITH scheme_phy AS (
+            SELECT
+                p.scheme_id,
+                ROUND(AVG(
+                    COALESCE(
+                        da_sum.actual_qty / NULLIF(pa_sum.scope_total, 0) * 100, 0
+                    )
+                ), 1) AS avg_physical_pct
+            FROM packages p
+            JOIN progress_plans pp ON pp.package_id = p.package_id
+                AND pp.is_locked = TRUE AND pp.is_current = TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(scope_qty) AS scope_total
+                FROM plan_activities
+                WHERE plan_id = pp.plan_id AND NOT is_deleted AND scope_qty > 0
+            ) pa_sum ON TRUE
+            LEFT JOIN LATERAL (
+                SELECT SUM(da.actual_qty) AS actual_qty
+                FROM daily_actuals da
+                JOIN plan_activities pa2 ON da.activity_id = pa2.activity_id
+                WHERE pa2.plan_id = pp.plan_id AND NOT pa2.is_deleted AND pa2.scope_qty > 0
+            ) da_sum ON TRUE
+            WHERE NOT p.is_deleted
+            GROUP BY p.scheme_id
+        ),
+        latest_contract AS (
+            SELECT DISTINCT ON (p.scheme_id)
+                p.scheme_id,
+                c.contractor_name,
+                c.loa_date,
+                c.effective_date,
+                c.contract_value_cr
+            FROM contracts c
+            JOIN packages p ON c.package_id = p.package_id
+            WHERE NOT c.is_deleted
+            ORDER BY p.scheme_id, c.contract_id DESC
+        ),
+        latest_tender AS (
+            SELECT DISTINCT ON (p.scheme_id)
+                p.scheme_id,
+                tc.cycle_status,
+                tc.awarded_value_cr,
+                tc.estimated_value_cr,
+                tc.nit_date
+            FROM tender_cycles tc
+            JOIN packages p ON tc.package_id = p.package_id
+            WHERE NOT tc.is_deleted
+            ORDER BY p.scheme_id, tc.cycle_no DESC
         )
+        SELECT
+            sm.scheme_id,
+            sm.scheme_name,
+            sm.scheme_type,
+            sm.current_status,
+            COALESCE(sm.sanctioned_cost_cr, sm.estimated_cost_cr, sm.anticipated_cost_cr, 0) AS total_cost_cr,
+            sm.planned_completion_date,
+            sm.scheme_owner_name,
+            ROUND(
+                ((CURRENT_DATE - sm.planned_completion_date)::float / 30.0)::numeric, 1
+            ) AS delay_months,
+            COALESCE(sp.avg_physical_pct, 0)  AS physical_pct,
+            lc.contractor_name,
+            lc.loa_date,
+            lc.contract_value_cr,
+            lt.cycle_status        AS tender_status,
+            lt.awarded_value_cr,
+            lt.estimated_value_cr
+        FROM scheme_master sm
+        LEFT JOIN scheme_phy       sp ON sp.scheme_id = sm.scheme_id
+        LEFT JOIN latest_contract  lc ON lc.scheme_id = sm.scheme_id
+        LEFT JOIN latest_tender    lt ON lt.scheme_id = sm.scheme_id
+        WHERE NOT sm.is_deleted
+          AND (:s_type IS NULL OR sm.scheme_type = :s_type)
+        ORDER BY sm.scheme_name
+    """), {"s_type": scheme_type}).mappings().all()
 
-        res = db.execute(
-            header_sql,
-            {
-                "s_id": payload.scheme_id,
-                "name": payload.plan_name,
-                "fy": payload.fy_year,
-                "status": payload.plan_status,
-                "eff_month": f"2026-{eff_mm}-01",
-            },
+    result = []
+    for r in rows:
+        d = dict(r)
+        delay = float(d.get("delay_months") or 0)
+        d["delay_category"] = (
+            "on_time"  if delay <= 0 else
+            "minor"    if delay <= 3 else
+            "moderate" if delay <= 6 else
+            "critical"
         )
-        plan_id = res.scalar()
+        d["delay_color"] = {
+            "on_time":  "#16a34a",
+            "minor":    "#f59e0b",
+            "moderate": "#f97316",
+            "critical": "#dc2626",
+        }[d["delay_category"]]
+        result.append(d)
+    return result
 
-        for act in payload.activities:
-            act_sql = text(
-                """
-                INSERT INTO corporate_plan_activities
-                (plan_id, activity_name, uom, scope, weightage)
-                VALUES (:p_id, :name, :uom, :scope, :weight)
-                RETURNING plan_activity_id
-                """
-            )
-            act_res = db.execute(
-                act_sql,
-                {
-                    "p_id": plan_id,
-                    "name": act.name,
-                    "uom": act.uom,
-                    "scope": act.scope,
-                    "weight": act.weightage,
-                },
-            )
-            act_id = act_res.scalar()
 
-            for month_name, qty in act.months.items():
-                if qty > 0:
-                    month_sql = text(
-                        """
-                        INSERT INTO corporate_plan_monthly
-                        (plan_id, plan_activity_id, plan_month, planned_qty)
-                        VALUES (:p_id, :a_id, :m_date, :qty)
-                        """
-                    )
-                    month_map = {
-                        "Apr": "04",
-                        "May": "05",
-                        "Jun": "06",
-                        "Jul": "07",
-                        "Aug": "08",
-                        "Sep": "09",
-                        "Oct": "10",
-                        "Nov": "11",
-                        "Dec": "12",
-                        "Jan": "01",
-                        "Feb": "02",
-                        "Mar": "03",
-                    }
-                    year = (
-                        "2026"
-                        if month_name
-                        in ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-                        else "2027"
-                    )
+@router.get("/corporate/scheme/{scheme_id}")
+def get_scheme_detail(scheme_id: int, db: Session = Depends(get_db)):
+    """Full detail for one scheme: packages, tender cycles, contract."""
+    scheme = db.execute(text("""
+        SELECT scheme_id, scheme_name, scheme_type, current_status,
+               COALESCE(sanctioned_cost_cr, estimated_cost_cr, 0) AS total_cost_cr,
+               planned_completion_date, scheme_owner_name
+        FROM scheme_master WHERE scheme_id = :s_id AND NOT is_deleted
+    """), {"s_id": scheme_id}).mappings().first()
 
-                    db.execute(
-                        month_sql,
-                        {
-                            "p_id": plan_id,
-                            "a_id": act_id,
-                            "m_date": f"{year}-{month_map[month_name]}-01",
-                            "qty": float(qty),
-                        },
-                    )
+    if not scheme:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Scheme not found")
 
-        db.commit()
-        return {
-            "status": "success",
-            "message": f"Plan saved as {payload.plan_status}!",
-            "plan_id": plan_id,
-        }
+    packages = db.execute(text("""
+        SELECT p.package_id, p.package_name, p.package_value_cr,
+               p.planned_end_date,
+               c.contractor_name, c.loa_date, c.effective_date,
+               c.contract_value_cr,
+               CASE WHEN pp.plan_id IS NOT NULL THEN TRUE ELSE FALSE END AS has_plan
+        FROM packages p
+        LEFT JOIN contracts c ON c.package_id = p.package_id AND NOT c.is_deleted
+        LEFT JOIN progress_plans pp ON pp.package_id = p.package_id
+            AND pp.is_locked = TRUE AND pp.is_current = TRUE
+        WHERE p.scheme_id = :s_id AND NOT p.is_deleted
+        ORDER BY p.package_id
+    """), {"s_id": scheme_id}).mappings().all()
 
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+    tenders = db.execute(text("""
+        SELECT tc.cycle_no, tc.cycle_status, tc.estimated_value_cr, tc.awarded_value_cr,
+               tc.nit_date, tc.tod_original_date, tc.nit_number,
+               p.package_name
+        FROM tender_cycles tc
+        JOIN packages p ON tc.package_id = p.package_id
+        WHERE p.scheme_id = :s_id AND NOT tc.is_deleted
+        ORDER BY tc.cycle_no
+    """), {"s_id": scheme_id}).mappings().all()
+
+    return {
+        "scheme":   dict(scheme),
+        "packages": [dict(r) for r in packages],
+        "tenders":  [dict(r) for r in tenders],
+    }
+
+
+@router.get("/corporate/kpis")
+def get_corporate_kpis(db: Session = Depends(get_db)):
+    """High-level KPIs: counts, cost, avg delay."""
+    row = db.execute(text("""
+        SELECT
+            COUNT(*)                                                              AS total_schemes,
+            COUNT(*) FILTER (WHERE current_status = 'ongoing')                   AS ongoing,
+            COUNT(*) FILTER (WHERE current_status = 'under_tendering')           AS under_tendering,
+            COUNT(*) FILTER (WHERE current_status = 'closed')                    AS closed,
+            ROUND(SUM(COALESCE(sanctioned_cost_cr, estimated_cost_cr, 0)), 2)    AS total_cost_cr,
+            ROUND(
+                AVG(
+                    CASE
+                        WHEN planned_completion_date IS NOT NULL
+                         AND planned_completion_date < CURRENT_DATE
+                        THEN (CURRENT_DATE - planned_completion_date)::float / 30.0
+                        ELSE 0
+                    END
+                )::numeric, 1
+            ) AS avg_delay_months
+        FROM scheme_master
+        WHERE NOT is_deleted
+    """)).mappings().first()
+    return dict(row) if row else {}
