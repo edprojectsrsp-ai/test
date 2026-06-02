@@ -364,25 +364,28 @@ def get_capex_snapshot(scheme_id: int, db: Session = Depends(get_db)):
         if not scheme:
             raise HTTPException(status_code=404, detail="Scheme not found")
 
-        # Get the most recent BE plan row for this scheme
+        # Sum across all Item rows for this scheme (get most recent plan's values)
         be_row = db.execute(text("""
-            SELECT v.cumulative_exp_till_last_fy, v.be_fy, v.re_fy
+            SELECT
+                COALESCE(SUM(v.cumulative_exp_till_last_fy), 0) AS cumulative_exp_till_last_fy,
+                COALESCE(SUM(v.be_fy), 0) AS be_fy,
+                COALESCE(SUM(v.re_fy), 0) AS re_fy
             FROM capex_plan_rows r
             JOIN capex_plan_header h ON h.id = r.plan_id
             JOIN capex_plan_values v ON v.plan_row_id = r.id
-            WHERE r.scheme_id = :sid
-              AND r.row_level = 'Item'
-            ORDER BY h.id DESC
-            LIMIT 1
+            WHERE r.scheme_id = :sid AND r.row_level = 'Item'
         """), {"sid": scheme_id}).first()
 
-        # Sum actuals for this scheme
+        # Current FY actuals for this scheme
+        from datetime import date as _date
+        _today = _date.today()
+        _cur_fy = f"{_today.year}-{(_today.year + 1) % 100:02d}" if _today.month >= 4 else f"{_today.year - 1}-{_today.year % 100:02d}"
         actuals_sum = db.execute(text("""
             SELECT COALESCE(SUM(a.amount), 0) AS total_actuals
             FROM capex_actuals a
             JOIN capex_plan_rows r ON r.id = a.plan_row_id
-            WHERE r.scheme_id = :sid
-        """), {"sid": scheme_id}).scalar() or 0
+            WHERE r.scheme_id = :sid AND a.fy_year = :fy
+        """), {"sid": scheme_id, "fy": _cur_fy}).scalar() or 0
 
         cum_last = float(be_row.cumulative_exp_till_last_fy) if be_row and be_row.cumulative_exp_till_last_fy else 0.0
         be_fy = float(be_row.be_fy) if be_row and be_row.be_fy else 0.0
@@ -446,3 +449,199 @@ def get_dpr_summary(scheme_id: int, limit: int = 5, db: Session = Depends(get_db
         ]
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DPR summary failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 6. GET /scheme-detail  — project identity + contractor + stage milestones
+# ---------------------------------------------------------------------------
+@router.get("/scheme-detail")
+def get_scheme_detail(scheme_id: int, db: Session = Depends(get_db)):
+    try:
+        scheme = db.execute(text("""
+            SELECT scheme_id, scheme_name, scheme_type, current_status,
+                   estimated_cost_cr, sanctioned_cost_cr, wbs_element, amr_no,
+                   planned_start_date, planned_completion_date,
+                   actual_start_date, actual_completion_date
+            FROM scheme_master
+            WHERE scheme_id = :sid AND is_deleted = FALSE
+        """), {"sid": scheme_id}).first()
+
+        if not scheme:
+            raise HTTPException(404, "Scheme not found")
+
+        # Latest active contract
+        contract = db.execute(text("""
+            SELECT c.contract_no, c.contractor_name, c.contract_value_cr,
+                   c.effective_date, c.schedule_completion_date, p.package_name
+            FROM contracts c
+            JOIN packages p ON p.package_id = c.package_id
+            WHERE p.scheme_id = :sid
+              AND c.is_active = TRUE AND c.is_deleted = FALSE
+            ORDER BY c.contract_id DESC LIMIT 1
+        """), {"sid": scheme_id}).first()
+
+        # Stage-1 approval milestones
+        s1 = db.execute(text("""
+            SELECT cod_date, corporate_pag_date, chairman_approval_date,
+                   sail_board_date, sanction_date, order_date, cost_gross_cr
+            FROM stage1_approvals
+            WHERE scheme_id = :sid AND is_deleted = FALSE AND is_current = TRUE
+            ORDER BY stage1_id DESC LIMIT 1
+        """), {"sid": scheme_id}).first()
+
+        # Stage-2 approval milestones
+        s2 = db.execute(text("""
+            SELECT cod_date, pag_date, chairman_approval_date,
+                   sail_board_date, empowered_committee_date,
+                   sanction_date, order_date, firmed_up_cost_gross_cr
+            FROM stage2_approvals
+            WHERE scheme_id = :sid AND is_deleted = FALSE AND is_current = TRUE
+            ORDER BY stage2_id DESC LIMIT 1
+        """), {"sid": scheme_id}).first()
+
+        # Tender cycle — NIT + TOD
+        tender = db.execute(text("""
+            SELECT tc.nit_date, tc.tod_original_date, tc.awarded_value_cr, tc.cycle_status
+            FROM tender_cycles tc
+            JOIN packages p ON p.package_id = tc.package_id
+            WHERE p.scheme_id = :sid AND tc.is_current = TRUE AND tc.is_deleted = FALSE
+            ORDER BY tc.tender_cycle_id DESC LIMIT 1
+        """), {"sid": scheme_id}).first()
+
+        # Delay
+        today = date.today()
+        sched_date = None
+        if contract and contract.schedule_completion_date:
+            sched_date = contract.schedule_completion_date
+        elif scheme.planned_completion_date:
+            sched_date = scheme.planned_completion_date
+
+        delay_days = max(0, (today - sched_date).days) if sched_date else 0
+        if delay_days <= 0:
+            status_key, status_text, status_color = "on_track", "On Track", "green"
+        elif delay_days <= 90:
+            status_key, status_text, status_color = "at_risk", "At Risk", "yellow"
+        else:
+            status_key, status_text, status_color = "delayed", "Delayed", "red"
+
+        def _d(v):
+            return v.isoformat() if v else None
+
+        return {
+            "scheme_id": scheme.scheme_id,
+            "scheme_name": scheme.scheme_name,
+            "scheme_type": scheme.scheme_type,
+            "current_status": scheme.current_status,
+            "estimated_cost_cr": float(scheme.estimated_cost_cr) if scheme.estimated_cost_cr else None,
+            "sanctioned_cost_cr": float(scheme.sanctioned_cost_cr) if scheme.sanctioned_cost_cr else None,
+            "wbs_element": scheme.wbs_element,
+            "amr_no": scheme.amr_no,
+            "planned_start_date": _d(scheme.planned_start_date),
+            "planned_completion_date": _d(scheme.planned_completion_date),
+            "actual_start_date": _d(scheme.actual_start_date),
+            "contractor": contract.contractor_name if contract else None,
+            "contract_no": contract.contract_no if contract else None,
+            "contract_value_cr": float(contract.contract_value_cr) if contract and contract.contract_value_cr else None,
+            "effective_date": _d(contract.effective_date) if contract else None,
+            "schedule_completion_date": _d(contract.schedule_completion_date) if contract else None,
+            "delay_days": delay_days,
+            "status_key": status_key,
+            "status_text": status_text,
+            "status_color": status_color,
+            "stage1": {
+                "cod_date": _d(s1.cod_date),
+                "corporate_pag_date": _d(s1.corporate_pag_date),
+                "chairman_approval_date": _d(s1.chairman_approval_date),
+                "sail_board_date": _d(s1.sail_board_date),
+                "sanction_date": _d(s1.sanction_date),
+                "order_date": _d(s1.order_date),
+                "cost_gross_cr": float(s1.cost_gross_cr) if s1.cost_gross_cr else None,
+            } if s1 else None,
+            "stage2": {
+                "cod_date": _d(s2.cod_date),
+                "pag_date": _d(s2.pag_date),
+                "chairman_approval_date": _d(s2.chairman_approval_date),
+                "sail_board_date": _d(s2.sail_board_date),
+                "empowered_committee_date": _d(s2.empowered_committee_date),
+                "sanction_date": _d(s2.sanction_date),
+                "order_date": _d(s2.order_date),
+                "firmed_up_cost_gross_cr": float(s2.firmed_up_cost_gross_cr) if s2.firmed_up_cost_gross_cr else None,
+            } if s2 else None,
+            "tender": {
+                "nit_date": _d(tender.nit_date),
+                "tod_original_date": _d(tender.tod_original_date),
+                "awarded_value_cr": float(tender.awarded_value_cr) if tender.awarded_value_cr else None,
+                "cycle_status": tender.cycle_status,
+            } if tender else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Scheme detail failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 7. GET /corporate-capex  — all-schemes CAPEX summary
+# ---------------------------------------------------------------------------
+@router.get("/corporate-capex")
+def get_corporate_capex(db: Session = Depends(get_db)):
+    try:
+        rows = db.execute(text("""
+            SELECT
+                s.scheme_id, s.scheme_name, s.scheme_type,
+                COALESCE(s.sanctioned_cost_cr, s.estimated_cost_cr, 0) AS sanctioned,
+                COALESCE(SUM(v.cumulative_exp_till_last_fy), 0)         AS cum_last,
+                COALESCE(SUM(v.be_fy), 0)                               AS be_fy,
+                COALESCE(SUM(v.re_fy), 0)                               AS re_fy,
+                COALESCE((
+                    SELECT SUM(a.amount)
+                    FROM capex_actuals a
+                    JOIN capex_plan_rows r2 ON r2.id = a.plan_row_id
+                    WHERE r2.scheme_id = s.scheme_id
+                ), 0) AS actuals_fy
+            FROM scheme_master s
+            LEFT JOIN capex_plan_rows r
+                   ON r.scheme_id = s.scheme_id AND r.row_level = 'Item'
+            LEFT JOIN capex_plan_header h ON h.id = r.plan_id
+            LEFT JOIN capex_plan_values v ON v.plan_row_id = r.id
+            WHERE s.is_deleted = FALSE
+            GROUP BY s.scheme_id, s.scheme_name, s.scheme_type,
+                     s.sanctioned_cost_cr, s.estimated_cost_cr
+            ORDER BY s.scheme_id
+        """)).fetchall()
+
+        schemes = []
+        for r in rows:
+            sanctioned = float(r.sanctioned or 0)
+            cum = float(r.cum_last or 0)
+            be = float(r.be_fy or 0)
+            re = float(r.re_fy or 0)
+            act = float(r.actuals_fy or 0)
+            total_spent = cum + act
+            pct = round(total_spent / sanctioned * 100, 1) if sanctioned > 0 else 0.0
+            schemes.append({
+                "scheme_id": r.scheme_id,
+                "scheme_name": r.scheme_name,
+                "scheme_type": r.scheme_type,
+                "sanctioned_cost_cr": round(sanctioned, 2),
+                "cum_last_fy": round(cum, 2),
+                "be_fy": round(be, 2),
+                "re_fy": round(re, 2),
+                "actuals_fy": round(act, 2),
+                "total_spent": round(total_spent, 2),
+                "pct_spent": pct,
+                "variance_be": round(act - be, 2),
+            })
+
+        total = {
+            "sanctioned_cost_cr": round(sum(x["sanctioned_cost_cr"] for x in schemes), 2),
+            "cum_last_fy": round(sum(x["cum_last_fy"] for x in schemes), 2),
+            "be_fy": round(sum(x["be_fy"] for x in schemes), 2),
+            "re_fy": round(sum(x["re_fy"] for x in schemes), 2),
+            "actuals_fy": round(sum(x["actuals_fy"] for x in schemes), 2),
+            "total_spent": round(sum(x["total_spent"] for x in schemes), 2),
+        }
+
+        return {"schemes": schemes, "total": total}
+    except Exception as e:
+        raise HTTPException(500, f"Corporate CAPEX failed: {e}")

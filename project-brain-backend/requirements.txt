@@ -5,6 +5,7 @@ passlib[bcrypt]
 sqlalchemy
 psycopg2-binary
 python-dotenv
+htmldocx
 email-validator
 pydantic-settings
 bcrypt<4.1

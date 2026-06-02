@@ -60,6 +60,43 @@ and keep it executive-friendly (no jargon dumps).
 """
 
 
+def get_active_system_prompt() -> str:
+    """Load the saved system prompt from DB if available, otherwise use the default."""
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT body
+            FROM record_notes
+            WHERE note_type='ai_config'
+              AND extra_fields->>'config_key' = 'system_prompt'
+              AND is_deleted=FALSE
+            ORDER BY updated_at DESC NULLS LAST
+            LIMIT 1
+            """
+        )
+        row = cur.fetchone()
+        conn.close()
+        if row and row[0]:
+            return row[0]
+    except Exception:
+        pass
+    return SYSTEM_PROMPT
+
+
+def get_prompt_with_portfolio_hint() -> str:
+    """Add explicit guidance for portfolio-wide list requests."""
+    return (
+        get_active_system_prompt()
+        + "\n\n"
+        + 'For "ongoing projects", "ongoing schemes", "active packages", or "projects in progress", '
+        + 'use list_packages(status="in_progress") first. Do not ask for a specific name or ID for '
+        + 'portfolio-wide requests. When asked to list ongoing projects, output a markdown table with '
+        + "scheme/package name, status, and cost."
+    )
+
+
 def get_db():
     dsn = (
         os.environ.get("PROJECT_BRAIN_DB_URL")
@@ -181,7 +218,7 @@ async def chat_once(
     router = get_router()
 
     history = load_conversation_history(conversation_id)
-    msgs = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + history + [
+    msgs = [ChatMessage(role="system", content=get_prompt_with_portfolio_hint())] + history + [
         ChatMessage(role="user", content=message)
     ]
 
@@ -284,7 +321,7 @@ async def chat_stream(
     router = get_router()
 
     history = load_conversation_history(conversation_id)
-    msgs = [ChatMessage(role="system", content=SYSTEM_PROMPT)] + history + [
+    msgs = [ChatMessage(role="system", content=get_prompt_with_portfolio_hint())] + history + [
         ChatMessage(role="user", content=message)
     ]
     task_type = await router.classify(message)

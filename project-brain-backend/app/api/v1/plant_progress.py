@@ -1,3 +1,15 @@
+"""
+Plant Progress router — t5 schema (rewritten from t3).
+
+plant_progress_monthly in t5 is keyed by (package_id, month_date) and stores
+planned_progress_pct / actual_progress_pct / cumulative_planned_pct / cumulative_actual_pct / risk_level.
+
+Endpoints:
+  GET  /plant/workspace?year=&month=          — bulk-edit grid for all plant schemes
+  POST /plant/save-workspace                  — upsert progress for a month
+  GET  /plant/monthly-trend?package_id=       — last 12 months trend for one package
+"""
+
 from datetime import date
 from typing import List, Optional
 
@@ -11,152 +23,160 @@ from app.core.database import get_db
 router = APIRouter()
 
 
-# --- PYDANTIC SCHEMAS ---
 class PlantGridRow(BaseModel):
-    scheme_id: int
-    current_progress: float
-    current_status: str
-    current_remark: Optional[str] = ""
-    expected_completion_date: Optional[date] = None
-    closure_date: Optional[date] = None
-    master_status: str
+    package_id: int
+    planned_pct: float = 0.0
+    actual_pct: float = 0.0
+    cumulative_planned_pct: float = 0.0
+    cumulative_actual_pct: float = 0.0
+    risk_level: str = "unknown"
+    notes: Optional[str] = None
 
 
 class PlantWorkspaceSave(BaseModel):
-    progress_month: date
+    progress_month: date       # first day of the month: YYYY-MM-01
     rows: List[PlantGridRow]
 
 
-# --- API ENDPOINTS ---
+# ---------------------------------------------------------------------------
+# GET /plant/workspace
+# ---------------------------------------------------------------------------
 @router.get("/workspace")
 def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
-    """
-    Fetches the bulk editing grid. Pulls all ongoing/closed Plant schemes,
-    and cross-references the previous month's data for the auto-carryover logic.
-    """
     target_date = date(year, month, 1)
 
     prev_month = 12 if month == 1 else month - 1
     prev_year = year - 1 if month == 1 else year
     prev_date = date(prev_year, prev_month, 1)
 
-    sql = text(
-        """
-        WITH PrevMonth AS (
-            SELECT scheme_id, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date
-            FROM plant_progress_monthly WHERE progress_month = :prev_date
-        ),
-        CurrMonth AS (
-            SELECT scheme_id, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date
-            FROM plant_progress_monthly WHERE progress_month = :curr_date
-        )
+    rows = db.execute(text("""
         SELECT
-            sm.scheme_id, sm.scheme_name, sm.total_cost, sm.start_date, sm.scheduled_completion_date,
-            COALESCE(sm.expected_completion_date, sm.scheduled_completion_date) as master_expected_date,
-            sm.current_status as master_status, sm.closure_date as master_closure, sm.remarks as master_remark,
+            s.scheme_id, s.scheme_name, s.scheme_type, s.current_status,
+            s.estimated_cost_cr,
+            s.planned_start_date, s.planned_completion_date, s.actual_completion_date,
+            p.package_id, p.package_name,
+            p.planned_start_date   AS pkg_start,
+            p.planned_end_date     AS pkg_end,
+            p.completion_date_actual AS pkg_actual_end,
 
-            COALESCE(p.cumulative_progress_percent, 0.0) as prev_progress,
-            COALESCE(p.scheme_status, 'ongoing') as prev_status,
-            COALESCE(p.progress_remark, '') as prev_remark,
+            -- current month
+            cur.planned_progress_pct,
+            cur.actual_progress_pct,
+            cur.cumulative_planned_pct,
+            cur.cumulative_actual_pct,
+            cur.risk_level,
+            cur.notes,
 
-            c.cumulative_progress_percent as curr_progress,
-            c.scheme_status as curr_status,
-            c.progress_remark as curr_remark,
-            c.expected_completion_date as curr_expected,
-            c.closure_date as curr_closure
+            -- previous month carryover
+            prev.cumulative_actual_pct  AS prev_cum_actual,
+            prev.actual_progress_pct    AS prev_actual
 
-        FROM scheme_master sm
-        LEFT JOIN PrevMonth p ON sm.scheme_id = p.scheme_id
-        LEFT JOIN CurrMonth c ON sm.scheme_id = c.scheme_id
-        WHERE sm.scheme_type = 'plant' AND sm.current_status IN ('ongoing', 'closed')
-        ORDER BY CASE WHEN sm.current_status = 'ongoing' THEN 0 ELSE 1 END, sm.scheme_name
-        """
-    )
+        FROM scheme_master s
+        JOIN packages p
+               ON p.scheme_id = s.scheme_id AND p.is_deleted = FALSE
+        LEFT JOIN plant_progress_monthly cur
+               ON cur.package_id = p.package_id AND cur.month_date = :curr_date
+        LEFT JOIN plant_progress_monthly prev
+               ON prev.package_id = p.package_id AND prev.month_date = :prev_date
+        WHERE s.scheme_type = 'plant'
+          AND s.current_status IN ('ongoing', 'closed', 'under_execution')
+          AND s.is_deleted = FALSE
+        ORDER BY CASE WHEN s.current_status = 'ongoing' THEN 0 WHEN s.current_status = 'under_execution' THEN 1 ELSE 2 END,
+                 s.scheme_name
+    """), {"curr_date": target_date, "prev_date": prev_date}).fetchall()
 
-    results = db.execute(sql, {"prev_date": prev_date, "curr_date": target_date}).fetchall()
+    result = []
+    for r in rows:
+        result.append({
+            "scheme_id": r.scheme_id,
+            "scheme_name": r.scheme_name,
+            "scheme_type": r.scheme_type,
+            "master_status": r.current_status,
+            "estimated_cost_cr": float(r.estimated_cost_cr) if r.estimated_cost_cr else None,
+            "planned_start_date": r.planned_start_date.isoformat() if r.planned_start_date else None,
+            "planned_completion_date": r.planned_completion_date.isoformat() if r.planned_completion_date else None,
+            "actual_completion_date": r.actual_completion_date.isoformat() if r.actual_completion_date else None,
+            "package_id": r.package_id,
+            "package_name": r.package_name,
+            "pkg_start": r.pkg_start.isoformat() if r.pkg_start else None,
+            "pkg_end": r.pkg_end.isoformat() if r.pkg_end else None,
+            "pkg_actual_end": r.pkg_actual_end.isoformat() if r.pkg_actual_end else None,
+            # current month values (may be None if not yet entered)
+            "planned_pct": float(r.planned_progress_pct) if r.planned_progress_pct is not None else 0.0,
+            "actual_pct": float(r.actual_progress_pct) if r.actual_progress_pct is not None else 0.0,
+            "cumulative_planned_pct": float(r.cumulative_planned_pct) if r.cumulative_planned_pct is not None else 0.0,
+            "cumulative_actual_pct": float(r.cumulative_actual_pct) if r.cumulative_actual_pct is not None else 0.0,
+            "risk_level": r.risk_level or "unknown",
+            "notes": r.notes,
+            # previous month carryover for display
+            "prev_cum_actual": float(r.prev_cum_actual) if r.prev_cum_actual is not None else 0.0,
+            "prev_actual": float(r.prev_actual) if r.prev_actual is not None else 0.0,
+        })
 
-    workspace_data = []
-    for r in results:
-        current_progress = r.curr_progress if r.curr_progress is not None else r.prev_progress
-        current_status = r.curr_status if r.curr_status is not None else r.prev_status
-        current_remark = r.curr_remark if r.curr_remark is not None else r.prev_remark
-        expected_date = r.curr_expected if r.curr_expected is not None else r.master_expected_date
-        closure_date = r.curr_closure if r.curr_closure is not None else r.master_closure
-
-        workspace_data.append(
-            {
-                "scheme_id": r.scheme_id,
-                "scheme_name": r.scheme_name,
-                "total_cost": r.total_cost,
-                "scheduled_start": r.start_date,
-                "scheduled_completion": r.scheduled_completion_date,
-                "expected_completion_date": expected_date,
-                "last_progress": r.prev_progress,
-                "last_status_remark": f"{r.prev_status} | {r.prev_remark}",
-                "current_progress": current_progress,
-                "current_status": current_status,
-                "current_remark": current_remark,
-                "closure_date": closure_date,
-                "master_status": r.master_status,
-            }
-        )
-
-    return workspace_data
+    return result
 
 
+# ---------------------------------------------------------------------------
+# POST /plant/save-workspace
+# ---------------------------------------------------------------------------
 @router.post("/save-workspace")
 def save_plant_workspace(payload: PlantWorkspaceSave, db: Session = Depends(get_db)):
-    """The dual-transaction: Saves the progress AND updates the Scheme Master lifecycle."""
     try:
         for row in payload.rows:
-            upsert_progress_sql = text(
-                """
+            db.execute(text("""
                 INSERT INTO plant_progress_monthly
-                (scheme_id, progress_month, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date, updated_at)
-                VALUES (:s_id, :p_month, :prog, :rem, :stat, :exp_date, :clos_date, CURRENT_TIMESTAMP)
-                ON CONFLICT (scheme_id, progress_month)
-                DO UPDATE SET
-                    cumulative_progress_percent = EXCLUDED.cumulative_progress_percent,
-                    progress_remark = EXCLUDED.progress_remark,
-                    scheme_status = EXCLUDED.scheme_status,
-                    expected_completion_date = EXCLUDED.expected_completion_date,
-                    closure_date = EXCLUDED.closure_date,
-                    updated_at = CURRENT_TIMESTAMP
-                """
-            )
-            db.execute(
-                upsert_progress_sql,
-                {
-                    "s_id": row.scheme_id,
-                    "p_month": payload.progress_month,
-                    "prog": row.current_progress,
-                    "rem": row.current_remark,
-                    "stat": row.current_status,
-                    "exp_date": row.expected_completion_date,
-                    "clos_date": row.closure_date,
-                },
-            )
-
-            update_master_sql = text(
-                """
-                UPDATE scheme_master
-                SET expected_completion_date = :exp_date, closure_date = :clos_date, current_status = :stat
-                WHERE scheme_id = :s_id
-                """
-            )
-            db.execute(
-                update_master_sql,
-                {
-                    "exp_date": row.expected_completion_date,
-                    "clos_date": row.closure_date,
-                    "stat": row.current_status,
-                    "s_id": row.scheme_id,
-                },
-            )
-
+                    (package_id, month_date, planned_progress_pct, actual_progress_pct,
+                     cumulative_planned_pct, cumulative_actual_pct, risk_level, notes, computed_at)
+                VALUES
+                    (:pkg_id, :month, :plan_pct, :act_pct,
+                     :cum_plan, :cum_act, :risk, :notes, CURRENT_TIMESTAMP)
+                ON CONFLICT (package_id, month_date) DO UPDATE SET
+                    planned_progress_pct   = EXCLUDED.planned_progress_pct,
+                    actual_progress_pct    = EXCLUDED.actual_progress_pct,
+                    cumulative_planned_pct = EXCLUDED.cumulative_planned_pct,
+                    cumulative_actual_pct  = EXCLUDED.cumulative_actual_pct,
+                    risk_level             = EXCLUDED.risk_level,
+                    notes                  = EXCLUDED.notes,
+                    computed_at            = CURRENT_TIMESTAMP
+            """), {
+                "pkg_id": row.package_id,
+                "month": payload.progress_month,
+                "plan_pct": row.planned_pct,
+                "act_pct": row.actual_pct,
+                "cum_plan": row.cumulative_planned_pct,
+                "cum_act": row.cumulative_actual_pct,
+                "risk": row.risk_level,
+                "notes": row.notes,
+            })
         db.commit()
-        return {"status": "success", "message": "Bulk Plant AMR Progress saved successfully!"}
+        return {"status": "success", "saved": len(payload.rows)}
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(500, str(e))
 
+
+# ---------------------------------------------------------------------------
+# GET /plant/monthly-trend?package_id=
+# ---------------------------------------------------------------------------
+@router.get("/monthly-trend")
+def monthly_trend(package_id: int, months: int = 12, db: Session = Depends(get_db)):
+    rows = db.execute(text("""
+        SELECT month_date, planned_progress_pct, actual_progress_pct,
+               cumulative_planned_pct, cumulative_actual_pct, risk_level
+        FROM plant_progress_monthly
+        WHERE package_id = :pkg_id
+        ORDER BY month_date DESC
+        LIMIT :lim
+    """), {"pkg_id": package_id, "lim": months}).fetchall()
+
+    return [
+        {
+            "month": r.month_date.isoformat(),
+            "planned_pct": float(r.planned_progress_pct or 0),
+            "actual_pct": float(r.actual_progress_pct or 0),
+            "cumulative_planned_pct": float(r.cumulative_planned_pct or 0),
+            "cumulative_actual_pct": float(r.cumulative_actual_pct or 0),
+            "risk_level": r.risk_level,
+        }
+        for r in rows
+    ]

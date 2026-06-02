@@ -1,631 +1,312 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+/**
+ * Package-N Status Report — view / print / edit-in-place.
+ *
+ * Modes:
+ *   - VIEW  : faithful A4 print-styled rendering of the document (read-only).
+ *   - EDIT  : the same content becomes editable in place (contentEditable),
+ *             with a floating formatting toolbar. Save persists to backend.
+ *
+ * No external editor library — uses the browser's native rich-text editing
+ * (document.execCommand) so it works with zero npm installs. Content is loaded
+ * from the backend if a saved version exists, else falls back to the default
+ * generated from the original Word file.
+ *
+ * Backend endpoints (see reports.py additions):
+ *   GET  /api/v1/reports/doc/package-n        -> { html, updated_at } | 404
+ *   PUT  /api/v1/reports/doc/package-n        body { html }  -> { ok, updated_at }
+ *
+ * Place at: app/reports/package-n/page.tsx
+ */
+
+import { useEffect, useRef, useState, useCallback } from "react";
+import {
+  Printer, Pencil, Save, X, Bold, Italic, Underline, List, ListOrdered,
+  Undo, Redo, Heading, Table as TableIcon, RotateCcw, Download, Loader2,
+} from "lucide-react";
+import { PACKAGE_N_DEFAULT_HTML, PACKAGE_N_REPORT_TITLE } from "@/lib/package_n_report_content";
+
+const API = "http://localhost:8002/api/v1/reports";
+const DOC_KEY = "package-n";
 
 type Mode = "view" | "edit";
 
-
-const DOCX_URL = "/New Package-N 29.05.2026-F.docx";
-const STORAGE_KEY = "project-brain-package-n-report-html";
-
 export default function PackageNReportPage() {
   const [mode, setMode] = useState<Mode>("view");
-  const [html, setHtml] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(true);
-  const [saving, setSaving] = useState<boolean>(false);
-  const [dirty, setDirty] = useState<boolean>(false);
+  const [html, setHtml] = useState<string>(PACKAGE_N_DEFAULT_HTML);
+  const [savedHtml, setSavedHtml] = useState<string>(PACKAGE_N_DEFAULT_HTML);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [docxViewAvailable, setDocxViewAvailable] = useState<boolean>(false);
+  const [dirty, setDirty] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
 
-  const docxViewRef = useRef<HTMLDivElement | null>(null);
-  const editorRef = useRef<HTMLDivElement | null>(null);
-
-  // Load saved editable HTML from browser storage, if available.
+  // Load saved version (if any) on mount
   useEffect(() => {
-    try {
-      const savedHtml = localStorage.getItem(STORAGE_KEY);
-      const savedAt = localStorage.getItem(`${STORAGE_KEY}-updatedAt`);
-
-      if (savedHtml) {
-        setHtml(savedHtml);
-        setUpdatedAt(savedAt);
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/doc/${DOC_KEY}`);
+        if (r.ok) {
+          const data = await r.json();
+          if (alive && data.html) {
+            setHtml(data.html);
+            setSavedHtml(data.html);
+            setUpdatedAt(data.updated_at || null);
+          }
+        }
+      } catch {
+        /* no saved version — use default */
+      } finally {
+        if (alive) setLoading(false);
       }
-    } catch (error) {
-      console.error("Unable to read saved Package-N report:", error);
-    } finally {
-      setLoading(false);
-    }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // Render DOCX in view mode for closest Word-like print preview.
-  useEffect(() => {
-    if (mode !== "view") return;
-
-    let cancelled = false;
-
-    async function renderDocx() {
-      const container = docxViewRef.current;
-      if (!container) return;
-
-      try {
-        container.innerHTML = "";
-
-        const response = await fetch(DOCX_URL);
-        if (!response.ok) {
-          setDocxViewAvailable(false);
-          return;
-        }
-
-        const blob = await response.blob();
-        const { renderAsync } = await import("docx-preview");
-
-        if (cancelled) return;
-
-        await renderAsync(blob, container, undefined, {
-          className: "docx",
-          inWrapper: false,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          ignoreFonts: false,
-          breakPages: true,
-          ignoreLastRenderedPageBreak: false,
-          experimental: true,
-        });
-
-        setDocxViewAvailable(true);
-      } catch (error) {
-        console.error("DOCX preview failed. Falling back to saved HTML.", error);
-        setDocxViewAvailable(false);
-      }
-    }
-
-    renderDocx();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [mode]);
-
-  // Keep editor synced when entering edit mode.
+  // When entering edit mode, push current html into the editable div
   useEffect(() => {
     if (mode === "edit" && editorRef.current) {
-      editorRef.current.innerHTML = html || getFallbackEditableHtml();
+      editorRef.current.innerHTML = html;
     }
-  }, [mode, html]);
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function getFallbackEditableHtml() {
-    return `
-      <h2 style="text-align:center;">RSP PROJECTS STATUS</h2>
-      <p style="text-align:center;"><strong>Package-N Report</strong></p>
-      <p>
-        Editable report content will appear here after saving. For best Word-like view,
-        keep the original file at <strong>public/New Package-N 29.05.2026-F.docx</strong>.
-      </p>
-    `;
-  }
+  const exec = useCallback((cmd: string, value?: string) => {
+    document.execCommand(cmd, false, value);
+    editorRef.current?.focus();
+    setDirty(true);
+  }, []);
 
-  function handleEdit() {
-    setMode("edit");
-  }
-
-  function handleView() {
-    if (editorRef.current) {
-      const currentHtml = editorRef.current.innerHTML;
-      setHtml(currentHtml);
-    }
-    setMode("view");
-  }
-
-  function handleSave() {
+  const handleSave = async () => {
+    const current = editorRef.current?.innerHTML ?? html;
+    setSaving(true);
     try {
-      setSaving(true);
-
-      const currentHtml = editorRef.current?.innerHTML || html;
-      const now = new Date().toLocaleString("en-IN", {
-        dateStyle: "medium",
-        timeStyle: "short",
+      const r = await fetch(`${API}/doc/${DOC_KEY}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ html: current }),
       });
-
-      localStorage.setItem(STORAGE_KEY, currentHtml);
-      localStorage.setItem(`${STORAGE_KEY}-updatedAt`, now);
-
-      setHtml(currentHtml);
-      setUpdatedAt(now);
+      if (!r.ok) throw new Error(`Save failed (${r.status})`);
+      const data = await r.json();
+      setHtml(current);
+      setSavedHtml(current);
+      setUpdatedAt(data.updated_at || new Date().toISOString());
       setDirty(false);
-    } catch (error) {
-      console.error("Unable to save Package-N report:", error);
-      alert("Unable to save report in browser storage.");
+      setMode("view");
+    } catch (e: any) {
+      alert(`Could not save: ${e.message}. Your edits are still on screen — try again.`);
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  function handlePrint() {
-    if (mode === "edit" && editorRef.current) {
-      const currentHtml = editorRef.current.innerHTML;
-      setHtml(currentHtml);
-      localStorage.setItem(STORAGE_KEY, currentHtml);
-    }
-
-    setTimeout(() => {
-      window.print();
-    }, 100);
-  }
-
-  function handleResetEditableCopy() {
-    const confirmReset = window.confirm(
-      "This will remove the saved editable copy from this browser. Continue?"
-    );
-
-    if (!confirmReset) return;
-
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(`${STORAGE_KEY}-updatedAt`);
-    setHtml("");
-    setUpdatedAt(null);
+  const handleCancel = () => {
+    if (dirty && !confirm("Discard your changes?")) return;
+    setHtml(savedHtml);
     setDirty(false);
+    setMode("view");
+  };
 
-    if (editorRef.current) {
-      editorRef.current.innerHTML = getFallbackEditableHtml();
+  const handleResetToOriginal = () => {
+    if (!confirm("Reset to the original document content? This clears your edits after saving.")) return;
+    if (editorRef.current) editorRef.current.innerHTML = PACKAGE_N_DEFAULT_HTML;
+    setDirty(true);
+  };
+
+  const handlePrint = () => window.print();
+
+  const handleInsertTable = () => {
+    const rows = parseInt(prompt("Rows?", "3") || "0", 10);
+    const cols = parseInt(prompt("Columns?", "3") || "0", 10);
+    if (rows > 0 && cols > 0) {
+      let t = '<table class="rep-table"><tbody>';
+      for (let r = 0; r < rows; r++) {
+        t += "<tr>";
+        for (let c = 0; c < cols; c++) t += "<td><p>&nbsp;</p></td>";
+        t += "</tr>";
+      }
+      t += "</tbody></table><p></p>";
+      exec("insertHTML", t);
     }
-  }
+  };
 
   return (
-    <div className="report-shell">
-      {/* Toolbar */}
-      <div className="report-toolbar no-print">
-        <div>
-          <div className="report-title">Package-N Report</div>
-          <div className="report-subtitle">
-            {mode === "view"
-              ? "Print preview mode"
-              : dirty
-              ? "Editing — unsaved changes"
-              : "Editing mode"}
-            {updatedAt ? ` • Last saved: ${updatedAt}` : ""}
-          </div>
-        </div>
+    <div className="min-h-screen bg-gray-100">
+      {/* ===== Toolbar (hidden when printing) ===== */}
+      <div className="no-print sticky top-0 z-30 bg-gray-900 text-white shadow-lg">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
+          <h1 className="text-lg font-semibold text-cyan-400 mr-auto">
+            {PACKAGE_N_REPORT_TITLE}
+          </h1>
 
-        <div className="report-actions">
-          {mode === "edit" ? (
+          {updatedAt && mode === "view" && (
+            <span className="text-xs text-gray-400">
+              Last edited {new Date(updatedAt).toLocaleString()}
+            </span>
+          )}
+
+          {mode === "view" ? (
             <>
-              <button className="btn btn-secondary" onClick={handleView}>
-                Print View
+              <button
+                onClick={handlePrint}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition"
+              >
+                <Printer size={16} /> Print
               </button>
               <button
-                className="btn btn-primary"
-                onClick={handleSave}
-                disabled={saving}
+                onClick={() => setMode("edit")}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 transition font-medium"
               >
-                {saving ? "Saving..." : "Save"}
+                <Pencil size={16} /> Edit
               </button>
             </>
           ) : (
-            <button className="btn btn-primary" onClick={handleEdit}>
-              Edit
-            </button>
+            <>
+              <button
+                onClick={handleResetToOriginal}
+                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition text-sm"
+                title="Reset to original Word content"
+              >
+                <RotateCcw size={15} /> Reset
+              </button>
+              <button
+                onClick={handleCancel}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition"
+              >
+                <X size={16} /> Cancel
+              </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition font-medium disabled:opacity-60"
+              >
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                {saving ? "Saving…" : "Save"}
+              </button>
+            </>
           )}
-
-          <button className="btn btn-secondary" onClick={handlePrint}>
-            Print
-          </button>
-
-          <button className="btn btn-danger" onClick={handleResetEditableCopy}>
-            Reset Edit Copy
-          </button>
         </div>
-      </div>
 
-      {/* Document Area */}
-      <div className="doc-stage">
-        {loading ? (
-          <div className="loading-card">Loading report...</div>
-        ) : mode === "view" ? (
-          <div className="doc-page-wrap">
-            <div ref={docxViewRef} className="doc-page doc-view" />
-
-            {!docxViewAvailable && (
-              <div
-                className="doc-page doc-html-fallback"
-                dangerouslySetInnerHTML={{
-                  __html: html || getFallbackEditableHtml(),
-                }}
-              />
-            )}
-          </div>
-        ) : (
-          <div className="doc-page-wrap">
-            <div
-              ref={editorRef}
-              className="doc-page doc-editable"
-              contentEditable
-              suppressContentEditableWarning
-              onInput={() => setDirty(true)}
-            />
+        {/* ===== Formatting bar (edit mode only) ===== */}
+        {mode === "edit" && (
+          <div className="border-t border-gray-700 bg-gray-800">
+            <div className="max-w-5xl mx-auto px-4 py-2 flex items-center gap-1 flex-wrap">
+              <ToolBtn onClick={() => exec("bold")} title="Bold"><Bold size={16} /></ToolBtn>
+              <ToolBtn onClick={() => exec("italic")} title="Italic"><Italic size={16} /></ToolBtn>
+              <ToolBtn onClick={() => exec("underline")} title="Underline"><Underline size={16} /></ToolBtn>
+              <Divider />
+              <ToolBtn onClick={() => exec("formatBlock", "<h2>")} title="Heading"><Heading size={16} /></ToolBtn>
+              <ToolBtn onClick={() => exec("insertUnorderedList")} title="Bullet list"><List size={16} /></ToolBtn>
+              <ToolBtn onClick={() => exec("insertOrderedList")} title="Numbered list"><ListOrdered size={16} /></ToolBtn>
+              <ToolBtn onClick={handleInsertTable} title="Insert table"><TableIcon size={16} /></ToolBtn>
+              <Divider />
+              <ToolBtn onClick={() => exec("undo")} title="Undo"><Undo size={16} /></ToolBtn>
+              <ToolBtn onClick={() => exec("redo")} title="Redo"><Redo size={16} /></ToolBtn>
+              <span className="ml-auto text-xs text-gray-400">
+                {dirty ? "Unsaved changes" : "No changes yet"}
+              </span>
+            </div>
           </div>
         )}
       </div>
 
+      {/* ===== Document (A4 page) ===== */}
+      <div className="py-8 px-4 flex justify-center">
+        {loading ? (
+          <div className="flex items-center gap-3 text-gray-500 mt-20">
+            <Loader2 className="animate-spin" /> Loading document…
+          </div>
+        ) : mode === "view" ? (
+          <div
+            className="doc-page bg-white shadow-xl"
+            dangerouslySetInnerHTML={{ __html: html }}
+          />
+        ) : (
+          <div
+            ref={editorRef}
+            className="doc-page doc-editable bg-white shadow-xl"
+            contentEditable
+            suppressContentEditableWarning
+            onInput={() => setDirty(true)}
+          />
+        )}
+      </div>
+
+      {/* ===== Styles ===== */}
       <style jsx global>{`
-        :root {
-          --a4-width: 210mm;
-          --a4-height: 297mm;
-          --doc-font: Calibri, Arial, Helvetica, sans-serif;
-        }
-
-        .report-shell {
-          min-height: 100vh;
-          background:
-            radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 32%),
-            linear-gradient(135deg, #eef2f7 0%, #f8fafc 100%);
-          padding: 22px;
-        }
-
-        .report-toolbar {
-          position: sticky;
-          top: 12px;
-          z-index: 50;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          gap: 16px;
-          max-width: 1180px;
-          margin: 0 auto 20px auto;
-          padding: 12px 14px;
-          background: rgba(255, 255, 255, 0.92);
-          border: 1px solid rgba(226, 232, 240, 0.95);
-          border-radius: 16px;
-          box-shadow: 0 12px 32px rgba(15, 23, 42, 0.10);
-          backdrop-filter: blur(12px);
-        }
-
-        .report-title {
-          font-size: 16px;
-          font-weight: 700;
-          color: #0f172a;
-          letter-spacing: -0.01em;
-        }
-
-        .report-subtitle {
-          margin-top: 2px;
-          font-size: 12px;
-          color: #64748b;
-        }
-
-        .report-actions {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          justify-content: flex-end;
-        }
-
-        .btn {
-          border: none;
-          outline: none;
-          border-radius: 10px;
-          padding: 8px 13px;
-          font-size: 13px;
-          font-weight: 600;
-          cursor: pointer;
-          transition:
-            transform 0.12s ease,
-            box-shadow 0.12s ease,
-            background 0.12s ease;
-        }
-
-        .btn:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.13);
-        }
-
-        .btn:disabled {
-          opacity: 0.65;
-          cursor: not-allowed;
-          transform: none;
-          box-shadow: none;
-        }
-
-        .btn-primary {
-          background: #2563eb;
-          color: white;
-        }
-
-        .btn-primary:hover {
-          background: #1d4ed8;
-        }
-
-        .btn-secondary {
-          background: #e2e8f0;
-          color: #0f172a;
-        }
-
-        .btn-secondary:hover {
-          background: #cbd5e1;
-        }
-
-        .btn-danger {
-          background: #fee2e2;
-          color: #991b1b;
-        }
-
-        .btn-danger:hover {
-          background: #fecaca;
-        }
-
-        .doc-stage {
-          width: 100%;
-          overflow-x: auto;
-          display: flex;
-          justify-content: center;
-          padding: 4px 0 48px;
-        }
-
-        .loading-card {
-          margin-top: 40px;
-          padding: 18px 24px;
-          border-radius: 14px;
-          background: white;
-          color: #475569;
-          box-shadow: 0 12px 28px rgba(15, 23, 42, 0.10);
-          font-size: 14px;
-        }
-
-        .doc-page-wrap {
-          width: var(--a4-width);
-          min-height: var(--a4-height);
-          background: #ffffff;
-          box-shadow:
-            0 22px 70px rgba(15, 23, 42, 0.22),
-            0 0 0 1px rgba(15, 23, 42, 0.08);
-          border-radius: 3px;
-          overflow: visible;
-        }
-
         .doc-page {
-          width: var(--a4-width);
-          min-height: var(--a4-height);
+          width: 210mm;
+          min-height: 297mm;
+          padding: 20mm 18mm;
           box-sizing: border-box;
-          padding: 10mm 25.4mm 5mm 25.4mm;
-          background: white;
-          color: #111827;
-          font-family: var(--doc-font);
-          font-size: 10pt;
-          line-height: 1.22;
-        }
-
-        .doc-page * {
-          box-sizing: border-box;
-        }
-
-        .doc-page p {
-          margin: 0 0 4pt 0;
-        }
-
-        .doc-page h1,
-        .doc-page h2,
-        .doc-page h3,
-        .doc-page h4 {
-          font-family: var(--doc-font);
-          margin: 6pt 0 4pt;
-          line-height: 1.15;
-          color: #111827;
-        }
-
-        .doc-page h1 {
-          font-size: 15pt;
-          text-align: center;
-        }
-
-        .doc-page h2 {
-          font-size: 13pt;
-        }
-
-        .doc-page h3 {
+          font-family: "Times New Roman", Georgia, serif;
           font-size: 11pt;
+          line-height: 1.5;
+          color: #111;
         }
-
-        .doc-page ul,
-        .doc-page ol {
-          margin-top: 2pt;
-          margin-bottom: 4pt;
-          padding-left: 16pt;
+        .doc-editable:focus { outline: 2px solid #06b6d4; outline-offset: 4px; }
+        .doc-page p { margin: 0 0 6pt; }
+        .doc-page strong { font-weight: 700; }
+        .doc-page ul, .doc-page ol { margin: 4pt 0 8pt 18pt; }
+        .doc-page table, .doc-page .rep-table {
+          border-collapse: collapse;
+          width: 100%;
+          max-width: 100%;
+          table-layout: fixed;
+          margin: 8pt 0 14pt;
+          font-size: 9pt;
         }
-
-        .doc-page li {
-          margin-bottom: 2pt;
-        }
-
-        .doc-page strong,
-        .doc-page b {
-          font-weight: 700;
-        }
-
-        .doc-page table {
-          width: 100% !important;
-          max-width: 100% !important;
-          border-collapse: collapse !important;
-          table-layout: fixed !important;
-          margin: 4pt 0 8pt 0;
-          font-family: var(--doc-font);
-          font-size: 8.7pt;
-          line-height: 1.15;
-        }
-
-        .doc-page th,
-        .doc-page td {
-          border: 1px solid #444 !important;
-          padding: 3pt 4pt !important;
-          vertical-align: top !important;
+        .doc-page th, .doc-page td {
+          border: 1px solid #444;
+          padding: 4pt 5pt;
+          vertical-align: top;
           text-align: left;
-          overflow-wrap: anywhere;
-          word-break: normal;
-          white-space: normal !important;
+          word-wrap: break-word;
+          overflow-wrap: break-word;
+          hyphens: auto;
         }
-
-        .doc-page th {
-          background: #e9ecef !important;
-          font-weight: 700;
-          text-align: center;
-        }
-
-        .doc-page thead th,
-        .doc-page thead td {
-          background: #e9ecef !important;
-          font-weight: 700;
-        }
-
-        .doc-page table:has(tr > *:nth-child(6)) {
-          font-size: 7.8pt;
-        }
-
-        .doc-page table:has(tr > *:nth-child(7)) {
-          font-size: 7.2pt;
-        }
-
-        .doc-page table:has(tr > *:nth-child(8)) {
-          font-size: 6.8pt;
-        }
-
-        .doc-page img {
-          max-width: 100% !important;
-          height: auto !important;
-        }
-
-        .doc-editable {
-          outline: none;
-          caret-color: #2563eb;
-        }
-
-        .doc-editable:focus {
-          box-shadow: inset 0 0 0 2px rgba(37, 99, 235, 0.28);
-        }
-
-        .doc-editable table td,
-        .doc-editable table th {
-          cursor: text;
-        }
-
-        .doc-html-fallback {
-          display: none;
-        }
-
-        /* docx-preview generated layout correction */
-        .doc-view .docx-wrapper {
-          background: white !important;
-          padding: 0 !important;
-        }
-
-        .doc-view .docx {
-          box-shadow: none !important;
-          margin: 0 !important;
-          padding: 0 !important;
-          width: 100% !important;
-        }
-
-        .doc-view section.docx {
-          width: 100% !important;
-          min-height: auto !important;
-          box-shadow: none !important;
-        }
-
-        .doc-view table {
-          max-width: 100% !important;
-          border-collapse: collapse !important;
-        }
-
-        .doc-view td,
-        .doc-view th {
-          overflow-wrap: anywhere;
-          word-break: normal;
-        }
-
-        @media screen and (max-width: 900px) {
-          .report-shell {
-            padding: 12px;
-          }
-
-          .report-toolbar {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          .report-actions {
-            justify-content: flex-start;
-          }
-
-          .doc-stage {
-            justify-content: flex-start;
-          }
-        }
+        .doc-page th { background: #f0f0f0; font-weight: 700; }
+        .doc-page thead tr { background: #e8e8e8; }
+        .doc-page td:first-child { width: 6%; }
+        .doc-page td:nth-child(2) { width: 38%; }
+        .doc-page td:nth-child(3) { width: 56%; }
 
         @media print {
-          .no-print,
-          .report-toolbar {
-            display: none !important;
-          }
-
-          html,
-          body {
-            background: white !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          .report-shell,
-          .doc-stage,
-          .doc-page-wrap {
-            background: white !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            box-shadow: none !important;
-            border: none !important;
-            width: auto !important;
-            min-height: auto !important;
-            overflow: visible !important;
-            display: block !important;
-          }
-
+          .no-print { display: none !important; }
+          body { background: #fff !important; }
           .doc-page {
-            width: auto !important;
-            min-height: auto !important;
-            padding: 0 !important;
-            margin: 0 !important;
             box-shadow: none !important;
-            font-size: 10pt;
-            line-height: 1.2;
+            width: auto;
+            min-height: auto;
+            padding: 0;
+            margin: 0;
           }
-
-          .doc-page table {
-            page-break-inside: auto;
-            break-inside: auto;
-          }
-
-          .doc-page tr {
-            page-break-inside: avoid;
-            break-inside: avoid;
-          }
-
-          .doc-page td,
-          .doc-page th {
-            page-break-inside: avoid;
-            break-inside: avoid;
-          }
-
-          .doc-view .docx-wrapper,
-          .doc-view .docx,
-          .doc-view section.docx {
-            background: white !important;
-            box-shadow: none !important;
-            margin: 0 !important;
-            padding: 0 !important;
-          }
-
-          @page {
-            size: A4;
-            margin: 10mm 25.4mm 5mm 25.4mm;
-          }
+          @page { size: A4; margin: 16mm; }
         }
       `}</style>
     </div>
   );
+}
+
+function ToolBtn({
+  children, onClick, title,
+}: { children: React.ReactNode; onClick: () => void; title: string }) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.preventDefault()} // keep selection
+      onClick={onClick}
+      title={title}
+      className="p-2 rounded hover:bg-gray-700 text-gray-200 transition"
+    >
+      {children}
+    </button>
+  );
+}
+
+function Divider() {
+  return <span className="w-px h-5 bg-gray-600 mx-1" />;
 }

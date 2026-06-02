@@ -13,9 +13,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Link from "next/link";
 import {
   Activity, AlertTriangle, Brain, Check, CheckCircle2, ChevronRight,
-  Copy, Cpu, Database, Loader2, RefreshCw, Send, Wrench, X, Zap,
+  Copy, Cpu, Database, Loader2, RefreshCw, Send, Settings2, Wrench, X, Zap,
 } from "lucide-react";
 
 const AI_API  = process.env.NEXT_PUBLIC_AI_API_URL || "http://localhost:8001";
@@ -767,6 +768,13 @@ export default function AIChatPage() {
           </motion.div>
           <div>
             <h1 className="text-lg font-bold leading-tight">Project Brain AI</h1>
+            <Link
+              href="/ai/settings"
+              className="mt-1 inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              AI Settings
+            </Link>
             <p className="flex items-center gap-1.5 text-xs text-zinc-500">
               <span className={`h-1.5 w-1.5 rounded-full ${convId ? "animate-pulse bg-green-500" : "bg-zinc-600"}`} />
               {convId ? `Session ${convId} · RSP Capital Projects` : "Connecting…"}
