@@ -5,7 +5,7 @@ import {
   Save, Plus, ArrowDownToLine, Lock, Unlock,
   Indent, Outdent, ArrowUp, ArrowDown,
   ChevronDown, ChevronRight, Trash2, RefreshCw,
-  CalendarDays, LineChart, Wallet, Sparkles, History,
+  CalendarDays, LineChart, Wallet, Sparkles, History, BarChart2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -17,7 +17,7 @@ const API_BASE = "http://localhost:8002/api/v1";
 type MonthValue = { be: number; re: number; actual: number; _re_auto_filled?: boolean };
 type RowLevel = "Header" | "SubHeader" | "Item" | "Package";
 type PlanType = "BE" | "RE";
-type TabKey = "BE" | "RE" | "ACTUALS";
+type TabKey = "BE" | "RE" | "ACTUALS" | "SUMMARY";
 
 type CapexRow = {
   id: string;
@@ -216,25 +216,150 @@ export default function CapexWorkspace() {
           <TabButton active={tab === "BE"} onClick={() => setTab("BE")} icon={<LineChart size={14} />} label="BE Plan" color="cyan" />
           <TabButton active={tab === "RE"} onClick={() => setTab("RE")} icon={<RefreshCw size={14} />} label="RE Plan" color="amber" />
           <TabButton active={tab === "ACTUALS"} onClick={() => setTab("ACTUALS")} icon={<Wallet size={14} />} label="Actuals" color="emerald" />
+          <TabButton active={tab === "SUMMARY"} onClick={() => setTab("SUMMARY")} icon={<BarChart2 size={14} />} label="Summary" color="violet" />
         </div>
       </div>
 
       {tab === "BE" && <PlanEditor key={`be-${fy}`} fy={fy} planType="BE" />}
       {tab === "RE" && <PlanEditor key={`re-${fy}`} fy={fy} planType="RE" />}
       {tab === "ACTUALS" && <ActualsEditor key={`act-${fy}`} fy={fy} />}
+      {tab === "SUMMARY" && <CapexSummaryView fy={fy} />}
     </div>
   );
 }
 
 function TabButton({ active, onClick, icon, label, color }: {
-  active: boolean; onClick: () => void; icon: React.ReactNode; label: string; color: "cyan"|"amber"|"emerald";
+  active: boolean; onClick: () => void; icon: React.ReactNode; label: string;
+  color: "cyan" | "amber" | "emerald" | "violet";
 }) {
-  const bg = { cyan: "bg-cyan-500/20 text-cyan-300", amber: "bg-amber-500/20 text-amber-300", emerald: "bg-emerald-500/20 text-emerald-300" }[color];
+  const bg = {
+    cyan: "bg-cyan-500/20 text-cyan-300",
+    amber: "bg-amber-500/20 text-amber-300",
+    emerald: "bg-emerald-500/20 text-emerald-300",
+    violet: "bg-violet-500/20 text-violet-300",
+  }[color];
   return (
     <button onClick={onClick}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-colors ${active ? bg : "text-zinc-400 hover:text-zinc-200"}`}>
       {icon} {label}
     </button>
+  );
+}
+
+// =============================================================================
+// CAPEX Summary View — corporate all-schemes table
+// =============================================================================
+function CapexSummaryView({ fy }: { fy: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("ALL");
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API_BASE}/dashboard/corporate-capex`)
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [fy]);
+
+  if (loading) return <div className="py-20 text-center text-zinc-500 text-sm animate-pulse">Loading corporate CAPEX…</div>;
+  if (!data) return <div className="py-20 text-center text-red-400 text-sm">Failed to load CAPEX summary.</div>;
+
+  const types = ["ALL", ...Array.from(new Set<string>(data.schemes.map((s: any) => s.scheme_type)))];
+  const filtered = data.schemes.filter((s: any) => {
+    const matchSearch = !search || s.scheme_name.toLowerCase().includes(search.toLowerCase());
+    const matchType = typeFilter === "ALL" || s.scheme_type === typeFilter;
+    return matchSearch && matchType;
+  });
+
+  const fmt = (v: number) => v > 0 ? `₹${v.toFixed(2)}` : "—";
+
+  return (
+    <div className="space-y-5">
+      {/* KPI cards */}
+      <div className="grid grid-cols-5 gap-3">
+        {[
+          { label: "Total Schemes", value: data.schemes.length, color: "text-zinc-300" },
+          { label: "Portfolio Sanctioned", value: `₹${data.total.sanctioned_cost_cr.toFixed(0)} Cr`, color: "text-cyan-300" },
+          { label: `BE — ${fy}`, value: `₹${data.total.be_fy.toFixed(2)} Cr`, color: "text-amber-300" },
+          { label: `RE — ${fy}`, value: `₹${data.total.re_fy.toFixed(2)} Cr`, color: "text-blue-300" },
+          { label: "Actuals FY", value: `₹${data.total.actuals_fy.toFixed(2)} Cr`, color: "text-emerald-300" },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
+            <div className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">{label}</div>
+            <div className={`text-lg font-bold ${color}`}>{value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-3">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search scheme…"
+          className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500/60 w-64"
+        />
+        <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+          className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-200 outline-none focus:border-violet-500/60">
+          {types.map((t) => <option key={t} value={t}>{t === "ALL" ? "All Types" : t}</option>)}
+        </select>
+        <span className="text-xs text-zinc-500 ml-auto">{filtered.length} of {data.schemes.length} schemes</span>
+      </div>
+
+      {/* Table */}
+      <div className="rounded-2xl border border-white/5 bg-zinc-900/30 overflow-hidden backdrop-blur">
+        <div className="overflow-x-auto max-h-[520px]">
+          <table className="w-full text-left border-collapse text-[11px]">
+            <thead className="bg-zinc-900/80 sticky top-0">
+              <tr>
+                {["#", "Scheme Name", "Type", "Sanctioned (Cr)", "Till Last FY", "BE FY", "RE FY", "Actuals FY", "Total Spent", "% Spent", "Var vs BE"].map((h) => (
+                  <th key={h} className="px-3 py-2.5 text-zinc-400 font-bold uppercase tracking-wide whitespace-nowrap border-b border-zinc-800">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((s: any, i: number) => (
+                <tr key={s.scheme_id} className={`border-b border-zinc-800/40 hover:bg-zinc-800/30 ${i % 2 ? "bg-zinc-900/10" : ""}`}>
+                  <td className="px-3 py-2 text-zinc-500 font-mono">{s.scheme_id}</td>
+                  <td className="px-3 py-2 text-zinc-200 max-w-[260px] truncate" title={s.scheme_name}>{s.scheme_name}</td>
+                  <td className="px-3 py-2 text-zinc-400 capitalize">{s.scheme_type}</td>
+                  <td className="px-3 py-2 text-zinc-300 text-right font-mono">{fmt(s.sanctioned_cost_cr)}</td>
+                  <td className="px-3 py-2 text-zinc-400 text-right font-mono">{fmt(s.cum_last_fy)}</td>
+                  <td className="px-3 py-2 text-amber-400 text-right font-mono">{fmt(s.be_fy)}</td>
+                  <td className="px-3 py-2 text-blue-400 text-right font-mono">{fmt(s.re_fy)}</td>
+                  <td className="px-3 py-2 text-emerald-400 text-right font-mono">{fmt(s.actuals_fy)}</td>
+                  <td className="px-3 py-2 text-violet-400 text-right font-mono">{fmt(s.total_spent)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {s.pct_spent > 0 ? (
+                      <span className={`px-1.5 py-0.5 rounded text-[9px] font-bold ${s.pct_spent > 90 ? "bg-red-500/20 text-red-400" : s.pct_spent > 70 ? "bg-amber-500/20 text-amber-400" : "bg-emerald-500/20 text-emerald-400"}`}>
+                        {s.pct_spent}%
+                      </span>
+                    ) : <span className="text-zinc-600">—</span>}
+                  </td>
+                  <td className={`px-3 py-2 text-right font-bold font-mono ${s.variance_be < 0 ? "text-emerald-400" : s.variance_be > 0 ? "text-red-400" : "text-zinc-600"}`}>
+                    {s.variance_be !== 0 ? (s.variance_be > 0 ? `+${s.variance_be}` : s.variance_be) : "—"}
+                  </td>
+                </tr>
+              ))}
+              {/* Portfolio total row */}
+              <tr className="bg-zinc-800/40 font-bold border-t-2 border-zinc-600">
+                <td className="px-3 py-2.5 text-zinc-200 uppercase tracking-wider" colSpan={3}>PORTFOLIO TOTAL</td>
+                <td className="px-3 py-2.5 text-zinc-200 text-right font-mono">{fmt(data.total.sanctioned_cost_cr)}</td>
+                <td className="px-3 py-2.5 text-zinc-400 text-right font-mono">{fmt(data.total.cum_last_fy)}</td>
+                <td className="px-3 py-2.5 text-amber-300 text-right font-mono">{fmt(data.total.be_fy)}</td>
+                <td className="px-3 py-2.5 text-blue-300 text-right font-mono">{fmt(data.total.re_fy)}</td>
+                <td className="px-3 py-2.5 text-emerald-300 text-right font-mono">{fmt(data.total.actuals_fy)}</td>
+                <td className="px-3 py-2.5 text-violet-300 text-right font-mono">{fmt(data.total.total_spent)}</td>
+                <td className="px-3 py-2.5" colSpan={2}></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 }
 

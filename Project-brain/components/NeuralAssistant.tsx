@@ -9,9 +9,9 @@
  * service.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  MessageSquare, Minus, Maximize2, Minimize2, X, Send, Bot, User,
+  GripHorizontal, MessageSquare, Minus, Maximize2, Minimize2, X, Send, Bot, User,
   Wrench, Loader2, RotateCcw,
 } from "lucide-react";
 import { useAIChat } from "@/lib/aiChat";
@@ -26,8 +26,54 @@ const GREETING =
 export default function NeuralAssistant() {
   const [windowState, setWindowState] = useState<WindowState>("closed");
   const [input, setInput] = useState("");
-  const [dashboardContext, setDashboardContext] = useState<any>(null);
   const endRef = useRef<HTMLDivElement>(null);
+
+  // Initialise position client-side (avoids SSR mismatch)
+  useEffect(() => {
+    setPos({
+      x: window.innerWidth - 450,
+      y: Math.max(20, window.innerHeight / 2 - 288),
+    });
+  }, []);
+
+  // Drag handlers
+  const onDragStart = useCallback((e: React.MouseEvent | React.TouchEvent) => {
+    if (windowState === "maximized") return;
+    const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+    const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+    const rect = panelRef.current?.getBoundingClientRect();
+    dragOffset.current = {
+      x: clientX - (rect?.left ?? 0),
+      y: clientY - (rect?.top ?? 0),
+    };
+    setDragging(true);
+    e.preventDefault();
+  }, [windowState]);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent | TouchEvent) => {
+      const clientX = "touches" in e ? e.touches[0].clientX : e.clientX;
+      const clientY = "touches" in e ? e.touches[0].clientY : e.clientY;
+      const panelW = panelRef.current?.offsetWidth ?? 448;
+      const panelH = panelRef.current?.offsetHeight ?? 576;
+      setPos({
+        x: Math.max(0, Math.min(window.innerWidth  - panelW, clientX - dragOffset.current.x)),
+        y: Math.max(0, Math.min(window.innerHeight - panelH, clientY - dragOffset.current.y)),
+      });
+    };
+    const onUp = () => setDragging(false);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    window.addEventListener("touchmove", onMove, { passive: false });
+    window.addEventListener("touchend", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onUp);
+    };
+  }, [dragging]);
 
   const {
     messages, send, busy, reset,
@@ -76,10 +122,11 @@ export default function NeuralAssistant() {
     return (
       <button
         onClick={() => setWindowState("default")}
-        className="fixed bottom-6 right-6 bg-cyan-600 hover:bg-cyan-500 text-white p-4 rounded-full shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all hover:scale-110 z-50 group"
+        className="fixed top-1/2 right-0 -translate-y-1/2 bg-cyan-600 hover:bg-cyan-500 text-white px-2 py-4 rounded-l-xl shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all hover:px-3 z-50 group flex flex-col items-center gap-1"
         title="Open Neural Assistant"
       >
-        <MessageSquare size={24} className="group-hover:animate-pulse" />
+        <MessageSquare size={18} className="group-hover:animate-pulse" />
+        <span className="text-[9px] font-bold tracking-widest [writing-mode:vertical-lr] rotate-180 uppercase">AI</span>
       </button>
     );
   }
@@ -91,10 +138,11 @@ export default function NeuralAssistant() {
     return (
       <button
         onClick={() => setWindowState("default")}
-        className="fixed bottom-6 right-6 bg-[#111115] hover:bg-gray-800 border-2 border-cyan-800/80 text-cyan-400 p-4 rounded-full shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all hover:scale-110 z-50 group"
+        className="fixed top-1/2 right-0 -translate-y-1/2 bg-[#111115] hover:bg-gray-800 border-2 border-l-0 border-cyan-800/80 text-cyan-400 px-2 py-4 rounded-l-xl shadow-[0_0_20px_rgba(6,182,212,0.3)] transition-all hover:px-3 z-50 group flex flex-col items-center gap-1"
         title="Restore Neural Assistant"
       >
-        <Bot size={24} className="group-hover:animate-bounce" />
+        <Bot size={18} className="group-hover:animate-bounce" />
+        <span className="text-[9px] font-bold tracking-widest [writing-mode:vertical-lr] rotate-180 uppercase text-cyan-400">AI</span>
       </button>
     );
   }
@@ -102,20 +150,39 @@ export default function NeuralAssistant() {
   // ==========================================
   // STATES 3 & 4: DEFAULT & MAXIMIZED
   // ==========================================
-  const windowClasses =
-    windowState === "maximized"
-      ? "fixed inset-4 md:inset-10 z-50 rounded-xl"
-      : "fixed bottom-6 right-6 w-[22rem] md:w-[28rem] h-[36rem] z-50 rounded-xl";
+  const isMaximized = windowState === "maximized";
+  const panelStyle = isMaximized
+    ? {}
+    : pos
+    ? { left: pos.x, top: pos.y }
+    : { right: 0, top: "50%", transform: "translateY(-50%)" };
+
+  const windowClasses = isMaximized
+    ? "fixed inset-4 md:inset-10 z-50 rounded-xl"
+    : "fixed z-50 w-[22rem] md:w-[28rem] h-[36rem] rounded-xl shadow-2xl";
 
   return (
     <div
-      className={`${windowClasses} bg-[#111115] border border-cyan-900/50 shadow-2xl flex flex-col overflow-hidden transition-all duration-300 ease-in-out`}
+      ref={panelRef}
+      className={`${windowClasses} bg-[#111115] border border-cyan-900/50 flex flex-col overflow-hidden ${
+        dragging ? "select-none" : "transition-shadow duration-200"
+      } ${dragging ? "shadow-[0_0_40px_rgba(6,182,212,0.5)]" : ""}`}
+      style={panelStyle}
     >
-      {/* HEADER */}
-      <div className="bg-gradient-to-r from-gray-900 to-cyan-950/30 p-3 flex items-center justify-between border-b border-cyan-900/50">
+      {/* HEADER — drag handle */}
+      <div
+        className={`bg-gradient-to-r from-gray-900 to-cyan-950/30 p-3 flex items-center justify-between border-b border-cyan-900/50 ${
+          !isMaximized ? "cursor-grab active:cursor-grabbing" : ""
+        }`}
+        onMouseDown={!isMaximized ? onDragStart : undefined}
+        onTouchStart={!isMaximized ? onDragStart : undefined}
+      >
         <div className="flex items-center gap-2">
           <Bot size={18} className="text-cyan-400" />
           <h3 className="text-sm font-bold text-gray-200">Neural Assistant</h3>
+          {!isMaximized && (
+            <GripHorizontal size={14} className="text-zinc-600 ml-1" title="Drag to move" />
+          )}
         </div>
         <div className="flex items-center gap-2 text-gray-400">
           <button

@@ -27,6 +27,7 @@ from app.api.v1.plan_seed import router as plan_seed_router
 from app.api.v1.plant_amr import router as plant_amr_router
 from app.api.v1.appendix2 import router as appendix2_router
 from app.api.v1.dashboard import router as dashboard_router
+from app.api.v1.billing_schedule import router as billing_router
 
 load_dotenv()
 
@@ -96,6 +97,8 @@ app.include_router(risk_router, prefix="/api/v1")
 app.include_router(plant_amr_router, prefix="/api/v1")
 # Sprint 4: Dashboard — physical-financial table, CAPEX snapshot, DPR summary
 app.include_router(dashboard_router, prefix="/api/v1/dashboard", tags=["Dashboard"])
+# Sprint 5: Billing Schedule — milestone-based billing & payment tracking
+app.include_router(billing_router, prefix="/api/v1", tags=["Billing Schedule"])
 
 UPLOAD_DIR = os.environ.get("UPLOAD_DIR", "/tmp/project_brain/uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)

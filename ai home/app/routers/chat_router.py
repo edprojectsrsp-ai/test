@@ -35,8 +35,6 @@ class ChatIn(BaseModel):
     #     with a single-step ollama fallback if the forced one fails
     #   - "auto" → explicit synonym for None (some UIs prefer a literal value)
     provider: Optional[str] = None
-    # Optional model override within a provider (e.g. for openrouter free model selection)
-    model_override: Optional[str] = None
     # If True, disables even the small fallback chain when a provider is forced —
     # useful when testing a specific provider in isolation.
     strict_provider: bool = False
@@ -113,12 +111,6 @@ def list_messages(conversation_id: int, limit: int = 200):
 async def chat(payload: ChatIn):
     """Non-streaming response. Returns {reply, provider, model, ...}."""
     provider = _normalize_provider(payload.provider)
-    # Apply model_override for providers like openrouter that support free model selection
-    if provider and payload.model_override:
-        from app.providers.router import get_router as _get_router
-        r = _get_router()
-        if provider in r.providers and hasattr(r.providers[provider], "model_id"):
-            r.providers[provider].model_id = payload.model_override
     resp = await chat_once(
         conversation_id=payload.conversation_id,
         user_id=payload.user_id,
