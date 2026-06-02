@@ -9,7 +9,7 @@ import {
   Activity, TrendingDown, FileText, ChevronDown, ChevronRight,
   RefreshCw, Printer, Download, BarChart2, GitBranch,
   ClipboardList, CreditCard, BookOpen, Cpu, Calendar,
-  MapPin, Hash, Package,
+  MapPin, Hash,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
