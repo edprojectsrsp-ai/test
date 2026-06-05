@@ -275,21 +275,25 @@ function CapexSummaryView({ fy }: { fy: string }) {
   });
 
   const fmt = (v: number) => v > 0 ? `₹${v.toFixed(2)}` : "—";
+  const totBal = data.total.sanctioned_cost_cr - data.total.total_spent;
+  const totBalBe = data.total.be_fy - data.total.actuals_fy;
 
   return (
     <div className="space-y-5">
-      {/* KPI cards */}
-      <div className="grid grid-cols-5 gap-3">
+      {/* KPI cards — 7 cards including balance */}
+      <div className="grid grid-cols-7 gap-2">
         {[
-          { label: "Total Schemes", value: data.schemes.length, color: "text-zinc-300" },
-          { label: "Portfolio Sanctioned", value: `₹${data.total.sanctioned_cost_cr.toFixed(0)} Cr`, color: "text-cyan-300" },
+          { label: "Schemes", value: data.schemes.length, color: "text-zinc-300" },
+          { label: "Sanctioned", value: `₹${data.total.sanctioned_cost_cr.toFixed(0)} Cr`, color: "text-cyan-300" },
           { label: `BE — ${fy}`, value: `₹${data.total.be_fy.toFixed(2)} Cr`, color: "text-amber-300" },
           { label: `RE — ${fy}`, value: `₹${data.total.re_fy.toFixed(2)} Cr`, color: "text-blue-300" },
           { label: "Actuals FY", value: `₹${data.total.actuals_fy.toFixed(2)} Cr`, color: "text-emerald-300" },
+          { label: "Bal. vs BE", value: totBalBe >= 0 ? `₹${totBalBe.toFixed(2)} Cr` : `−₹${Math.abs(totBalBe).toFixed(2)} Cr`, color: totBalBe >= 0 ? "text-emerald-300" : "text-red-400" },
+          { label: "Bal. vs Sanction", value: totBal >= 0 ? `₹${totBal.toFixed(2)} Cr` : `−₹${Math.abs(totBal).toFixed(2)} Cr`, color: totBal >= 0 ? "text-emerald-300" : "text-red-400" },
         ].map(({ label, value, color }) => (
-          <div key={label} className="rounded-xl border border-white/5 bg-zinc-900/50 p-4">
-            <div className="text-[10px] text-zinc-500 uppercase tracking-wide mb-1">{label}</div>
-            <div className={`text-lg font-bold ${color}`}>{value}</div>
+          <div key={label} className="rounded-xl border border-white/5 bg-zinc-900/50 p-3">
+            <div className="text-[9px] text-zinc-500 uppercase tracking-wide mb-1">{label}</div>
+            <div className={`text-sm font-bold ${color}`}>{value}</div>
           </div>
         ))}
       </div>
@@ -315,7 +319,7 @@ function CapexSummaryView({ fy }: { fy: string }) {
           <table className="w-full text-left border-collapse text-[11px]">
             <thead className="bg-zinc-900/80 sticky top-0">
               <tr>
-                {["#", "Scheme Name", "Type", "Sanctioned (Cr)", "Till Last FY", "BE FY", "RE FY", "Actuals FY", "Total Spent", "% Spent", "Var vs BE"].map((h) => (
+                {["#", "Scheme Name", "Type", "Sanctioned (Cr)", "Till Last FY", "BE FY", "RE FY", "Actuals FY", "Total Spent", "% Spent", "Bal. vs BE", "Bal. vs Sanction"].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-zinc-400 font-bold uppercase tracking-wide whitespace-nowrap border-b border-zinc-800">{h}</th>
                 ))}
               </tr>
@@ -342,6 +346,18 @@ function CapexSummaryView({ fy }: { fy: string }) {
                   <td className={`px-3 py-2 text-right font-bold font-mono ${s.variance_be < 0 ? "text-emerald-400" : s.variance_be > 0 ? "text-red-400" : "text-zinc-600"}`}>
                     {s.variance_be !== 0 ? (s.variance_be > 0 ? `+${s.variance_be}` : s.variance_be) : "—"}
                   </td>
+                  {/* Balance vs BE */}
+                  {(() => { const b = s.be_fy - s.actuals_fy; return (
+                    <td className={`px-3 py-2 text-right font-mono font-bold ${b >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                      {s.be_fy > 0 ? (b >= 0 ? fmt(b) : `−₹${Math.abs(b).toFixed(2)}`) : "—"}
+                    </td>
+                  ); })()}
+                  {/* Balance vs Sanction */}
+                  {(() => { const b = s.sanctioned_cost_cr - s.total_spent; return (
+                    <td className={`px-3 py-2 text-right font-mono font-bold ${b >= 0 ? "text-cyan-400" : "text-red-400"}`}>
+                      {s.sanctioned_cost_cr > 0 ? (b >= 0 ? fmt(b) : `−₹${Math.abs(b).toFixed(2)}`) : "—"}
+                    </td>
+                  ); })()}
                 </tr>
               ))}
               {/* Portfolio total row */}
@@ -353,7 +369,13 @@ function CapexSummaryView({ fy }: { fy: string }) {
                 <td className="px-3 py-2.5 text-blue-300 text-right font-mono">{fmt(data.total.re_fy)}</td>
                 <td className="px-3 py-2.5 text-emerald-300 text-right font-mono">{fmt(data.total.actuals_fy)}</td>
                 <td className="px-3 py-2.5 text-violet-300 text-right font-mono">{fmt(data.total.total_spent)}</td>
-                <td className="px-3 py-2.5" colSpan={2}></td>
+                <td className="px-3 py-2.5"></td>
+                <td className={`px-3 py-2.5 text-right font-mono font-bold ${totBalBe >= 0 ? "text-emerald-300" : "text-red-400"}`}>
+                  {totBalBe >= 0 ? fmt(totBalBe) : `−₹${Math.abs(totBalBe).toFixed(2)}`}
+                </td>
+                <td className={`px-3 py-2.5 text-right font-mono font-bold ${totBal >= 0 ? "text-cyan-300" : "text-red-400"}`}>
+                  {totBal >= 0 ? fmt(totBal) : `−₹${Math.abs(totBal).toFixed(2)}`}
+                </td>
               </tr>
             </tbody>
           </table>
