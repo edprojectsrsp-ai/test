@@ -26,7 +26,12 @@ const GREETING =
 export default function NeuralAssistant() {
   const [windowState, setWindowState] = useState<WindowState>("closed");
   const [input, setInput] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [dashboardContext, setDashboardContext] = useState<any>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
 
   // Initialise position client-side (avoids SSR mismatch)
   useEffect(() => {

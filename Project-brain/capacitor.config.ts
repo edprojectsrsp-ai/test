@@ -13,7 +13,7 @@ const config: CapacitorConfig = {
     //   3. Bundled static: leave url undefined, use webDir
     //
     // For Sunday demo, RECOMMEND option 1 - laptop+phone on same WiFi
-    url: 'http://192.168.1.100:3000',  // <<<< CHANGE THIS
+    url: 'http://10.118.1.136:3000',
     cleartext: true,  // allow http (LAN dev). REMOVE in production.
     androidScheme: 'https',
   },

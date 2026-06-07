@@ -110,7 +110,7 @@ def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
             }
         )
 
-    return result
+    return workspace_data
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ def load_plant_workspace(year: int, month: int, db: Session = Depends(get_db)):
 def save_plant_workspace(payload: PlantWorkspaceSave, db: Session = Depends(get_db)):
     try:
         for row in payload.rows:
-            db.execute(text("""
+            upsert_progress_sql = text("""
                 INSERT INTO plant_progress_monthly
                 (scheme_id, progress_month, cumulative_progress_percent, progress_remark, scheme_status, expected_completion_date, closure_date, updated_at)
                 VALUES (:s_id, :p_month, :prog, :rem, :stat, :exp_date, :clos_date, CURRENT_TIMESTAMP)
@@ -132,8 +132,7 @@ def save_plant_workspace(payload: PlantWorkspaceSave, db: Session = Depends(get_
                     expected_completion_date = EXCLUDED.expected_completion_date,
                     closure_date = EXCLUDED.closure_date,
                     updated_at = CURRENT_TIMESTAMP
-                """
-            )
+                """)
             db.execute(
                 upsert_progress_sql,
                 {

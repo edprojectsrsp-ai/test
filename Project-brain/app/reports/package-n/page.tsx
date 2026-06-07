@@ -1,312 +1,197 @@
-"use client";
+'use client';
 
-/**
- * Package-N Status Report — view / print / edit-in-place.
- *
- * Modes:
- *   - VIEW  : faithful A4 print-styled rendering of the document (read-only).
- *   - EDIT  : the same content becomes editable in place (contentEditable),
- *             with a floating formatting toolbar. Save persists to backend.
- *
- * No external editor library — uses the browser's native rich-text editing
- * (document.execCommand) so it works with zero npm installs. Content is loaded
- * from the backend if a saved version exists, else falls back to the default
- * generated from the original Word file.
- *
- * Backend endpoints (see reports.py additions):
- *   GET  /api/v1/reports/doc/package-n        -> { html, updated_at } | 404
- *   PUT  /api/v1/reports/doc/package-n        body { html }  -> { ok, updated_at }
- *
- * Place at: app/reports/package-n/page.tsx
- */
+import React, { useState, useEffect, useRef } from 'react';
+import { Edit3, Eye, Printer, Save, Download } from 'lucide-react';
+import { jsPDF } from 'jspdf';
+import html2canvas from 'html2canvas';
 
-import { useEffect, useRef, useState, useCallback } from "react";
-import {
-  Printer, Pencil, Save, X, Bold, Italic, Underline, List, ListOrdered,
-  Undo, Redo, Heading, Table as TableIcon, RotateCcw, Download, Loader2,
-} from "lucide-react";
-import { PACKAGE_N_DEFAULT_HTML, PACKAGE_N_REPORT_TITLE } from "@/lib/package_n_report_content";
+interface ProjectSection {
+  id: string;
+  title: string;
+  content: string;
+  progress?: string;
+  financial?: string;
+}
 
-const API = "http://localhost:8002/api/v1/reports";
-const DOC_KEY = "package-n";
-
-type Mode = "view" | "edit";
-
-export default function PackageNReportPage() {
-  const [mode, setMode] = useState<Mode>("view");
-  const [html, setHtml] = useState<string>(PACKAGE_N_DEFAULT_HTML);
-  const [savedHtml, setSavedHtml] = useState<string>(PACKAGE_N_DEFAULT_HTML);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+export default function PackageNReport() {
+  const [mode, setMode] = useState<'view' | 'edit'>('view');
   const [dirty, setDirty] = useState(false);
-  const editorRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
+  const [fitScale, setFitScale] = useState(1);
 
-  // Load saved version (if any) on mount
+  // Structured Data (Much better than raw HTML string)
+  const [reportData, setReportData] = useState<ProjectSection[]>([
+    {
+      id: '1',
+      title: '1. Rebuilding of COB#2',
+      content: 'Stage-1 approval: 30.05.2019\nStage-1 Cost - Rs. 356.31 Crs...',
+      progress: '99.75%',
+      financial: 'Achieved till Mar’26: Rs 461.41 Cr (106.43%)'
+    },
+    // Add all other projects here...
+    {
+      id: '2',
+      title: '2. Installation Of 4th Slab Caster...',
+      content: 'Stage-I approval: 30.05.2019...',
+      progress: 'Commissioned',
+      financial: 'Achieved: 960.52 Cr (86.91%)'
+    },
+    // ... you can add all 18 projects
+  ]);
+
+  const [title, setTitle] = useState("PACKAGE - N");
+  const [subtitle, setSubtitle] = useState("Status of Ongoing Projects as on 29.05.2026");
+
+  // Auto scale to fit A4
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch(`${API}/doc/${DOC_KEY}`);
-        if (r.ok) {
-          const data = await r.json();
-          if (alive && data.html) {
-            setHtml(data.html);
-            setSavedHtml(data.html);
-            setUpdatedAt(data.updated_at || null);
-          }
-        }
-      } catch {
-        /* no saved version — use default */
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => {
-      alive = false;
+    const fitToA4 = () => {
+      if (!pageRef.current) return;
+      const containerWidth = window.innerWidth - 80;
+      const contentWidth = 794; // A4 width in px at 96dpi
+      setFitScale(Math.min(1, containerWidth / contentWidth));
     };
+
+    fitToA4();
+    window.addEventListener('resize', fitToA4);
+    return () => window.removeEventListener('resize', fitToA4);
   }, []);
 
-  // When entering edit mode, push current html into the editable div
-  useEffect(() => {
-    if (mode === "edit" && editorRef.current) {
-      editorRef.current.innerHTML = html;
-    }
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handlePrint = () => {
+    window.print();
+  };
 
-  const exec = useCallback((cmd: string, value?: string) => {
-    document.execCommand(cmd, false, value);
-    editorRef.current?.focus();
+  const handleExportPDF = async () => {
+    if (!pageRef.current) return;
+    
+    const canvas = await html2canvas(pageRef.current, { scale: 2 });
+    const imgData = canvas.toDataURL('image/png');
+    
+    const pdf = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: 'a4'
+    });
+
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+    pdf.save(`RSP_Package_N_Report_${new Date().toISOString().slice(0,10)}.pdf`);
+  };
+
+  const updateSection = (id: string, field: keyof ProjectSection, value: string) => {
+    setReportData(prev => prev.map(section =>
+      section.id === id ? { ...section, [field]: value } : section
+    ));
     setDirty(true);
-  }, []);
-
-  const handleSave = async () => {
-    const current = editorRef.current?.innerHTML ?? html;
-    setSaving(true);
-    try {
-      const r = await fetch(`${API}/doc/${DOC_KEY}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ html: current }),
-      });
-      if (!r.ok) throw new Error(`Save failed (${r.status})`);
-      const data = await r.json();
-      setHtml(current);
-      setSavedHtml(current);
-      setUpdatedAt(data.updated_at || new Date().toISOString());
-      setDirty(false);
-      setMode("view");
-    } catch (e: any) {
-      alert(`Could not save: ${e.message}. Your edits are still on screen — try again.`);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleCancel = () => {
-    if (dirty && !confirm("Discard your changes?")) return;
-    setHtml(savedHtml);
-    setDirty(false);
-    setMode("view");
-  };
-
-  const handleResetToOriginal = () => {
-    if (!confirm("Reset to the original document content? This clears your edits after saving.")) return;
-    if (editorRef.current) editorRef.current.innerHTML = PACKAGE_N_DEFAULT_HTML;
-    setDirty(true);
-  };
-
-  const handlePrint = () => window.print();
-
-  const handleInsertTable = () => {
-    const rows = parseInt(prompt("Rows?", "3") || "0", 10);
-    const cols = parseInt(prompt("Columns?", "3") || "0", 10);
-    if (rows > 0 && cols > 0) {
-      let t = '<table class="rep-table"><tbody>';
-      for (let r = 0; r < rows; r++) {
-        t += "<tr>";
-        for (let c = 0; c < cols; c++) t += "<td><p>&nbsp;</p></td>";
-        t += "</tr>";
-      }
-      t += "</tbody></table><p></p>";
-      exec("insertHTML", t);
-    }
   };
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      {/* ===== Toolbar (hidden when printing) ===== */}
-      <div className="no-print sticky top-0 z-30 bg-gray-900 text-white shadow-lg">
-        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3 flex-wrap">
-          <h1 className="text-lg font-semibold text-cyan-400 mr-auto">
-            {PACKAGE_N_REPORT_TITLE}
-          </h1>
+    <div className="min-h-screen bg-gray-50">
+      {/* Toolbar */}
+      <div className="sticky top-0 z-50 bg-white border-b shadow-sm">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Package-N Status Report</h1>
+            <p className="text-sm text-gray-500">Rourkela Steel Plant • Live Editor</p>
+          </div>
 
-          {updatedAt && mode === "view" && (
-            <span className="text-xs text-gray-400">
-              Last edited {new Date(updatedAt).toLocaleString()}
-            </span>
-          )}
+          <div className="flex gap-3">
+            <button
+              onClick={() => setMode(mode === 'view' ? 'edit' : 'view')}
+              className="flex items-center gap-2 px-5 py-2.5 border rounded-xl hover:bg-gray-100 transition"
+            >
+              {mode === 'view' ? <Edit3 size={18} /> : <Eye size={18} />}
+              {mode === 'view' ? 'Edit Mode' : 'View Mode'}
+            </button>
 
-          {mode === "view" ? (
-            <>
-              <button
-                onClick={handlePrint}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition"
-              >
-                <Printer size={16} /> Print
+            <button
+              onClick={handlePrint}
+              className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition"
+            >
+              <Printer size={18} /> Print
+            </button>
+
+            <button
+              onClick={handleExportPDF}
+              className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl hover:bg-emerald-700 transition"
+            >
+              <Download size={18} /> Export PDF
+            </button>
+
+            {dirty && (
+              <button className="flex items-center gap-2 px-5 py-2.5 bg-amber-600 text-white rounded-xl">
+                <Save size={18} /> Save
               </button>
-              <button
-                onClick={() => setMode("edit")}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 transition font-medium"
-              >
-                <Pencil size={16} /> Edit
-              </button>
-            </>
-          ) : (
-            <>
-              <button
-                onClick={handleResetToOriginal}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition text-sm"
-                title="Reset to original Word content"
-              >
-                <RotateCcw size={15} /> Reset
-              </button>
-              <button
-                onClick={handleCancel}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition"
-              >
-                <X size={16} /> Cancel
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 transition font-medium disabled:opacity-60"
-              >
-                {saving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                {saving ? "Saving…" : "Save"}
-              </button>
-            </>
-          )}
+            )}
+          </div>
         </div>
+      </div>
 
-        {/* ===== Formatting bar (edit mode only) ===== */}
-        {mode === "edit" && (
-          <div className="border-t border-gray-700 bg-gray-800">
-            <div className="max-w-5xl mx-auto px-4 py-2 flex items-center gap-1 flex-wrap">
-              <ToolBtn onClick={() => exec("bold")} title="Bold"><Bold size={16} /></ToolBtn>
-              <ToolBtn onClick={() => exec("italic")} title="Italic"><Italic size={16} /></ToolBtn>
-              <ToolBtn onClick={() => exec("underline")} title="Underline"><Underline size={16} /></ToolBtn>
-              <Divider />
-              <ToolBtn onClick={() => exec("formatBlock", "<h2>")} title="Heading"><Heading size={16} /></ToolBtn>
-              <ToolBtn onClick={() => exec("insertUnorderedList")} title="Bullet list"><List size={16} /></ToolBtn>
-              <ToolBtn onClick={() => exec("insertOrderedList")} title="Numbered list"><ListOrdered size={16} /></ToolBtn>
-              <ToolBtn onClick={handleInsertTable} title="Insert table"><TableIcon size={16} /></ToolBtn>
-              <Divider />
-              <ToolBtn onClick={() => exec("undo")} title="Undo"><Undo size={16} /></ToolBtn>
-              <ToolBtn onClick={() => exec("redo")} title="Redo"><Redo size={16} /></ToolBtn>
-              <span className="ml-auto text-xs text-gray-400">
-                {dirty ? "Unsaved changes" : "No changes yet"}
-              </span>
+      {/* Document */}
+      <div className="flex justify-center p-8">
+        <div className="doc-container">
+          <div
+            ref={pageRef}
+            className="doc-page bg-white shadow-2xl"
+            style={{ transform: `scale(${fitScale})`, transformOrigin: 'top left' }}
+          >
+            <div className="p-[18mm] min-h-[297mm] text-[11pt] leading-relaxed font-serif">
+              <h1 className="text-center text-[14pt] font-bold mb-2">{title}</h1>
+              <h2 className="text-center text-[12pt] mb-8 text-gray-700">{subtitle}</h2>
+
+              {reportData.map((section) => (
+                <div key={section.id} className="mb-8">
+                  <h3 className="font-bold text-[12pt] mb-3">{section.title}</h3>
+                  
+                  {mode === 'edit' ? (
+                    <textarea
+                      className="w-full h-32 p-3 border border-gray-300 rounded-lg font-serif text-[11pt]"
+                      value={section.content}
+                      onChange={(e) => updateSection(section.id, 'content', e.target.value)}
+                    />
+                  ) : (
+                    <div className="whitespace-pre-line text-[11pt]">
+                      {section.content}
+                    </div>
+                  )}
+
+                  {section.progress && (
+                    <p className="mt-2"><strong>Progress:</strong> {section.progress}</p>
+                  )}
+                  {section.financial && (
+                    <p><strong>Financial:</strong> {section.financial}</p>
+                  )}
+                </div>
+              ))}
+
+              {/* Highlights */}
+              <div className="mt-12 pt-8 border-t text-center text-[10.5pt] italic">
+                <strong>Highlights:</strong><br />
+                1. CAPEX FY2025-26 - Target RE- Rs 2152.5 Cr., Achieved- Rs 2155.44 Cr. (100.14%)<br />
+                2. Battery 7 Refractory First brick laid on 20.04.2026<br />
+                3. 1000 Safe mandays achieved on 01.05.2026
+              </div>
             </div>
           </div>
-        )}
+        </div>
       </div>
 
-      {/* ===== Document (A4 page) ===== */}
-      <div className="py-8 px-4 flex justify-center">
-        {loading ? (
-          <div className="flex items-center gap-3 text-gray-500 mt-20">
-            <Loader2 className="animate-spin" /> Loading document…
-          </div>
-        ) : mode === "view" ? (
-          <div
-            className="doc-page bg-white shadow-xl"
-            dangerouslySetInnerHTML={{ __html: html }}
-          />
-        ) : (
-          <div
-            ref={editorRef}
-            className="doc-page doc-editable bg-white shadow-xl"
-            contentEditable
-            suppressContentEditableWarning
-            onInput={() => setDirty(true)}
-          />
-        )}
-      </div>
-
-      {/* ===== Styles ===== */}
       <style jsx global>{`
+        .doc-container {
+          width: 210mm;
+          max-width: 100%;
+        }
         .doc-page {
           width: 210mm;
           min-height: 297mm;
-          padding: 20mm 18mm;
-          box-sizing: border-box;
-          font-family: "Times New Roman", Georgia, serif;
-          font-size: 11pt;
-          line-height: 1.5;
-          color: #111;
+          box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.25);
         }
-        .doc-editable:focus { outline: 2px solid #06b6d4; outline-offset: 4px; }
-        .doc-page p { margin: 0 0 6pt; }
-        .doc-page strong { font-weight: 700; }
-        .doc-page ul, .doc-page ol { margin: 4pt 0 8pt 18pt; }
-        .doc-page table, .doc-page .rep-table {
-          border-collapse: collapse;
-          width: 100%;
-          max-width: 100%;
-          table-layout: fixed;
-          margin: 8pt 0 14pt;
-          font-size: 9pt;
-        }
-        .doc-page th, .doc-page td {
-          border: 1px solid #444;
-          padding: 4pt 5pt;
-          vertical-align: top;
-          text-align: left;
-          word-wrap: break-word;
-          overflow-wrap: break-word;
-          hyphens: auto;
-        }
-        .doc-page th { background: #f0f0f0; font-weight: 700; }
-        .doc-page thead tr { background: #e8e8e8; }
-        .doc-page td:first-child { width: 6%; }
-        .doc-page td:nth-child(2) { width: 38%; }
-        .doc-page td:nth-child(3) { width: 56%; }
-
         @media print {
-          .no-print { display: none !important; }
-          body { background: #fff !important; }
-          .doc-page {
-            box-shadow: none !important;
-            width: auto;
-            min-height: auto;
-            padding: 0;
-            margin: 0;
-          }
-          @page { size: A4; margin: 16mm; }
+          .doc-container, .doc-page { box-shadow: none; transform: none !important; }
+          @page { size: A4; margin: 0; }
         }
       `}</style>
     </div>
   );
-}
-
-function ToolBtn({
-  children, onClick, title,
-}: { children: React.ReactNode; onClick: () => void; title: string }) {
-  return (
-    <button
-      type="button"
-      onMouseDown={(e) => e.preventDefault()} // keep selection
-      onClick={onClick}
-      title={title}
-      className="p-2 rounded hover:bg-gray-700 text-gray-200 transition"
-    >
-      {children}
-    </button>
-  );
-}
-
-function Divider() {
-  return <span className="w-px h-5 bg-gray-600 mx-1" />;
 }

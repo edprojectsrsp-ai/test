@@ -631,7 +631,9 @@ export default function AIChatPage() {
   const [taskType, setTaskType]     = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<string | null>(null);
   const [error, setError]           = useState<string | null>(null);
+  const [health, setHealth]         = useState<Health | null>(null);
   const [provider, setProvider]     = useState("auto");
+  const [showDiag, setShowDiag]     = useState(false);
   const endRef                      = useRef<HTMLDivElement>(null);
   const inputRef                    = useRef<HTMLTextAreaElement>(null);
 
@@ -645,6 +647,13 @@ export default function AIChatPage() {
       .then(r => r.json())
       .then(d => setConvId(d.conversation_id))
       .catch(() => setError("Cannot connect to AI service on port 8001. Start the AI microservice first."));
+  }, []);
+
+  useEffect(() => {
+    fetch(`${AI_API}/ai/health`)
+      .then(r => r.json())
+      .then(setHealth)
+      .catch(() => setHealth(null));
   }, []);
 
   useEffect(() => { startConv(); }, [startConv]);
@@ -728,6 +737,8 @@ export default function AIChatPage() {
     }
   };
 
+  const sendStream = send;
+
   const newChat = () => {
     setMsgs([]); setError(null); setTaskType(null); setActiveTool(null); startConv();
   };
@@ -741,7 +752,7 @@ export default function AIChatPage() {
       <NeuralBackground active={busy} />
 
       {/* ── Header ── */}
-      <div className="relative z-10 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-black/60 px-6 py-3 backdrop-blur-md">
+      <div className="relative z-10 pointer-events-auto flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800/80 bg-black/60 px-6 py-3 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <motion.div
             animate={busy ? { scale:[1,1.15,1], opacity:[0.8,1,0.8] } : {}}
@@ -754,6 +765,7 @@ export default function AIChatPage() {
             <h1 className="text-lg font-bold leading-tight">Project Brain AI</h1>
             <Link
               href="/ai/settings"
+              onClick={() => setShowDiag(false)}
               className="mt-1 inline-flex items-center gap-1.5 rounded-xl border border-cyan-500/20 bg-cyan-500/10 px-3 py-1 text-[11px] font-semibold text-cyan-200 transition hover:bg-cyan-500/20"
             >
               <Settings2 className="h-3.5 w-3.5" />
@@ -792,6 +804,7 @@ export default function AIChatPage() {
           )}
 
           <button
+            type="button"
             onClick={() => setShowDiag(v => !v)}
             className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-medium transition-colors ${
               showDiag
@@ -802,7 +815,7 @@ export default function AIChatPage() {
             <Database className="h-3.5 w-3.5" /> Diagnostics
           </button>
 
-          <button onClick={newChat}
+          <button type="button" onClick={newChat}
             className="flex items-center gap-1.5 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs font-medium text-zinc-400 hover:text-white">
             <RefreshCw className="h-3.5 w-3.5" /> New Chat
           </button>
@@ -815,7 +828,7 @@ export default function AIChatPage() {
       </AnimatePresence>
 
       {/* No-provider warning */}
-      {health && health.providers_configured.filter(p => p !== "ollama").length === 0 && (
+      {health?.providers_configured?.filter(p => p !== "ollama").length === 0 && (
         <div className="relative z-10 mx-4 mt-2 flex items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-300">
           <AlertTriangle className="h-4 w-4 shrink-0" />
           <span>
@@ -880,16 +893,16 @@ export default function AIChatPage() {
       <footer className="border-t border-zinc-800 p-4">
         <div className="max-w-4xl mx-auto flex gap-2">
           <input value={input} onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendStream())}
+            onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), send())}
             placeholder="Ask about schemes, packages, risks, documents..."
             disabled={!convId || busy}
             className="flex-1 px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-lg focus:outline-none focus:border-indigo-500 disabled:opacity-50" />
-          <button onClick={sendStream} disabled={!input.trim() || busy || !convId}
+          <button type="button" onClick={send} disabled={!input.trim() || busy || !convId}
             className="px-5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-zinc-800 rounded-lg flex items-center gap-2">
             {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           </button>
         </div>
-      </div>
+      </footer>
     </div>
   );
 }
