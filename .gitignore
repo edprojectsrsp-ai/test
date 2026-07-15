@@ -47,13 +47,41 @@ build/
 *.err.log
 .api*.log
 .next.dev*.log
+run_logs/
 
 # --- Local data / uploads (do not commit) ---
 uploads/
 project_brain.db
 *.sqlite
 *.sqlite3
+*.dump
 
 # --- Python tooling scripts output ---
 coverage/
 .coverage
+
+# --- TypeScript / app caches ---
+*.tsbuildinfo
+
+# --- Archives / portable handoff ---
+*.zip
+*.tar
+*.gz
+*.7z
+
+# --- Local backup / staging folders ---
+_backup-before-portable-*/
+_v4_bundle/
+
+# --- Large local sibling projects / private refs ---
+Friend project/
+friend project/
+
+# --- Local media / test captures ---
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.avi
+*.mov
+*.webm

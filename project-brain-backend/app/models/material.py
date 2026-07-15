@@ -13,4 +13,3 @@ class MaterialEntry(Base):
     planned_qty = Column(Float, default=0.0)
     received_qty = Column(Float, default=0.0)
     consumed_qty = Column(Float, default=0.0)
-

@@ -63,4 +63,3 @@ def save_plant_actual(payload: PlantActualPayload, db: Session = Depends(get_db)
     )
     db.commit()
     return {"status": "success"}
-

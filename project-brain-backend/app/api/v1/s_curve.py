@@ -13,9 +13,9 @@ Endpoints (mounted at /api/v1/s-curve):
     GET /package/{package_id}   -> single-package curve.
 
 Curve math:
-    * Within a package, each activity contributes (weight_pct/100) * (qty as % of
-      its own scope). We express monthly planned/actual as a % of total package
-      scope-weight, then accumulate into a cumulative S-curve (0..100).
+    * Within a package, each activity contributes its completion percentage
+      multiplied by weight_pct. Monthly contributions accumulate into a
+      cumulative S-curve (0..100), matching the DPR report calculation.
     * Across packages (scheme level), each package's cumulative % is combined
       using its package weight:
           weight = packages.extra_fields['scheme_rollup_weight']   (if set)
@@ -82,7 +82,7 @@ def _package_curve(db: Session, package_id: int):
     Build a single package's monthly planned & actual cumulative %-complete.
     Returns (months_sorted, planned_cum{month->pct}, actual_cum{month->pct},
              has_plan: bool).
-    Percentages are of the package's total scope-weight (sum of activity scope*weight).
+    Percentages are the weighted sum of each activity's completion percentage.
     """
     plan = _current_plan_for_package(db, package_id)
     if not plan:
@@ -99,17 +99,20 @@ def _package_curve(db: Session, package_id: int):
     if not activities:
         return [], {}, {}, True
 
-    # Per-activity scope & weight. Denominator = sum(weight_pct * scope_qty),
-    # so a fully-completed plan reaches 100%.
+    # Per-activity scope & weight. Each activity contributes its completion
+    # percentage multiplied by its weight; this mirrors the DPR calculation.
     act_scope = {}
     act_weight = {}
+    carry_forward = 0.0
     denom = 0.0
     for a in activities:
         w = float(a.weight_pct or 0)
         s = float(a.scope_qty or 0)
         act_weight[a.activity_id] = w
         act_scope[a.activity_id] = s
-        denom += w * s
+        denom += w
+        if s > 0:
+            carry_forward += w * float(a.actuals_till_last_fy or 0) / s
     if denom <= 0:
         # No usable scope/weight -> cannot compute a meaningful %; treat as empty.
         return [], {}, {}, True
@@ -147,20 +150,28 @@ def _package_curve(db: Session, package_id: int):
         if m is None:
             continue
         mkey = _month_first(m)
-        contrib = act_weight.get(activity_id, 0) * float(qty or 0)
+        scope = act_scope.get(activity_id, 0)
+        contrib = (
+            act_weight.get(activity_id, 0) * float(qty or 0) / scope
+            if scope > 0 else 0
+        )
         planned_month[mkey] += contrib
 
     for activity_id, d, qty in actual_rows:
         if d is None:
             continue
         mkey = _month_first(d)
-        contrib = act_weight.get(activity_id, 0) * float(qty or 0)
+        scope = act_scope.get(activity_id, 0)
+        contrib = (
+            act_weight.get(activity_id, 0) * float(qty or 0) / scope
+            if scope > 0 else 0
+        )
         actual_month[mkey] += contrib
 
     all_months = sorted(set(planned_month) | set(actual_month))
 
     planned_cum, actual_cum = {}, {}
-    run_p = run_a = 0.0
+    run_p = run_a = carry_forward
     for m in all_months:
         run_p += planned_month.get(m, 0.0)
         run_a += actual_month.get(m, 0.0)
@@ -189,8 +200,40 @@ def _package_weight(pkg: Package) -> float:
 
 def _serialize_curve(months, planned_cum, actual_cum):
     planned = [{"month": _month_label(m), "value": planned_cum.get(m, 0.0)} for m in months]
-    actual = [{"month": _month_label(m), "value": actual_cum.get(m, 0.0)} for m in months]
+    latest_actual_idx = -1
+    previous = None
+    for idx, month in enumerate(months):
+        current = actual_cum.get(month, 0.0)
+        if previous is None or abs(current - previous) > 0.000001:
+            latest_actual_idx = idx
+        previous = current
+    actual = [
+        {"month": _month_label(m), "value": actual_cum.get(m, 0.0)}
+        for m in months[:latest_actual_idx + 1]
+    ]
     return planned, actual
+
+
+def _curve_points(months, planned_cum, actual_cum):
+    latest_actual_idx = -1
+    previous = None
+    for idx, month in enumerate(months):
+        current = actual_cum.get(month, 0.0)
+        if previous is None or abs(current - previous) > 0.000001:
+            latest_actual_idx = idx
+        previous = current
+
+    points = []
+    for idx, month in enumerate(months):
+        actual_value = actual_cum.get(month, 0.0)
+        is_future = latest_actual_idx >= 0 and idx > latest_actual_idx
+        points.append({
+            "month_date": month.isoformat(),
+            "cumulative_planned_pct": planned_cum.get(month, 0.0),
+            "cumulative_actual_pct": None if is_future else actual_value,
+            "is_forecast": is_future,
+        })
+    return points
 
 
 @router.get("/package/{package_id}")
@@ -211,6 +254,32 @@ def get_package_s_curve(package_id: int, db: Session = Depends(get_db)):
         "planned": planned,
         "actual": actual,
     }
+
+
+@router.get("/{scheme_id}/packages")
+def get_scheme_package_curves(scheme_id: int, db: Session = Depends(get_db)):
+    """Package-wise curve payload for the furnace PMC and scheme rollup views."""
+    packages = (
+        db.query(Package)
+        .filter(Package.scheme_id == scheme_id, Package.is_deleted.is_(False))
+        .order_by(Package.package_no, Package.package_id)
+        .all()
+    )
+    if not packages:
+        raise HTTPException(status_code=404, detail="No packages found for this scheme")
+
+    out = []
+    for pkg in packages:
+        months, planned_cum, actual_cum, has_plan = _package_curve(db, pkg.package_id)
+        if not has_plan or not months:
+            continue
+        out.append({
+            "package_id": pkg.package_id,
+            "package_name": pkg.package_name,
+            "weight": round(_package_weight(pkg), 4),
+            "points": _curve_points(months, planned_cum, actual_cum),
+        })
+    return out
 
 
 @router.get("/{scheme_id}")
@@ -260,14 +329,23 @@ def get_s_curve_data(scheme_id: int, db: Session = Depends(get_db)):
                 break
         return last
 
-    planned_out, actual_out = [], []
+    planned_out, actual_values = [], []
     for m in months_sorted:
         wp = wa = 0.0
         for pkg, months, planned_cum, actual_cum, w in pkg_curves:
             wp += w * _cum_at(planned_cum, months, m)
             wa += w * _cum_at(actual_cum, months, m)
         planned_out.append({"month": _month_label(m), "value": round(wp / total_weight, 2)})
-        actual_out.append({"month": _month_label(m), "value": round(wa / total_weight, 2)})
+        actual_values.append({"month": _month_label(m), "value": round(wa / total_weight, 2)})
+
+    latest_actual_idx = -1
+    previous = None
+    for idx, point in enumerate(actual_values):
+        current = point["value"]
+        if previous is None or abs(current - previous) > 0.000001:
+            latest_actual_idx = idx
+        previous = current
+    actual_out = actual_values[:latest_actual_idx + 1]
 
     package_breakdown = [
         {
@@ -348,20 +426,20 @@ def get_fy_s_curve(
             WHERE NOT pa.is_deleted AND pa.scope_qty > 0
         ),
         pkg_denom AS (
-            SELECT ab.plan_id, SUM(ab.weight_pct * ab.scope_qty) AS denom
+            SELECT ab.plan_id, SUM(ab.weight_pct) AS denom
             FROM act_base ab
             GROUP BY ab.plan_id
         ),
         carry_forward AS (
             SELECT ab.plan_id,
-                   SUM(ab.weight_pct * ab.actuals_till_last_fy) AS cf_contrib
+                   SUM(ab.weight_pct * ab.actuals_till_last_fy / ab.scope_qty) AS cf_contrib
             FROM act_base ab
             GROUP BY ab.plan_id
         ),
         monthly_planned AS (
             SELECT ab.plan_id,
                    DATE_TRUNC('month', mpe.month_date)::date AS mth,
-                   SUM(ab.weight_pct * mpe.planned_qty) AS contrib
+                   SUM(ab.weight_pct * mpe.planned_qty / ab.scope_qty) AS contrib
             FROM monthly_plan_entries mpe
             JOIN act_base ab ON mpe.activity_id = ab.activity_id
             WHERE mpe.month_date BETWEEN :fy_start AND :fy_end
@@ -370,7 +448,7 @@ def get_fy_s_curve(
         monthly_actual AS (
             SELECT ab.plan_id,
                    DATE_TRUNC('month', da.actual_date)::date AS mth,
-                   SUM(ab.weight_pct * da.actual_qty) AS contrib
+                   SUM(ab.weight_pct * da.actual_qty / ab.scope_qty) AS contrib
             FROM daily_actuals da
             JOIN act_base ab ON da.activity_id = ab.activity_id
             WHERE da.actual_date BETWEEN :fy_start AND :fy_end
@@ -420,6 +498,10 @@ def get_fy_s_curve(
     total_weight = sum(m["weight"] for m in pkg_meta.values())
     all_months = sorted({m for pd in [*pkg_monthly_plan.values(), *pkg_monthly_act.values()] for m in pd})
 
+    latest_actual_month = max(
+        (month for values in pkg_monthly_act.values() for month in values),
+        default=(all_months[0] if all_months and any(meta["cf"] > 0 for meta in pkg_meta.values()) else None),
+    )
     planned_out, actual_out = [], []
     for month in all_months:
         wp = wa = 0.0
@@ -435,7 +517,8 @@ def get_fy_s_curve(
             wp += w * pct_p
             wa += w * pct_a
         planned_out.append({"month": _month_label(month), "value": round(wp / total_weight, 2)})
-        actual_out.append({"month":  _month_label(month), "value": round(wa / total_weight, 2)})
+        if latest_actual_month is not None and month <= latest_actual_month:
+            actual_out.append({"month": _month_label(month), "value": round(wa / total_weight, 2)})
 
     return {
         "planned": planned_out,

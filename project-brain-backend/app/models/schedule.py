@@ -13,7 +13,7 @@ class ScheduleImport(Base):
     project_id = Column(Integer, nullable=False)
     file_name = Column(String(255), nullable=False)
     imported_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    
+
     # Relationship
     activities = relationship("ScheduleActivity", back_populates="import", cascade="all, delete-orphan")
 
@@ -43,6 +43,6 @@ class ScheduleActivity(Base):
     total_float = Column(Float, default=0.0)
     is_critical = Column(String(10), default="No")  # "Yes" or "No"
     raw_data = Column(Text, nullable=True)  # Store original parsed data as JSON
-    
+
     # Relationship
     import_ = relationship("ScheduleImport", back_populates="activities")

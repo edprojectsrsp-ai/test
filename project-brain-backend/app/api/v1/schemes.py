@@ -5,8 +5,9 @@ Sprint 1: Vault upgrade
 Place at: project-brain-backend/app/api/v1/schemes.py
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text, func
 from app.core.database import get_db
@@ -51,6 +52,66 @@ def _table_exists(db: Session, table_name: str) -> bool:
     return bool(
         db.execute(text("SELECT to_regclass(:t) IS NOT NULL"), {"t": f"public.{table_name}"}).scalar()
     )
+
+
+def _coerce_value(v):
+    if isinstance(v, str):
+        try:
+            if len(v) >= 10 and v[4] == "-" and v[7] == "-":
+                return date.fromisoformat(v[:10])
+        except ValueError:
+            return v
+    return v
+
+
+_APPROVAL_STAGE_FIELDS = {
+    "formulation": [
+        "consultant_name", "consultant_acceptance_date", "draft_fr_ts_date",
+        "final_fr_ts_ce_ec_date", "pre_nit_meeting_date", "plant_pag_meeting_date",
+        "dic_approval_date", "forwarded_to_corporate_date", "cost_gross_cr",
+    ],
+    "stage1": [
+        "cod_date", "independent_financial_appraisal_date", "corporate_pag_date",
+        "chairman_approval_date", "pcsb_date", "sail_board_date", "sanction_date",
+        "order_date", "cost_gross_cr", "implementation_period_months",
+    ],
+    "tendering": [
+        "nit_number", "pr_initiation_date", "pr_approval_date", "nit_date",
+        "pre_bid_date", "tod_original_date", "offers_received_count",
+        "estimated_value_cr", "awarded_value_cr", "cancellation_date",
+    ],
+    "stage2": [
+        "draft_board_note_date", "proposal_to_co_date", "pag_date",
+        "chairman_approval_date", "pcsb_date", "sail_board_date",
+        "empowered_committee_date", "sanction_date", "order_date", "cod_date",
+        "firmed_up_cost_gross_cr", "variance_vs_stage1_pct",
+    ],
+}
+
+
+def _serialize_stage_rows(rows, id_field: str, revision_field: str, label_field: str, fields: list[str]):
+    out = []
+    for row in rows:
+        out.append({
+            "id": getattr(row, id_field),
+            "revision_no": getattr(row, revision_field, 0) or 0,
+            "revision_label": getattr(row, label_field, None) or f"R{getattr(row, revision_field, 0) or 0}",
+            "is_current": bool(getattr(row, "is_current", False)),
+            "fields": {field: _coerce_value(getattr(row, field, None)) for field in fields if getattr(row, field, None) is not None},
+            "remarks": getattr(row, "remarks", "") or "",
+        })
+    return out
+
+
+class ApprovalRevisionIn(BaseModel):
+    fields: dict = {}
+    remarks: str = ""
+    revision_label: str | None = None
+
+
+class StageChangeIn(BaseModel):
+    new_status: str
+    remark: str = ""
 
 
 # ============================================================================
@@ -374,6 +435,210 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
         "completion": completion_data,
         "monitoring": monitoring_data,
     }
+
+
+# ============================================================================
+# 2b) Furnace approval timeline routes
+# ============================================================================
+@router.get("/{scheme_id}/approvals")
+def get_scheme_approvals(scheme_id: int, db: Session = Depends(get_db)):
+    scheme = db.query(Scheme).filter(
+        Scheme.scheme_id == scheme_id,
+        Scheme.is_deleted == False
+    ).first()
+    if not scheme:
+        raise HTTPException(status_code=404, detail="Scheme not found")
+
+    formulation_rows = db.query(SchemeFormulation).filter(
+        SchemeFormulation.scheme_id == scheme_id,
+        SchemeFormulation.is_deleted == False
+    ).order_by(SchemeFormulation.revision_no).all()
+    stage1_rows = db.query(Stage1Approval).filter(
+        Stage1Approval.scheme_id == scheme_id,
+        Stage1Approval.is_deleted == False
+    ).order_by(Stage1Approval.revision_no).all()
+    stage2_rows = db.query(Stage2Approval).filter(
+        Stage2Approval.scheme_id == scheme_id,
+        Stage2Approval.is_deleted == False
+    ).order_by(Stage2Approval.revision_no).all()
+    tender_rows = db.query(TenderCycle).join(Package, Package.package_id == TenderCycle.package_id).filter(
+        Package.scheme_id == scheme_id,
+        Package.is_deleted == False,
+        TenderCycle.is_deleted == False
+    ).order_by(TenderCycle.cycle_no, TenderCycle.tender_cycle_id).all()
+
+    tender_entries = []
+    for row in tender_rows:
+        tender_entries.append({
+            "id": row.tender_cycle_id,
+            "revision_no": row.cycle_no or 0,
+            "revision_label": row.cycle_label or f"Cycle-{row.cycle_no or 0}",
+            "is_current": bool(row.is_current),
+            "fields": {
+                field: _coerce_value(getattr(row, field, None))
+                for field in _APPROVAL_STAGE_FIELDS["tendering"]
+                if getattr(row, field, None) is not None
+            },
+            "remarks": row.remarks or "",
+        })
+
+    return {
+        "scheme_id": scheme.scheme_id,
+        "current_status": scheme.current_status,
+        "stages": {
+            "formulation": _serialize_stage_rows(formulation_rows, "formulation_id", "revision_no", "revision_label", _APPROVAL_STAGE_FIELDS["formulation"]),
+            "stage1": _serialize_stage_rows(stage1_rows, "stage1_id", "revision_no", "revision_label", _APPROVAL_STAGE_FIELDS["stage1"]),
+            "tendering": tender_entries,
+            "stage2": _serialize_stage_rows(stage2_rows, "stage2_id", "revision_no", "revision_label", _APPROVAL_STAGE_FIELDS["stage2"]),
+        },
+    }
+
+
+@router.post("/{scheme_id}/approvals/{stage}")
+def add_stage_revision(
+    scheme_id: int,
+    stage: str,
+    payload: ApprovalRevisionIn,
+    db: Session = Depends(get_db),
+):
+    scheme = db.query(Scheme).filter(
+        Scheme.scheme_id == scheme_id,
+        Scheme.is_deleted == False
+    ).first()
+    if not scheme:
+        raise HTTPException(status_code=404, detail="Scheme not found")
+
+    try:
+        if stage == "formulation":
+            db.query(SchemeFormulation).filter(
+                SchemeFormulation.scheme_id == scheme_id,
+                SchemeFormulation.is_current == True,
+                SchemeFormulation.is_deleted == False
+            ).update({"is_current": False}, synchronize_session=False)
+            next_rev = (db.query(func.coalesce(func.max(SchemeFormulation.revision_no), -1)).filter(
+                SchemeFormulation.scheme_id == scheme_id
+            ).scalar() or -1) + 1
+            row = SchemeFormulation(
+                scheme_id=scheme_id,
+                revision_no=next_rev,
+                revision_label=payload.revision_label or f"R{next_rev}",
+                remarks=payload.remarks,
+                is_current=True,
+            )
+            for key, value in (payload.fields or {}).items():
+                if hasattr(row, key):
+                    setattr(row, key, _coerce_value(value))
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {"id": row.formulation_id}
+
+        if stage == "stage1":
+            db.query(Stage1Approval).filter(
+                Stage1Approval.scheme_id == scheme_id,
+                Stage1Approval.is_current == True,
+                Stage1Approval.is_deleted == False
+            ).update({"is_current": False}, synchronize_session=False)
+            next_rev = (db.query(func.coalesce(func.max(Stage1Approval.revision_no), -1)).filter(
+                Stage1Approval.scheme_id == scheme_id
+            ).scalar() or -1) + 1
+            row = Stage1Approval(
+                scheme_id=scheme_id,
+                revision_no=next_rev,
+                revision_label=payload.revision_label or f"R{next_rev}",
+                remarks=payload.remarks,
+                is_current=True,
+            )
+            for key, value in (payload.fields or {}).items():
+                if hasattr(row, key):
+                    setattr(row, key, _coerce_value(value))
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {"id": row.stage1_id}
+
+        if stage == "stage2":
+            db.query(Stage2Approval).filter(
+                Stage2Approval.scheme_id == scheme_id,
+                Stage2Approval.is_current == True,
+                Stage2Approval.is_deleted == False
+            ).update({"is_current": False}, synchronize_session=False)
+            next_rev = (db.query(func.coalesce(func.max(Stage2Approval.revision_no), -1)).filter(
+                Stage2Approval.scheme_id == scheme_id
+            ).scalar() or -1) + 1
+            row = Stage2Approval(
+                scheme_id=scheme_id,
+                revision_no=next_rev,
+                revision_label=payload.revision_label or f"R{next_rev}",
+                remarks=payload.remarks,
+                is_current=True,
+            )
+            for key, value in (payload.fields or {}).items():
+                if hasattr(row, key):
+                    setattr(row, key, _coerce_value(value))
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {"id": row.stage2_id}
+
+        if stage == "tendering":
+            package = db.query(Package).filter(
+                Package.scheme_id == scheme_id,
+                Package.is_deleted == False
+            ).order_by(Package.package_no, Package.package_id).first()
+            if not package:
+                raise HTTPException(status_code=400, detail="Create a package before adding tendering cycles")
+
+            db.query(TenderCycle).filter(
+                TenderCycle.package_id == package.package_id,
+                TenderCycle.is_current == True,
+                TenderCycle.is_deleted == False
+            ).update({"is_current": False}, synchronize_session=False)
+            next_cycle = (db.query(func.coalesce(func.max(TenderCycle.cycle_no), 0)).filter(
+                TenderCycle.package_id == package.package_id
+            ).scalar() or 0) + 1
+            row = TenderCycle(
+                package_id=package.package_id,
+                cycle_no=next_cycle,
+                cycle_label=payload.revision_label or f"Cycle-{next_cycle}",
+                remarks=payload.remarks,
+                is_current=True,
+                cycle_status="active",
+            )
+            for key, value in (payload.fields or {}).items():
+                if hasattr(row, key):
+                    setattr(row, key, _coerce_value(value))
+            db.add(row)
+            db.commit()
+            db.refresh(row)
+            return {"id": row.tender_cycle_id}
+
+        raise HTTPException(status_code=400, detail=f"Unknown approval stage: {stage}")
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Could not add approval revision: {e}")
+
+
+@router.post("/{scheme_id}/change-stage")
+def change_scheme_stage(
+    scheme_id: int,
+    payload: StageChangeIn,
+    db: Session = Depends(get_db),
+):
+    scheme = db.query(Scheme).filter(
+        Scheme.scheme_id == scheme_id,
+        Scheme.is_deleted == False
+    ).first()
+    if not scheme:
+        raise HTTPException(status_code=404, detail="Scheme not found")
+
+    scheme.current_status = payload.new_status
+    scheme.updated_at = datetime.utcnow()
+    db.commit()
+    return {"current_status": scheme.current_status, "remark": payload.remark}
 
 
 # ============================================================================

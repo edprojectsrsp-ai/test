@@ -1,0 +1,26 @@
+path: C:\Users\USER-1\Downloads\pkntest\ppe-camera\data\datasets\v20260710114134
+train: images
+val: images
+nc: 21
+names:
+  0: person
+  1: helmet
+  2: no_helmet
+  3: vest
+  4: no_vest
+  5: gloves
+  6: no_gloves
+  7: goggles
+  8: no_goggles
+  9: boots
+  10: no_boots
+  11: harness
+  12: no_harness
+  13: mask
+  14: no_mask
+  15: smoking
+  16: mobile_phone
+  17: fire
+  18: smoke
+  19: vehicle
+  20: fall

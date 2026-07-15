@@ -1,0 +1,99 @@
+/* presets.css — Furnace theme presets.
+   A second theming axis on top of light/dark: html[data-fz-preset="…"]
+   overrides the same var(--) tokens every component already consumes, so all
+   modules re-skin instantly with zero component changes.
+   Presets: furnace (default, no override) · controlroom · ministry · ember. */
+
+/* ---------- CONTROL ROOM — gunmetal + steel-cyan (PCMS look) ---------- */
+:root[data-theme][data-fz-preset="controlroom"] {
+  color-scheme: dark;
+  --bg: #0b0f14; --bg-tint-cool: #0e141b; --bg-tint-warm: #12151a;
+  --panel: #101720; --panel-2: #131c27; --panel-3: #182432;
+  --ink: #d7e3ee; --ink-2: #a8bccd; --ink-3: #6d8296;
+  --line: #1e2c3a; --line-2: #27394b; --grid-line: #16222e;
+  --steel: #35c3dd; --steel-2: #57d2e8; --steel-deep: #1d97ae;
+  --steel-dim: #5d8fa0; --steel-soft: rgba(53,195,221,.12);
+  --molten: #ff9f1c; --molten-soft: rgba(255,159,28,.14);
+  --ember: #ff6b35; --ember-soft: rgba(255,107,53,.14);
+  --slag: #e3b341; --slag-soft: rgba(227,179,65,.14);
+  --verdigris: #3ddc97; --verdigris-soft: rgba(61,220,151,.13);
+  --shadow: 0 8px 26px rgba(0,0,0,.5);
+}
+
+/* ---------- MINISTRY — white executive · black ink · soft pastels ---------- */
+:root[data-theme][data-fz-preset="ministry"],
+:root[data-fz-preset="ministry"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-tint-cool: transparent;
+  --bg-tint-warm: transparent;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #eff6ff;
+  --ink: #0a0a0a;
+  --ink-2: #0a0a0a;
+  --ink-3: #0a0a0a;
+  --ink-4: #171717;
+  --line: #93c5fd;
+  --line-2: #bfdbfe;
+  --grid-line: rgba(15, 23, 42, 0.06);
+  --steel: #2563eb;
+  --steel-2: #3b82f6;
+  --steel-deep: #1d4ed8;
+  --steel-dim: #60a5fa;
+  --steel-soft: #dbeafe;
+  --molten: #dc2626;
+  --molten-soft: #fef2f2;
+  --ember: #ea580c;
+  --ember-soft: #fff7ed;
+  --slag: #ca8a04;
+  --slag-soft: #fefce8;
+  --verdigris: #059669;
+  --verdigris-soft: #ecfdf5;
+  --accent-cyan: #0891b2;
+  --accent-violet: #7c3aed;
+  --accent-pink: #db2777;
+  --accent-teal: #0d9488;
+  --accent-indigo: #4f46e5;
+  --accent-sky: #0284c7;
+  --table-odd: #ffffff;
+  --table-even: #f0fdf4;
+  --table-hover: #ecfeff;
+  --table-head: #dbeafe;
+  --shadow: 0 1px 3px rgba(15, 23, 42, 0.05), 0 16px 40px -18px rgba(37, 99, 235, 0.18);
+  --shadow-lg: 0 8px 22px rgba(15, 23, 42, 0.06), 0 32px 60px -28px rgba(5, 150, 105, 0.12);
+}
+
+/* ---------- EMBER — molten night, high-drama war-room ---------- */
+:root[data-theme][data-fz-preset="ember"] {
+  color-scheme: dark;
+  --bg: #120c0a; --bg-tint-cool: #16100d; --bg-tint-warm: #1a110c;
+  --panel: #1a120e; --panel-2: #201612; --panel-3: #281b15;
+  --ink: #f3e3d7; --ink-2: #cdb3a2; --ink-3: #94796a;
+  --line: #34231b; --line-2: #442e22; --grid-line: #251913;
+  --steel: #ff8c42; --steel-2: #ffa25e; --steel-deep: #d96a24;
+  --steel-dim: #a97a58; --steel-soft: rgba(255,140,66,.13);
+  --molten: #ff4d3d; --molten-soft: rgba(255,77,61,.15);
+  --ember: #ff6b35; --ember-soft: rgba(255,107,53,.15);
+  --slag: #ffc53d; --slag-soft: rgba(255,197,61,.14);
+  --verdigris: #6fe3a5; --verdigris-soft: rgba(111,227,165,.12);
+  --shadow: 0 8px 28px rgba(0,0,0,.55);
+}
+
+/* ---------- density & type scale (set by Theme Studio) ---------- */
+:root[data-fz-density="compact"] { font-size: 15px; }
+:root[data-fz-density="comfortable"] { font-size: 17px; }
+html[data-fz-density="compact"] .fz { font-size: 12.5px; }
+html[data-fz-density="compact"] .fz td, html[data-fz-density="compact"] .fz th { padding-top: 3px !important; padding-bottom: 3px !important; }
+html[data-fz-density="comfortable"] .fz { font-size: 15px; line-height: 1.6; }
+html[data-fz-density="comfortable"] .fz td, html[data-fz-density="comfortable"] .fz th { padding-top: 11px !important; padding-bottom: 11px !important; }
+
+/* accent override hook (Theme Studio writes --fz-accent inline on <html>) */
+:root[data-theme][data-fz-accent] { --steel: var(--fz-accent); --steel-2: var(--fz-accent); }
+
+/* gantt-task-react — pull the MIT gantt into Furnace tokens */
+.fz-gantt svg { background: var(--panel); }
+.fz-gantt ._3zRJQ, .fz-gantt div[class*="taskListWrapper"] { background: var(--panel); color: var(--ink); }
+.fz-gantt div[class*="calendar"] text, .fz-gantt text { fill: var(--ink-3); font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.fz-gantt line, .fz-gantt path[class*="gridRowLine"] { stroke: var(--grid-line); }
+.fz-gantt table { color: var(--ink); }

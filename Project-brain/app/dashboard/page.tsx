@@ -1,19 +1,23 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, AlertTriangle, CheckCircle, TrendingUp,
-  IndianRupee, Layers, Clock, Building2, Bot, User, Send,
+  IndianRupee, Layers, Clock, Building2, Bot,
   Activity, TrendingDown, FileText, ChevronDown, ChevronRight,
   RefreshCw, Printer, Download, BarChart2, GitBranch,
   ClipboardList, CreditCard, BookOpen, Cpu, Calendar,
   MapPin, Hash,
 } from "lucide-react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import ExecutiveView from "@/components/furnace/dashboard";
+import PhysicalProgressSummary from "./PhysicalProgressSummary";
+import ProjectWiseDashboard from "./ProjectWiseDashboard";
+import { exportDashboard, type ExportFormat } from "@/lib/export";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -22,8 +26,18 @@ type Summary = {
   total_cost_cr: number;
   by_status: Record<string, number>;
   by_type: Record<string, number>;
-  delay_summary: { on_time: number; minor: number; moderate: number; critical: number };
+  delay_summary: {
+    on_time: number; delay_lt_1y: number; delay_gt_1y: number;
+    completed_this_fy: number; minor: number; moderate: number; critical: number;
+  };
   current_fy: string;
+  parity?: {
+    cards: { totalProjects: number; ongoingProjects: number; completedProjects: number; totalProjectCost: number };
+    kpis: { totalCapex: number; actualCapex: number; achievementPercent: number; completedProjects: number };
+    statusRows: Array<{ label: string; value: number; cost: number }>;
+    stageRows: Array<{ stage: string; projects: number; cost: number }>;
+    capexSummary: { totalBeRe: number; totalActual: number; variance: number; variancePercent: number };
+  };
 };
 
 type SchemeCard = {
@@ -146,6 +160,12 @@ function MilestoneRow({ label, value }: { label: string; value: string | number 
 export default function DashboardPage() {
   const router = useRouter();
 
+  const [view, setView] = useState<"command" | "executive">(() => {
+    try { return (localStorage.getItem("pb-dash-view") as "command" | "executive") || "command"; }
+    catch { return "command"; }
+  });
+  useEffect(() => { try { localStorage.setItem("pb-dash-view", view); } catch { /* ignore */ } }, [view]);
+  const [dashTab, setDashTab] = useState<"home" | "projectwise" | "physical">("home");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [cards, setCards] = useState<SchemeCard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -167,13 +187,27 @@ export default function DashboardPage() {
   const [corpCapex, setCorpCapex] = useState<any>(null);
   const [corpOpen, setCorpOpen] = useState(false);
 
-  // AI Chat
-  const [chatMessages, setChatMessages] = useState([
-    { role: "ai", content: "Dashboard loaded. Ask me about delays, CAPEX status, or any specific project." },
-  ]);
-  const [chatInput, setChatInput] = useState("");
-  const [isTyping, setIsTyping] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  // Export engine
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  const [exportMsg, setExportMsg] = useState("");
+
+  const runExport = async (format: ExportFormat) => {
+    setExporting(format);
+    setExportMsg("");
+    try {
+      const name = await exportDashboard({
+        format,
+        schemeId: selectedSchemeId,
+        month: selectedMonth,
+        fy: selectedFY,
+      });
+      setExportMsg(`Downloaded ${name}`);
+    } catch (e: any) {
+      setExportMsg(e?.message || "Export failed");
+    } finally {
+      setExporting(null);
+    }
+  };
 
   // ── Initial load ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -187,58 +221,40 @@ export default function DashboardPage() {
         setCards(Array.isArray(cds) ? cds : []);
         setCorpCapex(cc);
       })
-      .catch(() => setError("Failed to load dashboard. Ensure the backend is running on port 8002."))
+      .catch(() => setError("Failed to load dashboard. Ensure the backend is running on port 8000."))
       .finally(() => setLoading(false));
   }, []);
 
-  // ── Scroll chat to bottom ───────────────────────────────────────────────
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatMessages, isTyping]);
-
   // ── Load project-wise data when scheme/month changes ────────────────────
   useEffect(() => {
-    if (!selectedSchemeId) {
-      setDetail(null); setPhysFin(null); setCapexSnap(null); setDprSummary([]);
-      return;
-    }
-    setPhysLoading(true);
-    Promise.all([
-      fetch(`${API}/dashboard/scheme-detail?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
-      fetch(`${API}/dashboard/physical-financial?scheme_id=${selectedSchemeId}&month=${selectedMonth}`).then((r) => r.json()),
-      fetch(`${API}/dashboard/capex-snapshot?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
-      fetch(`${API}/dashboard/dpr-summary?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
-    ])
-      .then(([det, pf, cs, dpr]) => {
+    if (!selectedSchemeId) return;
+    let active = true;
+
+    const run = async () => {
+      setPhysLoading(true);
+      try {
+        const [det, pf, cs, dpr] = await Promise.all([
+          fetch(`${API}/dashboard/scheme-detail?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
+          fetch(`${API}/dashboard/physical-financial?scheme_id=${selectedSchemeId}&month=${selectedMonth}`).then((r) => r.json()),
+          fetch(`${API}/dashboard/capex-snapshot?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
+          fetch(`${API}/dashboard/dpr-summary?scheme_id=${selectedSchemeId}`).then((r) => r.json()),
+        ]);
+
+        if (!active) return;
         setDetail(det);
         setPhysFin(pf);
         setCapexSnap(cs);
         setDprSummary(Array.isArray(dpr) ? dpr : []);
-      })
-      .finally(() => setPhysLoading(false));
-  }, [selectedSchemeId, selectedMonth]);
+      } finally {
+        if (active) setPhysLoading(false);
+      }
+    };
 
-  // ── AI Chat ─────────────────────────────────────────────────────────────
-  const sendMessage = async () => {
-    if (!chatInput.trim()) return;
-    const msg = chatInput;
-    setChatMessages((p) => [...p, { role: "user", content: msg }]);
-    setChatInput("");
-    setIsTyping(true);
-    try {
-      const res = await fetch(`${API}/brain/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, context: { summary, detail, physFin } }),
-      });
-      const data = await res.json();
-      setChatMessages((p) => [...p, { role: "ai", content: data.reply || "No response." }]);
-    } catch {
-      setChatMessages((p) => [...p, { role: "ai", content: "Error connecting to Neural Engine." }]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [selectedSchemeId, selectedMonth]);
 
   // ── Loading / Error ──────────────────────────────────────────────────────
   if (loading) {
@@ -261,15 +277,27 @@ export default function DashboardPage() {
     );
   }
 
+  if (view === "executive") {
+    return (
+      <div className="min-h-screen">
+        <div className="flex items-center justify-between bg-[#0b3d91] px-6 py-2">
+          <span className="text-sm font-semibold text-white">RSP Project Department — Dashboard</span>
+          <ViewToggle view={view} setView={setView} />
+        </div>
+        <ExecutiveView />
+      </div>
+    );
+  }
+
   const ds = summary?.delay_summary;
   const donutData = [
     { name: "On Time", value: ds?.on_time ?? 0, color: "green" },
-    { name: "Minor", value: ds?.minor ?? 0, color: "yellow" },
-    { name: "Moderate", value: ds?.moderate ?? 0, color: "orange" },
-    { name: "Critical", value: ds?.critical ?? 0, color: "red" },
+    { name: "Delay < 1 Year", value: ds?.delay_lt_1y ?? ds?.minor ?? 0, color: "yellow" },
+    { name: "Delay > 1 Year", value: ds?.delay_gt_1y ?? ds?.critical ?? 0, color: "red" },
+    { name: "Completed This FY", value: ds?.completed_this_fy ?? 0, color: "gray" },
   ].filter((d) => d.value > 0);
 
-  const totalDelayed = (ds?.minor ?? 0) + (ds?.moderate ?? 0) + (ds?.critical ?? 0);
+  const totalDelayed = (ds?.delay_lt_1y ?? ds?.minor ?? 0) + (ds?.delay_gt_1y ?? ds?.critical ?? 0);
 
   // ── Render ───────────────────────────────────────────────────────────────
   return (
@@ -289,9 +317,12 @@ export default function DashboardPage() {
               <p className="text-blue-200 text-[11px]">Rourkela Steel Plant · Capital Project Monitoring</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 text-[11px] text-blue-200">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-            Live · {summary?.current_fy}
+          <div className="flex items-center gap-3">
+            <ViewToggle view={view} setView={setView} />
+            <div className="flex items-center gap-2 text-[11px] text-blue-200">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              Live · {summary?.current_fy}
+            </div>
           </div>
         </div>
 
@@ -342,19 +373,43 @@ export default function DashboardPage() {
           >
             <RefreshCw size={12} /> Refresh
           </button>
+
+          {/* Dashboard sub-pages (friend-parity: Home / Project Wise / Physical Progress) */}
+          <div className="ml-auto inline-flex rounded-lg border border-zinc-700 bg-zinc-950 p-0.5 text-[11px]">
+            {([
+              ["home", "Home Dashboard"],
+              ["projectwise", "Project Wise Dashboard"],
+              ["physical", "Physical Progress Summary"],
+            ] as const).map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setDashTab(key)}
+                className={`rounded-md px-3 py-1.5 font-bold transition-colors ${
+                  dashTab === key ? "bg-cyan-500/20 text-cyan-300" : "text-zinc-500 hover:text-zinc-300"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* ── SCROLLABLE BODY ── */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+          {dashTab === "physical" && <PhysicalProgressSummary />}
+          {dashTab === "projectwise" && (
+            <ProjectWiseDashboard schemeId={selectedSchemeId || cards[0]?.id || 0} month={selectedMonth} />
+          )}
+          <div className={dashTab === "home" ? "space-y-5" : "hidden"}>
 
           {/* ── KPI CARDS ── */}
           <div className="grid grid-cols-5 gap-3">
             {[
-              { label: "Total Schemes", value: summary?.total_schemes ?? 0, sub: "Active portfolio", icon: Layers, cls: "border-zinc-800 bg-zinc-900/60", icn: "bg-cyan-500/10 text-cyan-400" },
-              { label: "Total CAPEX", value: `₹${((summary?.total_cost_cr ?? 0) / 100).toFixed(0)}K Cr`, sub: "Sanctioned value", icon: IndianRupee, cls: "border-violet-500/30 bg-violet-950/20", icn: "bg-violet-500/10 text-violet-400" },
-              { label: "Ongoing", value: (summary?.by_status?.ongoing ?? 0) + (summary?.by_status?.under_execution ?? 0), sub: `${ds?.on_time ?? 0} on track`, icon: TrendingUp, cls: "border-emerald-500/30 bg-emerald-950/20", icn: "bg-emerald-500/10 text-emerald-400" },
+              { label: "Total Projects", value: summary?.total_schemes ?? 0, sub: "Source portfolio", icon: Layers, cls: "border-zinc-800 bg-zinc-900/60", icn: "bg-cyan-500/10 text-cyan-400" },
+              { label: "Total CAPEX", value: `₹${Math.round(summary?.total_cost_cr ?? 0).toLocaleString("en-IN")} Cr`, sub: "Sanctioned value", icon: IndianRupee, cls: "border-violet-500/30 bg-violet-950/20", icn: "bg-violet-500/10 text-violet-400" },
+              { label: "Ongoing", value: summary?.parity?.cards.ongoingProjects ?? summary?.by_status?.ongoing ?? 0, sub: `${ds?.on_time ?? 0} on time`, icon: TrendingUp, cls: "border-emerald-500/30 bg-emerald-950/20", icn: "bg-emerald-500/10 text-emerald-400" },
               { label: "Delayed", value: totalDelayed, sub: "All delay buckets", icon: AlertTriangle, cls: "border-orange-500/30 bg-orange-950/20", icn: "bg-orange-500/10 text-orange-400" },
-              { label: "Critical", value: ds?.critical ?? 0, sub: "> 6 months overrun", icon: TrendingDown, cls: "border-red-500/30 bg-red-950/20", icn: "bg-red-500/10 text-red-400" },
+              { label: "Completed This FY", value: ds?.completed_this_fy ?? 0, sub: `FY ${summary?.current_fy ?? ""}`, icon: CheckCircle, cls: "border-blue-500/30 bg-blue-950/20", icn: "bg-blue-500/10 text-blue-400" },
             ].map((kpi, i) => {
               const Icon = kpi.icon;
               return (
@@ -404,10 +459,11 @@ export default function DashboardPage() {
 
             <div className="col-span-1 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
               <h3 className="text-xs font-semibold text-zinc-300 mb-3 flex items-center gap-2">
-                <CheckCircle className="h-3.5 w-3.5 text-emerald-400" /> By Status
+                <CheckCircle className="h-3.5 w-3.5 text-emerald-400" /> Approval Stage
               </h3>
               <div className="space-y-2.5">
-                {Object.entries(summary?.by_status ?? {}).slice(0, 6).map(([status, count]) => {
+                {(summary?.parity?.stageRows?.map(row => [row.stage, row.projects] as const)
+                  ?? Object.entries(summary?.by_status ?? {})).slice(0, 6).map(([status, count]) => {
                   const pct = summary?.total_schemes ? Math.round((count / summary.total_schemes) * 100) : 0;
                   return (
                     <div key={status}>
@@ -444,6 +500,13 @@ export default function DashboardPage() {
                     </div>
                   );
                 })}
+                {summary?.parity?.capexSummary && (
+                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-zinc-800 pt-3 text-center">
+                    <div><div className="text-[9px] uppercase text-zinc-500">BE / RE Plan</div><div className="text-xs font-semibold text-cyan-300">₹{summary.parity.capexSummary.totalBeRe.toLocaleString("en-IN")} Cr</div></div>
+                    <div><div className="text-[9px] uppercase text-zinc-500">Actual</div><div className="text-xs font-semibold text-emerald-300">₹{summary.parity.capexSummary.totalActual.toLocaleString("en-IN")} Cr</div></div>
+                    <div><div className="text-[9px] uppercase text-zinc-500">Variance</div><div className="text-xs font-semibold text-amber-300">₹{summary.parity.capexSummary.variance.toLocaleString("en-IN")} Cr</div></div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -869,99 +932,66 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            {/* Export Buttons */}
+            {/* Export Buttons — Sprint 1 export engine */}
             <div>
               <p className="text-[10px] text-zinc-500 uppercase tracking-widest mb-3 font-bold">Export Dashboard</p>
-              <div className="flex items-center gap-3">
-                <button
-                  disabled
-                  title="Export PDF — coming in Sprint 7"
-                  className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-500 opacity-60 cursor-not-allowed"
-                >
-                  <Printer size={13} /> Export PDF
-                </button>
-                <button
-                  disabled
-                  title="Export DOCX — coming in Sprint 7"
-                  className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-500 opacity-60 cursor-not-allowed"
-                >
-                  <Download size={13} /> Export DOC
-                </button>
-                <button
-                  disabled
-                  title="Export PPT — coming in Sprint 7"
-                  className="flex items-center gap-2 rounded-lg border border-zinc-700 px-4 py-2 text-xs font-medium text-zinc-500 opacity-60 cursor-not-allowed"
-                >
-                  <BarChart2 size={13} /> Export PPT
-                </button>
-                <span className="text-[10px] text-zinc-600 italic ml-2">Export engine — Sprint 7</span>
+              <div className="flex flex-wrap items-center gap-3">
+                {([
+                  ["pdf", Printer, "Export PDF"],
+                  ["docx", Download, "Export DOC"],
+                  ["pptx", BarChart2, "Export PPT"],
+                  ["xlsx", Download, "Export Excel"],
+                ] as const).map(([fmt, Icon, label]) => {
+                  const busy = exporting === fmt;
+                  return (
+                    <button
+                      key={fmt}
+                      type="button"
+                      disabled={!!exporting}
+                      onClick={() => runExport(fmt)}
+                      title={`${label}${selectedSchemeId ? " (selected scheme)" : " (portfolio)"}`}
+                      className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-medium transition-all ${
+                        exporting
+                          ? "border-zinc-700 text-zinc-500 opacity-60 cursor-wait"
+                          : "border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10 hover:border-cyan-400"
+                      }`}
+                    >
+                      {busy ? <RefreshCw size={13} className="animate-spin" /> : <Icon size={13} />}
+                      {busy ? "Exporting…" : label}
+                    </button>
+                  );
+                })}
+                {exportMsg && (
+                  <span className={`text-[11px] ml-1 ${exportMsg.startsWith("Downloaded") ? "text-emerald-400" : "text-red-400"}`}>
+                    {exportMsg}
+                  </span>
+                )}
+                {!exportMsg && (
+                  <span className="text-[10px] text-zinc-500 italic ml-1">
+                    PDF · DOC · PPT · Excel{selectedSchemeId ? " · scheme scope" : " · full portfolio"}
+                  </span>
+                )}
               </div>
             </div>
           </div>
 
+          </div>{/* end home view */}
         </div>{/* end scrollable body */}
       </div>{/* end left panel */}
 
-      {/* ═══════════════════ RIGHT: AI CHAT ═══════════════════ */}
-      <div className="w-80 shrink-0 flex flex-col overflow-hidden border-l border-cyan-500/20 bg-[#09090b] relative">
-        <div className="absolute inset-0 bg-gradient-to-br from-[#09090b] to-[#082f49] opacity-60 z-0 pointer-events-none" />
+    </div>
+  );
+}
 
-        <div className="relative z-10 border-b border-cyan-500/20 bg-black/40 p-3 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500/20 border border-cyan-400/50 shadow-[0_0_12px_rgba(34,211,238,0.3)]">
-            <Bot className="h-4 w-4 text-cyan-400" />
-          </div>
-          <div>
-            <h2 className="text-sm font-semibold text-cyan-50">Neural Analyst</h2>
-            <p className="text-[10px] text-cyan-400/70">Context-Aware Intelligence</p>
-          </div>
-        </div>
 
-        <div className="relative z-10 flex-1 overflow-y-auto p-3 flex flex-col gap-3">
-          {chatMessages.map((msg, idx) => (
-            <motion.div key={idx} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-              className={`flex gap-2 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
-              <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${msg.role === "user" ? "bg-zinc-800" : "bg-cyan-900/50 border border-cyan-500/30"}`}>
-                {msg.role === "user" ? <User className="h-3.5 w-3.5 text-zinc-400" /> : <Bot className="h-3.5 w-3.5 text-cyan-400" />}
-              </div>
-              <div className={`max-w-[82%] rounded-xl p-2.5 text-xs ${msg.role === "user" ? "bg-zinc-800 text-zinc-200 rounded-tr-none" : "bg-cyan-950/40 text-cyan-50 border border-cyan-500/20 rounded-tl-none"}`}>
-                {msg.content}
-              </div>
-            </motion.div>
-          ))}
-          {isTyping && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-cyan-900/50 border border-cyan-500/30">
-                <Bot className="h-3.5 w-3.5 text-cyan-400" />
-              </div>
-              <div className="flex items-center gap-1 rounded-xl rounded-tl-none bg-cyan-950/40 border border-cyan-500/20 px-3 py-2">
-                {[0, 75, 150].map((delay) => (
-                  <div key={delay} className="h-1.5 w-1.5 animate-bounce rounded-full bg-cyan-400" style={{ animationDelay: `${delay}ms` }} />
-                ))}
-              </div>
-            </motion.div>
-          )}
-          <div ref={chatEndRef} />
-        </div>
-
-        <div className="relative z-10 border-t border-cyan-500/20 bg-black/40 p-3">
-          <div className="relative flex items-center">
-            <input
-              type="text"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && sendMessage()}
-              placeholder="Ask about delays, budgets, projects…"
-              className="w-full rounded-xl border border-cyan-500/30 bg-zinc-900/80 py-2.5 pl-3 pr-10 text-xs text-white placeholder-zinc-500 outline-none focus:border-cyan-400 transition-all"
-            />
-            <button onClick={sendMessage} disabled={!chatInput.trim() || isTyping}
-              className="absolute right-2 flex h-7 w-7 items-center justify-center rounded-lg bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/40 disabled:opacity-50 transition-colors">
-              <Send className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <p className="mt-1.5 text-center text-[9px] text-zinc-600">Project Brain LLM · Live context</p>
-        </div>
-      </div>
-
+function ViewToggle({ view, setView }: { view: "command" | "executive"; setView: (v: "command" | "executive") => void }) {
+  const base = "px-3 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer";
+  return (
+    <div className="inline-flex items-center gap-1 rounded-lg bg-white/10 p-1">
+      <button className={`${base} ${view === "command" ? "bg-white text-[#0b3d91]" : "text-blue-100 hover:bg-white/10"}`}
+        onClick={() => setView("command")}>Command View</button>
+      <button className={`${base} ${view === "executive" ? "bg-white text-[#0b3d91]" : "text-blue-100 hover:bg-white/10"}`}
+        onClick={() => setView("executive")}>Executive View</button>
     </div>
   );
 }

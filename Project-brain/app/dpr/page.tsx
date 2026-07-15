@@ -9,7 +9,7 @@
  * Tab 3 "Field Observations": GPS-tagged site notes / issues.
  */
 
-import { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
@@ -28,7 +28,12 @@ import {
   X,
 } from "lucide-react";
 
-const API = "http://localhost:8002/api/v1";
+import ManpowerMatrix from "./ManpowerMatrix";
+import DailyReportTab from "./DailyReportTab";
+import SchemeSummaryTab from "./SchemeSummaryTab";
+import ImportTab from "./ImportTab";
+
+const API = "http://localhost:8000/api/v1";
 
 // ─────────────────────── types ────────────────────────────────────────────────
 
@@ -66,7 +71,7 @@ export default function DPRPage() {
   const [selectedScheme, setSelectedScheme] = useState("");
   const [packages, setPackages]       = useState<Package[]>([]);
   const [selectedPkg, setSelectedPkg] = useState("");
-  const [tab, setTab]                 = useState<"entry" | "summary" | "obs">("entry");
+  const [tab, setTab]                 = useState<"entry" | "report" | "summary" | "board" | "obs" | "import" | "qc">("entry");
 
   // load schemes
   useEffect(() => {
@@ -75,7 +80,10 @@ export default function DPRPage() {
       .then((d: any[]) => {
         const active = d.filter(s => s.current_status !== "closed");
         setSchemes(active);
-        if (active.length) setSelectedScheme(String(active[0].id));
+        // COB-7 (scheme 74) carries the richest DPR/progress dataset —
+        // default there so the page opens with real activities, not blanks.
+        const preferred = active.find(s => s.id === 74) ?? active[0];
+        if (preferred) setSelectedScheme(String(preferred.id));
       })
       .catch(() => {});
   }, []);
@@ -149,7 +157,7 @@ export default function DPRPage() {
       {/* Tab bar */}
       {selectedPkg && (
         <div className="mb-6 inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-1 text-sm">
-          {(["entry", "summary", "obs"] as const).map(t => (
+          {(["entry", "report", "summary", "board", "obs", "qc", "import"] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -157,9 +165,13 @@ export default function DPRPage() {
                 tab === t ? "bg-amber-500/20 text-amber-300" : "text-zinc-400 hover:text-white"
               }`}
             >
-              {t === "entry"   && <><Activity   className="h-4 w-4" />Entry</>}
+              {t === "entry"   && <><Activity   className="h-4 w-4" />Data Entry</>}
+              {t === "report"  && <><CalendarIcon className="h-4 w-4" />Daily Report</>}
               {t === "summary" && <><BarChart2   className="h-4 w-4" />Monthly Summary</>}
+              {t === "board"   && <><BarChart2   className="h-4 w-4" />Summary</>}
               {t === "obs"     && <><MapPin      className="h-4 w-4" />Observations</>}
+              {t === "qc"      && <><AlertTriangle className="h-4 w-4" />QC / Productivity</>}
+              {t === "import"  && <><PlusCircle  className="h-4 w-4" />Import File</>}
             </button>
           ))}
         </div>
@@ -168,9 +180,20 @@ export default function DPRPage() {
       {!selectedPkg ? (
         <EmptyState message="Select a scheme and package to start." />
       ) : tab === "entry" ? (
-        <ActivityEntryPane packageId={selectedPkg} />
+        <div className="space-y-6">
+          <ActivityEntryPane packageId={selectedPkg} />
+          <ManpowerMatrix schemeId={parseInt(selectedScheme) || 0} />
+        </div>
+      ) : tab === "report" ? (
+        <DailyReportTab schemeId={parseInt(selectedScheme) || 0} />
       ) : tab === "summary" ? (
         <MonthlySummaryPane packageId={selectedPkg} />
+      ) : tab === "board" ? (
+        <SchemeSummaryTab schemeId={parseInt(selectedScheme) || 0} />
+      ) : tab === "import" ? (
+        <ImportTab schemeId={parseInt(selectedScheme) || 0} />
+      ) : tab === "qc" ? (
+        <QcProductivityPane packageId={selectedPkg} />
       ) : (
         <ObservationsPane packageId={selectedPkg} />
       )}
@@ -769,6 +792,311 @@ function EmptyState({ message }: { message: string }) {
   return (
     <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/40 py-16 text-center text-zinc-500">
       {message}
+    </div>
+  );
+}
+
+// ─────────────────── Progress Summary board (physical + financial) ──────────
+
+type PhysRow = {
+  activity_id: number; activity_name: string; category: string | null;
+  uom: string; scope: number; last_fy_actual: number;
+  ftm_plan: number; ftm_actual: number; fy_plan: number; fy_actual: number;
+  cum_plan: number; cum_actual: number;
+  last_fy_pct: number; ftm_plan_pct: number; ftm_actual_pct: number;
+  fy_plan_pct: number; fy_actual_pct: number; cum_plan_pct: number; cum_actual_pct: number;
+};
+type FinRow = {
+  row_name: string; budget: number; fy_plan: number; fy_actual: number;
+  cum_plan: number; cum_actual: number;
+  fy_plan_pct: number; fy_actual_pct: number; cum_plan_pct: number; cum_actual_pct: number;
+};
+type BoardData = {
+  month: string; fy_label: string; physical: PhysRow[];
+  overall: Record<string, number>; financial: FinRow[];
+};
+
+function ProgressBoardPane({ packageId }: { packageId: string }) {
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const [data, setData] = useState<BoardData | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!packageId || !month) return;
+    setLoading(true);
+    fetch(`${API}/dpr/progress-summary/${packageId}?month=${month}`)
+      .then(r => r.json())
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, [packageId, month]);
+
+  const n = (v: number) => Number(v ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 1 });
+  const p = (v: number) => `${Number(v ?? 0).toFixed(1)}%`;
+  const monthLabel = data
+    ? new Date(`${data.month}-01`).toLocaleDateString("en-IN", { month: "short", year: "numeric" })
+    : "";
+
+  const th = "border border-[var(--line)] px-2 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-[var(--ink-3)] bg-[var(--panel-3)]";
+  const td = "border border-[var(--line)] px-2 py-1 text-xs text-[var(--ink-2)] text-right whitespace-nowrap";
+  const tdL = "border border-[var(--line)] px-2 py-1 text-xs text-[var(--ink)] text-left";
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-3">
+        <label className="text-xs uppercase tracking-wider text-zinc-500">Report month</label>
+        <input
+          type="month" value={month} onChange={e => setMonth(e.target.value)}
+          className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm outline-none focus:border-amber-400"
+        />
+      </div>
+
+      {loading ? (
+        <EmptyState message="Computing progress summary…" />
+      ) : !data || !data.physical.length ? (
+        <EmptyState message="No locked plan / progress data for this package." />
+      ) : (
+        <>
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-5 overflow-x-auto">
+            <h3 className="mb-3 text-sm font-bold text-[var(--ink)]">
+              Project Progress Summary — Quantity &amp; % <span className="ml-2 font-normal text-[var(--ink-3)]">({monthLabel})</span>
+            </h3>
+            <table className="w-full border-collapse">
+              <thead>
+                <tr>
+                  <th rowSpan={2} className={th} style={{ textAlign: "left" }}>Activity / Work Package</th>
+                  <th rowSpan={2} className={th}>Scope</th>
+                  <th rowSpan={2} className={th}>UOM</th>
+                  <th rowSpan={2} className={th}>Actual Till Last FY</th>
+                  <th colSpan={2} className={th}>For the Month — {monthLabel}</th>
+                  <th colSpan={2} className={th}>FY {data.fy_label}</th>
+                  <th colSpan={2} className={th}>Cumulative Till Date</th>
+                </tr>
+                <tr>
+                  <th className={th}>Plan</th><th className={th}>Actual</th>
+                  <th className={th}>Plan</th><th className={th}>Actual</th>
+                  <th className={th}>Plan</th><th className={th}>Actual</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.physical.map(r => (
+                  <React.Fragment key={r.activity_id}>
+                    <tr>
+                      <td rowSpan={2} className={tdL}>
+                        {r.category && r.category !== r.activity_name ? `${r.category} — ` : ""}{r.activity_name}
+                      </td>
+                      <td rowSpan={2} className={td}>{n(r.scope)}</td>
+                      <td className={td}>{r.uom || "—"}</td>
+                      <td className={td}>{n(r.last_fy_actual)}</td>
+                      <td className={td}>{n(r.ftm_plan)}</td>
+                      <td className={td}>{n(r.ftm_actual)}</td>
+                      <td className={td}>{n(r.fy_plan)}</td>
+                      <td className={td}>{n(r.fy_actual)}</td>
+                      <td className={td}>{n(r.cum_plan)}</td>
+                      <td className={td}>{n(r.cum_actual)}</td>
+                    </tr>
+                    <tr className="opacity-80">
+                      <td className={td}>%</td>
+                      <td className={td}>{p(r.last_fy_pct)}</td>
+                      <td className={td}>{p(r.ftm_plan_pct)}</td>
+                      <td className={td}>{p(r.ftm_actual_pct)}</td>
+                      <td className={td}>{p(r.fy_plan_pct)}</td>
+                      <td className={td}>{p(r.fy_actual_pct)}</td>
+                      <td className={td}>{p(r.cum_plan_pct)}</td>
+                      <td className={td}>{p(r.cum_actual_pct)}</td>
+                    </tr>
+                  </React.Fragment>
+                ))}
+                <tr className="font-bold">
+                  <td className={tdL}>Overall Progress (weighted)</td>
+                  <td className={td}>100%</td>
+                  <td className={td}>%</td>
+                  <td className={td}>{p(data.overall.last_fy)}</td>
+                  <td className={td}>{p(data.overall.ftm_plan)}</td>
+                  <td className={td}>{p(data.overall.ftm_actual)}</td>
+                  <td className={td}>{p(data.overall.fy_plan)}</td>
+                  <td className={td}>{p(data.overall.fy_actual)}</td>
+                  <td className={td}>{p(data.overall.cum_plan)}</td>
+                  <td className={td}>{p(data.overall.cum_actual)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {data.financial.length > 0 && (
+            <div className="rounded-2xl border border-[var(--line)] bg-[var(--panel)] p-5 overflow-x-auto">
+              <h3 className="mb-3 text-sm font-bold text-[var(--ink)]">
+                CAPEX Summary — ₹ Cr &amp; % <span className="ml-2 font-normal text-[var(--ink-3)]">(FY {data.fy_label} till {monthLabel})</span>
+              </h3>
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <th rowSpan={2} className={th} style={{ textAlign: "left" }}>Package / Work</th>
+                    <th rowSpan={2} className={th}>Budget (Cr)</th>
+                    <th colSpan={2} className={th}>FY Till Date (Cr)</th>
+                    <th colSpan={2} className={th}>Cumulative (Cr)</th>
+                    <th colSpan={2} className={th}>Cumulative %</th>
+                  </tr>
+                  <tr>
+                    <th className={th}>Plan</th><th className={th}>Actual</th>
+                    <th className={th}>Plan</th><th className={th}>Actual</th>
+                    <th className={th}>Plan</th><th className={th}>Actual</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.financial.map(f => (
+                    <tr key={f.row_name}>
+                      <td className={tdL}>{f.row_name}</td>
+                      <td className={td}>{n(f.budget)}</td>
+                      <td className={td}>{n(f.fy_plan)}</td>
+                      <td className={td}>{n(f.fy_actual)}</td>
+                      <td className={td}>{n(f.cum_plan)}</td>
+                      <td className={td}>{n(f.cum_actual)}</td>
+                      <td className={td}>{p(f.cum_plan_pct)}</td>
+                      <td className={td}>{p(f.cum_actual_pct)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// -- Sprint 7 · productivity + anomaly QC -------------------------------------
+
+function QcProductivityPane({ packageId }: { packageId: string }) {
+  const [days, setDays] = useState(30);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    if (!packageId) return;
+    setLoading(true);
+    setErr("");
+    fetch(`${API}/dpr/qc/${packageId}?days=${days}`)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(await r.text());
+        return r.json();
+      })
+      .then(setData)
+      .catch((e) => setErr(e?.message || "QC load failed"))
+      .finally(() => setLoading(false));
+  }, [packageId, days]);
+
+  const s = data?.summary;
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="text-lg font-bold text-amber-300 flex items-center gap-2">
+          <AlertTriangle className="h-5 w-5" /> Productivity &amp; Anomaly QC
+        </h2>
+        <label className="ml-auto flex items-center gap-2 text-xs text-zinc-400">
+          Window
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))}
+            className="rounded-lg border border-zinc-700 bg-zinc-900 px-2 py-1.5 text-sm text-white">
+            {[14, 30, 60, 90].map((d) => <option key={d} value={d}>{d} days</option>)}
+          </select>
+        </label>
+      </div>
+
+      {loading && <p className="text-sm text-zinc-400">Scanning DPR entries…</p>}
+      {err && <p className="text-sm text-red-400">{err}</p>}
+
+      {s && (
+        <div className="grid gap-3 sm:grid-cols-4">
+          {[
+            ["Entries", s.entries ?? data.entries],
+            ["Total qty", s.total_qty],
+            ["Man-days", s.total_man_days],
+            ["Qty / man-day", s.overall_qty_per_man_day ?? "—"],
+          ].map(([label, val]) => (
+            <div key={String(label)} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <p className="text-[10px] uppercase tracking-wide text-zinc-500">{label}</p>
+              <p className="text-xl font-bold text-white">{val}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {data?.anomalies?.length > 0 && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+          <p className="mb-3 text-sm font-bold text-red-300">
+            Anomalies ({data.anomalies.length})
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-zinc-500">
+                  <th className="p-2">Date</th>
+                  <th className="p-2">Activity</th>
+                  <th className="p-2">Qty</th>
+                  <th className="p-2">Manpower</th>
+                  <th className="p-2">Flags</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.anomalies.map((a: any) => (
+                  <tr key={a.daily_actual_id} className="border-t border-zinc-800">
+                    <td className="p-2 text-zinc-300">{a.date}</td>
+                    <td className="p-2 text-zinc-200">{a.activity_name}</td>
+                    <td className="p-2 text-right">{a.qty}</td>
+                    <td className="p-2 text-right">{a.manpower}</td>
+                    <td className="p-2">
+                      {(a.flags || []).map((f: string) => (
+                        <span key={f} className="mr-1 inline-block rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] text-red-300">{f}</span>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {data && !data.anomalies?.length && !loading && (
+        <p className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+          No anomalies in the last {days} days.
+        </p>
+      )}
+
+      {data?.productivity?.length > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-4">
+          <p className="mb-3 text-sm font-bold text-zinc-300">Recent productivity (qty / man-day)</p>
+          <div className="max-h-80 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-zinc-900">
+                <tr className="text-left text-zinc-500">
+                  <th className="p-2">Date</th>
+                  <th className="p-2">Activity</th>
+                  <th className="p-2">Qty</th>
+                  <th className="p-2">Man</th>
+                  <th className="p-2">Qty/man-day</th>
+                  <th className="p-2">Equipment</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.productivity.slice(0, 80).map((p: any) => (
+                  <tr key={p.daily_actual_id} className="border-t border-zinc-800/80">
+                    <td className="p-2 text-zinc-400">{p.date}</td>
+                    <td className="p-2 text-zinc-200">{p.activity_name}</td>
+                    <td className="p-2 text-right">{p.qty}</td>
+                    <td className="p-2 text-right">{p.manpower}</td>
+                    <td className="p-2 text-right font-mono text-amber-300">{p.qty_per_man_day ?? "—"}</td>
+                    <td className="p-2 text-zinc-500">{p.equipment || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

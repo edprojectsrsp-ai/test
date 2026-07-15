@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -9,9 +9,9 @@ import {
 } from "recharts";
 import { ClipboardList, AlertTriangle, Calendar, Activity, TrendingUp } from "lucide-react";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
-export default function DprReport() {
+function DprReportContent() {
   const searchParams = useSearchParams();
   const schemeId = searchParams.get("id") ?? "";
 
@@ -155,7 +155,7 @@ export default function DprReport() {
           {chartData.length > 0 && (
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-5">
               <h2 className="text-sm font-semibold text-zinc-300 mb-4 flex items-center gap-2">
-                <BarChart size={14} className="text-amber-400" /> Activity Plan vs Actual — {selMonth}
+                <Activity size={14} className="text-amber-400" /> Activity Plan vs Actual — {selMonth}
               </h2>
               <ResponsiveContainer width="100%" height={260}>
                 <BarChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
@@ -258,5 +258,13 @@ export default function DprReport() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function DprReport() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-950 p-8 text-zinc-400">Loading DPR report…</div>}>
+      <DprReportContent />
+    </Suspense>
   );
 }

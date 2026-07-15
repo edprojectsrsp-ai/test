@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import { PACKAGE_N_DEFAULT_HTML, PACKAGE_N_REPORT_TITLE } from "@/lib/package_n_report_content";
 
-const API = "http://localhost:8002/api/v1/reports";
+const API = "http://localhost:8000/api/v1/reports";
 const DOC_KEY = "package-n";
 
 type Mode = "view" | "edit";

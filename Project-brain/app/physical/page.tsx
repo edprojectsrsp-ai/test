@@ -31,7 +31,7 @@ export default function PhysicalProgressHub() {
   const [planStatus, setPlanStatus] = useState<"Draft" | "Active">("Draft");
   const [activities, setActivities] = useState<any[]>([]);
   const months = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
-  
+
   const totalWeightage = activities.reduce((sum, act) => sum + (parseFloat(act.weightage) || 0), 0);
 
   // --- Corporate Logic Functions ---
@@ -62,9 +62,9 @@ export default function PhysicalProgressHub() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto pb-32">
-      <h1 className="font-[Space Grotesk] text-5xl font-bold mb-8 flex items-center gap-4">
-        <Activity className="w-10 h-10 text-cyan-400" />
+    <div className="mx-auto max-w-7xl pb-32 text-[var(--ink)]">
+      <h1 className="mb-8 flex items-center gap-4 font-[Space_Grotesk] text-5xl font-bold">
+        <Activity className="h-10 w-10 text-[var(--steel)]" />
         Physical Progress Command Center
       </h1>
 
@@ -72,25 +72,25 @@ export default function PhysicalProgressHub() {
         <div className="grid grid-cols-2 gap-8 mt-12">
           <Link
             href="/progress/corporate"
-            className="group relative bg-black/40 border border-zinc-800 hover:border-cyan-500 rounded-3xl p-10 text-left transition-all overflow-hidden block"
+            className="group relative block overflow-hidden rounded-3xl border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_94%,transparent)] p-10 text-left shadow-[var(--shadow)] transition-all hover:-translate-y-1 hover:border-[var(--steel)] hover:shadow-[var(--shadow-lg)]"
           >
-            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <LayoutGrid className="w-12 h-12 text-cyan-400 mb-6" />
-            <h2 className="text-3xl font-bold mb-2">Corporate AMR Progress</h2>
-            <p className="text-zinc-400">
+            <div className="absolute inset-0 bg-gradient-to-br from-[color-mix(in_srgb,var(--steel)_16%,transparent)] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+            <LayoutGrid className="mb-6 h-12 w-12 text-[var(--steel)]" />
+            <h2 className="mb-2 text-3xl font-bold text-[var(--ink)]">Corporate AMR Progress</h2>
+            <p className="text-[var(--ink-3)]">
               Activity-wise planning, Appendix 2 Excel grid, and exact weightage tracking.
             </p>
           </Link>
 
-          <button onClick={() => { 
-              speakAndChat("Plant AMR Progress selected. Routing to the bulk workspace.", "🌱"); 
+          <button onClick={() => {
+              speakAndChat("Plant AMR Progress selected. Routing to the bulk workspace.", "🌱");
               router.push('/physical/plant');
-            }} 
-            className="group relative bg-black/40 border border-zinc-800 hover:border-emerald-500 rounded-3xl p-10 text-left transition-all overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-            <Activity className="w-12 h-12 text-emerald-400 mb-6" />
-            <h2 className="text-3xl font-bold mb-2">Plant AMR Progress</h2>
-            <p className="text-zinc-400">Simplified month-wise cumulative tracking. Bulk Excel-style grid entry.</p>
+            }}
+            className="group relative overflow-hidden rounded-3xl border border-[var(--line)] bg-[color-mix(in_srgb,var(--panel)_94%,transparent)] p-10 text-left shadow-[var(--shadow)] transition-all hover:-translate-y-1 hover:border-[var(--verdigris)] hover:shadow-[var(--shadow-lg)]">
+            <div className="absolute inset-0 bg-gradient-to-br from-[color-mix(in_srgb,var(--verdigris)_16%,transparent)] to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
+            <Activity className="mb-6 h-12 w-12 text-[var(--verdigris)]" />
+            <h2 className="mb-2 text-3xl font-bold text-[var(--ink)]">Plant AMR Progress</h2>
+            <p className="text-[var(--ink-3)]">Simplified month-wise cumulative tracking. Bulk Excel-style grid entry.</p>
           </button>
         </div>
       )}

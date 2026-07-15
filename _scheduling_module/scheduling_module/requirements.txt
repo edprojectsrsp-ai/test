@@ -1,0 +1,14 @@
+# --- core web / data ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+sqlalchemy>=2.0
+asyncpg>=0.29
+pydantic>=2.6
+python-multipart>=0.0.9
+
+# --- report export (Excel / PDF) ---
+openpyxl>=3.1
+reportlab>=4.1
+
+# --- optional: .mpp import ---
+# JPype1>=1.5        # plus MPXJ jars on MPXJ_CLASSPATH

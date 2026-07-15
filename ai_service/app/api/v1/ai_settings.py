@@ -12,7 +12,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db
+from app.services.orchestrator import get_db
 
 router = APIRouter(tags=["AI Settings"])
 

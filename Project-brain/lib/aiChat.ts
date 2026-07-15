@@ -1,8 +1,16 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { authFetch } from "@/lib/auth";
 
-export type ProviderChoice = "auto" | "openai" | "gemini" | "groq" | "ollama";
+export type ProviderChoice =
+  | "auto"
+  | "openai"
+  | "gemini"
+  | "groq"
+  | "cerebras"
+  | "openrouter"
+  | "ollama";
 
 export type ProviderInfo = {
   available: ProviderChoice[];
@@ -34,7 +42,8 @@ type UseAIChatOptions = {
   context?: unknown;
 };
 
-const API_BASE = "http://localhost:8002/api/v1";
+const AI_BASE = (process.env.NEXT_PUBLIC_AI_API_URL || "http://127.0.0.1:8002").replace(/\/$/, "");
+const USER_ID = 1;
 
 export function useAIChat(options: UseAIChatOptions = {}) {
   const { mode = "simple", greeting, context } = options;
@@ -48,10 +57,11 @@ export function useAIChat(options: UseAIChatOptions = {}) {
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const [strict, setStrict] = useState(false);
   const [providers, setProviders] = useState<ProviderInfo | null>(null);
+  const [conversationId, setConversationId] = useState<number | null>(null);
 
   useEffect(() => {
     let mounted = true;
-    fetch(`${API_BASE}/brain/providers`)
+    authFetch(`${AI_BASE}/ai/providers`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!mounted || !data) return;
@@ -70,6 +80,25 @@ export function useAIChat(options: UseAIChatOptions = {}) {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    authFetch(`${AI_BASE}/ai/conversations/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: USER_ID, source: "web" }),
+    })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data) => {
+        if (mounted) setConversationId(data?.conversation_id ?? null);
+      })
+      .catch(() => {
+        if (mounted) setConversationId(null);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const reset = useCallback(() => {
     setMessages(greeting ? [{ role: "assistant", content: greeting }] : []);
     setBusy(false);
@@ -82,22 +111,35 @@ export function useAIChat(options: UseAIChatOptions = {}) {
       const q = question.trim();
       if (!q) return;
 
+      if (!conversationId) {
+        setMessages((prev) => [
+          ...prev,
+          { role: "user", content: q },
+          {
+            role: "assistant",
+            content: "AI service is not ready. Start it on port 8002 and try again.",
+            meta: { degraded: true, reason: "conversation_unavailable" },
+          },
+        ]);
+        return;
+      }
+
       setBusy(true);
       setTaskType(null);
       setActiveTool(null);
       setMessages((prev) => [...prev, { role: "user", content: q }, { role: "assistant", content: "", pending: true }]);
 
-      const endpoint = mode === "stream" ? `${API_BASE}/ai/chat/stream` : `${API_BASE}/brain/chat`;
+      const endpoint = `${AI_BASE}/ai/chat`;
       try {
         const body = {
+          conversation_id: conversationId,
+          user_id: USER_ID,
           message: q,
-          query: q,
-          prompt: q,
           provider,
-          strict,
+          strict_provider: strict,
           context,
         };
-        const res = await fetch(endpoint, {
+        const res = await authFetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(body),
@@ -106,7 +148,7 @@ export function useAIChat(options: UseAIChatOptions = {}) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const data = await res.json().catch(() => ({}));
-        const content = data.answer ?? data.response ?? data.text ?? data.message ?? "No response";
+        const content = data.reply ?? data.answer ?? data.response ?? data.text ?? data.message ?? "No response";
         const meta: ChatMeta = data.meta ?? {
           provider: data.provider,
           model: data.model,
@@ -134,7 +176,7 @@ export function useAIChat(options: UseAIChatOptions = {}) {
           if (idx >= 0) {
             next[idx] = {
               role: "assistant",
-              content: "AI service is unavailable. Start backend on :8002 and try again.",
+              content: "AI service is unavailable. Start the AI service on port 8002 and try again.",
               meta: { degraded: true, reason: "request_failed" },
             };
           }
@@ -144,7 +186,7 @@ export function useAIChat(options: UseAIChatOptions = {}) {
         setBusy(false);
       }
     },
-    [context, mode, provider, strict]
+    [context, conversationId, mode, provider, strict]
   );
 
   return useMemo(
@@ -164,4 +206,3 @@ export function useAIChat(options: UseAIChatOptions = {}) {
     [messages, send, busy, reset, taskType, activeTool, providers, provider, strict]
   );
 }
-

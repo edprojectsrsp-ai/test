@@ -3,20 +3,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'in.projectbrain.diary',
   appName: 'Project Brain Diary',
-  webDir: 'out',  // Next.js exports static files here
-  bundledWebRuntime: false,
-  server: {
-    // POINT THIS AT YOUR ACTUAL SERVER ON DEMO DAY
-    // Options:
-    //   1. Local LAN demo: 'http://192.168.1.X:3000' (your laptop's IP on phone's WiFi)
-    //   2. Deployed: 'https://projectbrain.yourdomain.com'
-    //   3. Bundled static: leave url undefined, use webDir
-    //
-    // For Sunday demo, RECOMMEND option 1 - laptop+phone on same WiFi
-    url: 'http://192.168.1.100:3000',  // <<<< CHANGE THIS
-    cleartext: true,  // allow http (LAN dev). REMOVE in production.
-    androidScheme: 'https',
-  },
+  webDir: 'out',
   android: {
     allowMixedContent: true,
     backgroundColor: '#09090b',  // matches dark theme

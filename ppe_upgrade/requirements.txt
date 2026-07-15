@@ -1,0 +1,7 @@
+mss>=9.0
+numpy>=1.26
+Pillow>=10.0
+
+# Optional runtime packages for camera detection and model training:
+# opencv-python>=4.9
+# ultralytics>=8.3

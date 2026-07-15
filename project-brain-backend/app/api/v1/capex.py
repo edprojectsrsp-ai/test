@@ -28,6 +28,7 @@ from app.models.capex import (
 )
 from app.models.scheme import Scheme, Package
 from app.security.auth import optional_user
+from app.services.flow_balance import capex_row_balance, next_fy_cum_last, validate_capex_plan
 
 router = APIRouter(prefix="/capex", tags=["CAPEX"])
 
@@ -160,7 +161,7 @@ def _serialize_plan_full(header: CapexPlanHeader, db: Session) -> dict:
                     cell["_re_auto_filled"] = True   # UI uses this to dim/lock
 
         v = r.values
-        serialized.append({
+        row_out = {
             "id": (f"sch_{r.scheme_id}" if r.scheme_id and r.row_level == "Item"
                    else f"pkg_{r.scheme_id}_{r.row_name}" if r.row_level == "Package"
                    else f"row_{r.id}"),
@@ -178,7 +179,20 @@ def _serialize_plan_full(header: CapexPlanHeader, db: Session) -> dict:
             # Editable from the UI's perspective. Item/Package = editable;
             # Header/SubHeader = roll-up only.
             "isEditable": r.row_level in ("Item", "Package"),
-        })
+        }
+        if r.row_level in ("Item", "Package"):
+            balance = capex_row_balance(
+                gross=float(v.gross_cost or 0) if v else 0.0,
+                cum_last=float(v.cumulative_exp_till_last_fy or 0) if v else 0.0,
+                months=months,
+                plan_type=header.plan_type,
+                effective_month=header.effective_from_month,
+                sanctioned=float((v.re_fy or v.be_fy) or 0) if v else 0.0,
+            )
+            row_out["balance"] = balance.balance
+            row_out["cumulative_actual"] = balance.cumulative_actual
+            row_out["within_sanction"] = balance.within_sanction
+        serialized.append(row_out)
     return {
         "header": _serialize_header(header, len(rows)),
         "fy": header.fy_year,
@@ -211,6 +225,27 @@ def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> None:
     for r in rows:
         if r.level not in VALID_ROW_LEVELS:
             raise HTTPException(400, f"Invalid row level: {r.level}")
+
+    header = db.query(CapexPlanHeader).filter(CapexPlanHeader.id == plan_id).first()
+    if not header:
+        raise HTTPException(404, "CAPEX plan not found")
+
+    validation_rows = [
+        {
+            "gross": r.gross,
+            "cumLast": r.cumLast,
+            "sanctioned": (r.reFY or r.beFY),
+            "months": {
+                int(k): {"be": v.be, "re": v.re, "actual": v.actual}
+                for k, v in (r.months or {}).items()
+            },
+        }
+        for r in rows
+        if r.level in ("Item", "Package")
+    ]
+    validation = validate_capex_plan(validation_rows, header.plan_type, header.effective_from_month)
+    if not validation["ok"]:
+        raise HTTPException(status_code=422, detail={"detail": "CAPEX exceeds sanction", "errors": validation["errors"]})
 
     row_ids = [r.id for r in db.query(CapexPlanRow.id).filter(CapexPlanRow.plan_id == plan_id).all()]
     if row_ids:
@@ -700,7 +735,7 @@ def fy_rollover_preview(fy_year: str, db: Session = Depends(get_db)):
         v = values_by_row.get(r.id)
         old_cum = float(v.cumulative_exp_till_last_fy or 0) if v else 0.0
         prev_actual_total = float(actual_totals.get(r.id, 0) or 0)
-        new_cum = old_cum + prev_actual_total
+        new_cum = next_fy_cum_last(old_cum, prev_actual_total)
         if r.row_level == "Item" and r.scheme_id is not None:
             by_scheme[str(r.scheme_id)] = round(new_cum, 4)
         elif r.row_level == "Package":
@@ -767,6 +802,152 @@ def import_source(db: Session = Depends(get_db)):
             for s in schemes
         ],
     }
+
+
+@router.get("/projects")
+def capex_projects(fy_year: str, db: Session = Depends(get_db)):
+    """Report-friendly CAPEX rows grouped by scheme for the furnace reports."""
+    be_plan = (
+        db.query(CapexPlanHeader)
+        .filter(
+            CapexPlanHeader.fy_year == fy_year,
+            CapexPlanHeader.plan_type == "BE",
+            CapexPlanHeader.plan_status != ARCHIVED_STATUS,
+        )
+        .order_by(desc(CapexPlanHeader.created_at), desc(CapexPlanHeader.id))
+        .first()
+    )
+    re_plan = (
+        db.query(CapexPlanHeader)
+        .filter(
+            CapexPlanHeader.fy_year == fy_year,
+            CapexPlanHeader.plan_type == "RE",
+            CapexPlanHeader.plan_status != ARCHIVED_STATUS,
+        )
+        .order_by(desc(CapexPlanHeader.created_at), desc(CapexPlanHeader.id))
+        .first()
+    )
+    base_plan = re_plan or be_plan
+    if not base_plan:
+        return []
+
+    def _leaf_rows(plan_id: int | None):
+        if not plan_id:
+            return []
+        rows = (
+            db.query(CapexPlanRow)
+            .filter(
+                CapexPlanRow.plan_id == plan_id,
+                CapexPlanRow.row_level.in_(["Item", "Package"]),
+            )
+            .order_by(CapexPlanRow.display_order, CapexPlanRow.id)
+            .all()
+        )
+        parent_ids = {row.parent_row_id for row in rows if row.parent_row_id}
+        return [row for row in rows if row.id not in parent_ids and row.scheme_id]
+
+    base_rows = _leaf_rows(base_plan.id)
+    be_rows = _leaf_rows(be_plan.id if be_plan else None)
+    re_rows = _leaf_rows(re_plan.id if re_plan else None)
+
+    if not base_rows:
+        return []
+
+    scheme_ids = sorted({r.scheme_id for r in base_rows if r.scheme_id})
+    schemes = {
+        s.scheme_id: s
+        for s in db.query(Scheme).filter(Scheme.scheme_id.in_(scheme_ids)).all()
+    } if scheme_ids else {}
+
+    def _values_map(rows: list[CapexPlanRow]):
+        row_ids = [r.id for r in rows]
+        value_map = {
+            v.plan_row_id: v
+            for v in db.query(CapexPlanValue).filter(CapexPlanValue.plan_row_id.in_(row_ids)).all()
+        } if row_ids else {}
+        month_map: dict[int, dict[int, dict[str, float]]] = {}
+        if row_ids:
+            for mv in db.query(CapexMonthValue).filter(CapexMonthValue.plan_row_id.in_(row_ids)).all():
+                month_map.setdefault(mv.plan_row_id, {})[mv.month_no] = {
+                    "be": float(mv.be_amount or 0),
+                    "re": float(mv.re_amount or 0),
+                    "actual": float(mv.actual_amount or 0),
+                }
+        return value_map, month_map
+
+    base_values, _base_months = _values_map(base_rows)
+    _be_values, be_months = _values_map(be_rows)
+    _re_values, re_months = _values_map(re_rows)
+
+    def _project_key(row: CapexPlanRow) -> tuple[str, int]:
+        return ("scheme", int(row.scheme_id)) if row.scheme_id else ("row", int(row.id))
+
+    def _monthly_by_project(rows, month_map, field: str):
+        totals: dict[tuple[str, int], list[float]] = {}
+        month_order = [4, 5, 6, 7, 8, 9, 10, 11, 12, 1, 2, 3]
+        for row in rows:
+            key = _project_key(row)
+            values = totals.setdefault(key, [0.0] * 12)
+            for idx, month_no in enumerate(month_order):
+                values[idx] += float(month_map.get(row.id, {}).get(month_no, {}).get(field, 0) or 0)
+        return totals
+
+    be_by_project = _monthly_by_project(be_rows, be_months, "be")
+    re_by_project = _monthly_by_project(re_rows, re_months, "re")
+
+    # Actuals can remain attached to BE rows after an RE plan is created. Query
+    # every row participating in the FY and aggregate using the semantic scheme.
+    all_rows_by_id = {r.id: r for r in [*base_rows, *be_rows, *re_rows]}
+    all_row_ids = list(all_rows_by_id)
+    actuals_by_project: dict[tuple[str, int], list[float]] = {}
+    if all_row_ids:
+        for actual in (
+            db.query(CapexActual)
+            .filter(
+                CapexActual.plan_row_id.in_(all_row_ids),
+                CapexActual.fy_year == fy_year,
+            )
+            .all()
+        ):
+            row = all_rows_by_id.get(actual.plan_row_id)
+            if not row:
+                continue
+            key = _project_key(row)
+            values = actuals_by_project.setdefault(key, [0.0] * 12)
+            month_index = {4: 0, 5: 1, 6: 2, 7: 3, 8: 4, 9: 5, 10: 6, 11: 7, 12: 8, 1: 9, 2: 10, 3: 11}.get(actual.month_no)
+            if month_index is not None:
+                values[month_index] += float(actual.amount or 0)
+
+    projects: dict[tuple[str, int], dict] = {}
+    order_keys: list[tuple[str, int]] = []
+
+    for row in base_rows:
+        key = _project_key(row)
+        if key not in projects:
+            scheme = schemes.get(row.scheme_id) if row.scheme_id else None
+            bucket = "Corporate AMR" if (scheme and (scheme.scheme_type or "").lower().startswith("corporate")) else "Plant Level AMR"
+            label = scheme.scheme_name if scheme else row.row_name
+            projects[key] = {
+                "project_id": row.scheme_id or row.id,
+                "label": label,
+                "bucket": bucket,
+                "gross_cost": 0.0,
+                "expenditure_last_fy": 0.0,
+                "months": [{"be": 0.0, "actual": 0.0, "re": None} for _ in range(12)],
+            }
+            for idx in range(12):
+                projects[key]["months"][idx]["be"] = be_by_project.get(key, [0.0] * 12)[idx]
+                re_value = re_by_project.get(key, [0.0] * 12)[idx]
+                projects[key]["months"][idx]["re"] = re_value if key in re_by_project else None
+                projects[key]["months"][idx]["actual"] = actuals_by_project.get(key, [0.0] * 12)[idx]
+            order_keys.append(key)
+
+        entry = projects[key]
+        values = base_values.get(row.id)
+        entry["gross_cost"] += float(values.gross_cost or 0) if values else 0.0
+        entry["expenditure_last_fy"] += float(values.cumulative_exp_till_last_fy or 0) if values else 0.0
+
+    return [projects[key] for key in order_keys]
 
 
 # ---------------------------------------------------------------------------

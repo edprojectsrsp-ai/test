@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -7,7 +7,7 @@ import {
   Inbox, Archive, FileCheck2
 } from "lucide-react";
 
-const API = "http://localhost:8002";
+const API = "http://localhost:8000";
 const USER_ID = 1; // TODO: from auth
 
 type Notesheet = {
@@ -51,7 +51,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 export default function NotesheetPage() {
   const [view, setView] = useState<"list" | "detail" | "create">("list");
-  const [activeTab, setActiveTab] = useState<"all" | "pending" | "my">("pending");
+  const [activeTab, setActiveTab] = useState<"inbox" | "outbox" | "trash" | "all">("inbox");
   const [notesheets, setNotesheets] = useState<Notesheet[]>([]);
   const [selected, setSelected] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
@@ -59,16 +59,22 @@ export default function NotesheetPage() {
   useEffect(() => { load(); }, [activeTab]);
 
   const load = async () => {
-    if (activeTab === "pending") {
-      const r = await fetch(`${API}/api/v1/notesheet/pending/me?user_id=${USER_ID}`).then(r => r.json());
-      setNotesheets(r.pending || []);
-    } else if (activeTab === "my") {
-      const r = await fetch(`${API}/api/v1/notesheet?initiated_by=${USER_ID}`).then(r => r.json());
+    if (activeTab === "inbox" || activeTab === "outbox" || activeTab === "trash") {
+      const r = await fetch(`${API}/api/v1/notesheet/mailbox/${activeTab}?user_id=${USER_ID}`).then(r => r.json());
       setNotesheets(r.notesheets || []);
     } else {
       const r = await fetch(`${API}/api/v1/notesheet`).then(r => r.json());
       setNotesheets(r.notesheets || []);
     }
+  };
+
+  const trashItem = async (id: number) => {
+    await fetch(`${API}/api/v1/notesheet/${id}/trash?user_id=${USER_ID}`, { method: "POST" });
+    load();
+  };
+  const restoreItem = async (id: number) => {
+    await fetch(`${API}/api/v1/notesheet/${id}/restore?user_id=${USER_ID}`, { method: "POST" });
+    load();
   };
 
   const open = async (id: number) => {
@@ -94,7 +100,7 @@ export default function NotesheetPage() {
             <FileText className="w-8 h-8 text-indigo-400" />
             <h1 className="text-3xl font-bold">e-NoteSheet</h1>
             <span className="px-2 py-0.5 text-xs font-mono rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              SPRINT 9A Â· DIGITAL FILE NOTING
+              SPRINT 9A · DIGITAL FILE NOTING
             </span>
           </div>
           <p className="text-zinc-400">
@@ -103,14 +109,17 @@ export default function NotesheetPage() {
         </motion.div>
 
         <div className="flex items-center justify-between mb-4 gap-3">
-          <div className="flex gap-2">
-            <TabBtn active={activeTab === "pending"} onClick={() => setActiveTab("pending")} icon={<Inbox className="w-4 h-4" />}>
-              Pending With Me
+          <div className="flex flex-wrap gap-2">
+            <TabBtn active={activeTab === "inbox"} onClick={() => setActiveTab("inbox")} icon={<Inbox className="w-4 h-4" />}>
+              Inbox
             </TabBtn>
-            <TabBtn active={activeTab === "my"} onClick={() => setActiveTab("my")} icon={<FileCheck2 className="w-4 h-4" />}>
-              Initiated By Me
+            <TabBtn active={activeTab === "outbox"} onClick={() => setActiveTab("outbox")} icon={<FileCheck2 className="w-4 h-4" />}>
+              Outbox
             </TabBtn>
-            <TabBtn active={activeTab === "all"} onClick={() => setActiveTab("all")} icon={<Archive className="w-4 h-4" />}>
+            <TabBtn active={activeTab === "trash"} onClick={() => setActiveTab("trash")} icon={<Archive className="w-4 h-4" />}>
+              Trash
+            </TabBtn>
+            <TabBtn active={activeTab === "all"} onClick={() => setActiveTab("all")} icon={<FileText className="w-4 h-4" />}>
               All Files
             </TabBtn>
           </div>
@@ -173,11 +182,30 @@ export default function NotesheetPage() {
                       <Clock className="w-3 h-3" />{ns.days_pending}d pending
                     </span>
                     {ns.cost_implication_cr != null && (
-                      <span className="text-amber-400">â‚¹{Number(ns.cost_implication_cr).toFixed(2)} Cr</span>
+                      <span className="text-amber-400">₹{Number(ns.cost_implication_cr).toFixed(2)} Cr</span>
                     )}
                   </div>
                 </div>
-                <ChevronRight className="w-5 h-5 text-zinc-600 flex-shrink-0" />
+                <div className="flex flex-col items-end gap-2 flex-shrink-0" onClick={e => e.stopPropagation()}>
+                  {activeTab === "trash" ? (
+                    <button
+                      type="button"
+                      onClick={() => restoreItem(ns.notesheet_id)}
+                      className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-500/20"
+                    >
+                      Restore
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => trashItem(ns.notesheet_id)}
+                      className="rounded-lg border border-zinc-700 px-2.5 py-1 text-[11px] font-semibold text-zinc-400 hover:border-red-500/40 hover:text-red-300"
+                    >
+                      Trash
+                    </button>
+                  )}
+                  <ChevronRight className="w-5 h-5 text-zinc-600" />
+                </div>
               </div>
             </motion.div>
           ))}
@@ -198,7 +226,7 @@ function TabBtn({ active, onClick, children, icon }: any) {
 }
 
 // ============================================================================
-// DETAIL VIEW â€” full file with notes timeline + action panel
+// DETAIL VIEW — full file with notes timeline + action panel
 // ============================================================================
 function DetailView({ data, onBack }: any) {
   const ns = data.notesheet;
@@ -231,7 +259,7 @@ function DetailView({ data, onBack }: any) {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-5xl mx-auto">
         <button onClick={onBack} className="text-zinc-400 hover:text-zinc-200 mb-4 flex items-center gap-1 text-sm">
-          â† Back to list
+          ← Back to list
         </button>
 
         {/* Header */}
@@ -252,7 +280,7 @@ function DetailView({ data, onBack }: any) {
                 <span>Category: <strong className="text-zinc-200">{ns.category}</strong></span>
                 {ns.scheme_name && <span>Scheme: <strong className="text-zinc-200">{ns.scheme_name}</strong></span>}
                 {ns.workflow_name && <span>Workflow: <strong className="text-zinc-200">{ns.workflow_name}</strong></span>}
-                {ns.cost_implication_cr != null && <span>Cost: <strong className="text-amber-400">â‚¹{Number(ns.cost_implication_cr).toFixed(2)} Cr</strong></span>}
+                {ns.cost_implication_cr != null && <span>Cost: <strong className="text-amber-400">₹{Number(ns.cost_implication_cr).toFixed(2)} Cr</strong></span>}
               </div>
             </div>
           </div>
@@ -293,8 +321,8 @@ function DetailView({ data, onBack }: any) {
                 <span className="font-mono text-xs text-zinc-500 mt-0.5 w-8">#{t.seq_no}</span>
                 <div className="flex-1">
                   <span className="text-zinc-300">{t.actor_name}</span>
-                  <span className="text-zinc-500"> Â· {t.action}</span>
-                  {t.to_user_name && <span className="text-zinc-500"> â†’ {t.to_user_name}</span>}
+                  <span className="text-zinc-500"> · {t.action}</span>
+                  {t.to_user_name && <span className="text-zinc-500"> → {t.to_user_name}</span>}
                   {t.remarks && <p className="text-xs text-zinc-400 mt-0.5">{t.remarks}</p>}
                 </div>
                 <span className="text-xs text-zinc-600">{new Date(t.occurred_at).toLocaleString()}</span>
@@ -392,7 +420,7 @@ function CreateView({ onDone, onCancel }: any) {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
       <div className="max-w-3xl mx-auto">
-        <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-200 mb-4 text-sm">â† Cancel</button>
+        <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-200 mb-4 text-sm">← Cancel</button>
         <h2 className="text-2xl font-bold mb-6">Initiate New File</h2>
 
         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 space-y-4">
@@ -429,7 +457,7 @@ function CreateView({ onDone, onCancel }: any) {
           <FormField label="Workflow (optional)">
             <select value={form.workflow_template_id} onChange={e => field("workflow_template_id", e.target.value)}
               className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg">
-              <option value="">â€” No workflow (manual forward) â€”</option>
+              <option value="">— No workflow (manual forward) —</option>
               {workflows.map(w => <option key={w.template_id} value={w.template_id}>{w.template_name}</option>)}
             </select>
           </FormField>
@@ -439,7 +467,7 @@ function CreateView({ onDone, onCancel }: any) {
               <input value={form.scheme_id} onChange={e => field("scheme_id", e.target.value)}
                 type="number" className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg" />
             </FormField>
-            <FormField label="Cost Impact (â‚¹ Cr)">
+            <FormField label="Cost Impact (₹ Cr)">
               <input value={form.cost_implication_cr} onChange={e => field("cost_implication_cr", e.target.value)}
                 type="number" step="0.01" className="w-full px-3 py-2 bg-zinc-950 border border-zinc-800 rounded-lg" />
             </FormField>
@@ -478,4 +506,3 @@ function FormField({ label, children }: any) {
     </div>
   );
 }
-

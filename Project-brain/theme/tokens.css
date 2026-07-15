@@ -1,0 +1,156 @@
+/* ============================================================
+   PROJECT BRAIN — Light executive tokens
+   White surfaces · black readable ink · soft pastel accents
+   ============================================================ */
+
+:root,
+:root[data-theme="light"] {
+  --font-sans: var(--font-sans, "DM Sans"), "Segoe UI", system-ui, sans-serif;
+  --font-display: var(--font-display, Fraunces), Georgia, serif;
+  --font-mono: var(--font-mono, "JetBrains Mono"), ui-monospace, monospace;
+
+  /* Pure white workspace (Ministry default) */
+  --bg: #ffffff;
+  --bg-tint-warm: transparent;
+  --bg-tint-cool: transparent;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #f0f7f4;
+
+  --line: #e2eaf2;
+  --line-2: #cfe0ec;
+  --grid-line: rgba(15, 23, 42, 0.06);
+
+  /* Black text on white — high contrast */
+  --ink: #0a0a0a;
+  --ink-2: #0a0a0a;
+  --ink-3: #0a0a0a;
+  --ink-4: #171717;
+
+  /* Soft brand (still readable, not neon) */
+  --steel: #2563eb;
+  --steel-2: #3b82f6;
+  --steel-dim: #60a5fa;
+  --steel-deep: #1e40af;
+  --steel-soft: #eff6ff;
+
+  /* Pastel status */
+  --verdigris: #059669;
+  --verdigris-soft: #ecfdf5;
+  --slag: #ca8a04;
+  --slag-soft: #fefce8;
+  --ember: #ea580c;
+  --ember-soft: #fff7ed;
+  --molten: #dc2626;
+  --molten-soft: #fef2f2;
+
+  --accent-cyan: #0891b2;
+  --accent-violet: #7c3aed;
+  --accent-pink: #db2777;
+  --accent-teal: #0d9488;
+  --accent-indigo: #4f46e5;
+  --accent-sky: #0284c7;
+  --accent-lime: #65a30d;
+  --accent-rose: #e11d48;
+
+  /* Table zebra pastels — light blue header */
+  --table-odd: #ffffff;
+  --table-even: #f0fdf4;
+  --table-hover: #ecfeff;
+  --table-head: #dbeafe;
+
+  --shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 28px -18px rgba(37, 99, 235, 0.14);
+  --shadow-lg: 0 6px 18px rgba(15, 23, 42, 0.06), 0 24px 48px -24px rgba(37, 99, 235, 0.18);
+  --area-steel: rgba(59, 130, 246, 0.12);
+
+  --r: 12px;
+  --r-lg: 18px;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0b0c0f;
+  --bg-tint-warm: rgba(255, 79, 26, 0.05);
+  --bg-tint-cool: rgba(127, 176, 221, 0.06);
+  --panel: #15171f;
+  --panel-2: #101218;
+  --panel-3: #191c25;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-2: rgba(255, 255, 255, 0.14);
+  --ink: #fafafa;
+  --ink-2: #e4e4e7;
+  --ink-3: #a1a1aa;
+  --ink-4: #71717a;
+  --steel: #7fb0dd;
+  --steel-2: #9cc4e6;
+  --steel-dim: #5b86ad;
+  --steel-deep: #33536f;
+  --steel-soft: rgba(127, 176, 221, 0.14);
+  --verdigris: #34d399;
+  --verdigris-soft: rgba(52, 211, 153, 0.14);
+  --slag: #fbbf24;
+  --slag-soft: rgba(251, 191, 36, 0.14);
+  --ember: #fb923c;
+  --ember-soft: rgba(251, 146, 60, 0.14);
+  --molten: #f87171;
+  --molten-soft: rgba(248, 113, 113, 0.14);
+  --accent-cyan: #22d3ee;
+  --accent-violet: #a78bfa;
+  --table-odd: #15171f;
+  --table-even: #1a2332;
+  --table-hover: #1e293b;
+  --table-head: #1e293b;
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 18px 40px -28px rgba(0, 0, 0, 0.9);
+  --shadow-lg: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 26px 60px -30px rgba(0, 0, 0, 0.95);
+  --grid-line: rgba(255, 255, 255, 0.06);
+  --area-steel: rgba(51, 83, 111, 0.42);
+  --r: 12px;
+  --r-lg: 18px;
+}
+
+.fz {
+  font-family: var(--font-sans), "DM Sans", system-ui, sans-serif;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+  font-weight: 500;
+}
+.fz-app {
+  min-height: 100vh;
+  /* Flat white workspace — soft radial tints looked hazy under text */
+  background: #ffffff;
+  color: #0a0a0a;
+}
+.fz-mono {
+  font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink);
+}
+.fz-display {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+  letter-spacing: -0.025em;
+  color: var(--ink);
+  font-weight: 700;
+}
+.fz ::selection {
+  background: #dbeafe;
+  color: #0a0a0a;
+}
+
+.fz-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 22px 0 12px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 700;
+}
+.fz-eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}

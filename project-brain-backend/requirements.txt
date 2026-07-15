@@ -4,6 +4,8 @@ python-jose[cryptography]
 passlib[bcrypt]
 sqlalchemy
 psycopg2-binary
+asyncpg
+greenlet
 python-dotenv
 htmldocx
 email-validator
@@ -13,5 +15,9 @@ python-multipart
 google-genai
 openai
 pandas
+openpyxl
+reportlab
+python-docx
+python-pptx
 httpx
 python-dotenv

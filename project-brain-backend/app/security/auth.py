@@ -25,17 +25,29 @@ import psycopg2.extras
 
 logger = logging.getLogger(__name__)
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "CHANGE-ME-IN-PROD-" + os.urandom(16).hex())
+# Stable secret — never randomize per-process (that invalidated tokens on restart).
+JWT_SECRET = (
+    os.environ.get("JWT_SECRET")
+    or os.environ.get("PB_AUTH_SECRET")
+    or "change-me-in-env-pb-secret"
+)
 JWT_ALG = "HS256"
 JWT_EXPIRY_HOURS = int(os.environ.get("JWT_EXPIRY_HOURS", "12"))
+# Sprint 0: set PB_AUTH_ENFORCE=0 only for emergency local demos without login.
+AUTH_ENFORCE = (os.environ.get("PB_AUTH_ENFORCE", "1").strip().lower()
+                not in ("0", "false", "no", "off"))
 
 bearer_scheme = HTTPBearer(auto_error=False)
 pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_db():
-    dsn = os.environ.get("PROJECT_BRAIN_DB_URL",
-                        "postgresql://postgres:abc123@127.0.0.1:5433/project_brain")
+    # Align with app.core.database: prefer DATABASE_URL from .env
+    dsn = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("PROJECT_BRAIN_DB_URL")
+        or "postgresql://postgres:postgres@127.0.0.1:5432/project_brain"
+    )
     return psycopg2.connect(dsn)
 
 
@@ -127,6 +139,21 @@ def invalidate_user_cache(user_id: Optional[int] = None):
 # DEPENDENCIES
 # ===========================================================================
 def require_user(credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme)) -> dict:
+    if not AUTH_ENFORCE:
+        # Soft mode: accept token when present, else return a synthetic demo admin.
+        if credentials:
+            try:
+                payload = decode_token(credentials.credentials)
+                user = fetch_user(int(payload["sub"]))
+                if user and user.get("is_active") and not user.get("is_locked"):
+                    return user
+            except Exception:
+                pass
+        return {
+            "user_id": 0, "username": "demo", "full_name": "Demo User",
+            "role": "admin", "is_active": True, "is_locked": False,
+            "permissions": {}, "designation": "Demo", "department": "Projects",
+        }
     if not credentials:
         raise HTTPException(401, "Missing authorization header")
     payload = decode_token(credentials.credentials)

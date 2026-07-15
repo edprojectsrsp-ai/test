@@ -1,8 +1,8 @@
-﻿"use client";
+"use client";
 
 /**
- * APPENDIX-2 ENGINE â€” Project Brain
- * GOD MODE v2.1 â€” Sprint 3
+ * APPENDIX-2 ENGINE — Project Brain
+ * GOD MODE v2.1 — Sprint 3
  *
  * Features:
  *  - Template library browser with auto-fill on create
@@ -22,7 +22,7 @@ import {
   ChevronDown, FileText, ArrowRight, Building2,
 } from "lucide-react";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
 // =============================================================================
 //   TYPES
@@ -205,7 +205,7 @@ export default function Appendix2Page() {
     });
     const d = await r.json();
     if (r.ok) {
-      showToast("Document approved âœ“");
+      showToast("Document approved ✓");
       setShowApprove(false);
       loadDoc();
       refreshDocs();
@@ -282,7 +282,7 @@ export default function Appendix2Page() {
               onChange={(e) => setSelectedSchemeId(parseInt(e.target.value) || null)}
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:border-cyan-500/50 outline-none"
             >
-              <option value="">â€” Select Scheme â€”</option>
+              <option value="">— Select Scheme —</option>
               {schemes.map((s) => (
                 <option key={s.scheme_id} value={s.scheme_id}>
                   #{s.scheme_id} {s.scheme_name.substring(0, 60)}
@@ -302,10 +302,10 @@ export default function Appendix2Page() {
               disabled={!docs.length}
               className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm focus:border-cyan-500/50 outline-none disabled:opacity-50"
             >
-              <option value="">â€” No documents â€”</option>
+              <option value="">— No documents —</option>
               {docs.map((d) => (
                 <option key={d.appendix2_id} value={d.appendix2_id}>
-                  {d.revision_label} {d.is_approved ? "âœ“ Approved" : "â€” Draft"} {d.is_current ? "â— Current" : ""}
+                  {d.revision_label} {d.is_approved ? "✓ Approved" : "— Draft"} {d.is_current ? "● Current" : ""}
                 </option>
               ))}
             </select>
@@ -353,13 +353,13 @@ export default function Appendix2Page() {
                 <div className="flex gap-6 flex-wrap">
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Document No</div>
-                    <div className="font-bold text-white">{docFull.header.document_no || "â€”"}</div>
+                    <div className="font-bold text-white">{docFull.header.document_no || "—"}</div>
                     <div className="text-xs text-zinc-500">{docFull.header.revision_label}</div>
                   </div>
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Period</div>
                     <div className="font-bold text-white text-sm">
-                      {docFull.header.scheduled_start_date || "â€”"} â†’ {docFull.header.scheduled_finish_date || "â€”"}
+                      {docFull.header.scheduled_start_date || "—"} → {docFull.header.scheduled_finish_date || "—"}
                     </div>
                     <div className="text-xs text-zinc-500">{docFull.header.fy_baseline || "FY TBD"}</div>
                   </div>
@@ -371,7 +371,7 @@ export default function Appendix2Page() {
                   )}
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Total Scope</div>
-                    <div className="font-bold text-cyan-400">{docFull.header.total_scope_value_cr ? `â‚¹${docFull.header.total_scope_value_cr} Cr` : "â€”"}</div>
+                    <div className="font-bold text-cyan-400">{docFull.header.total_scope_value_cr ? `₹${docFull.header.total_scope_value_cr} Cr` : "—"}</div>
                   </div>
                   <div>
                     <div className="text-xs uppercase text-zinc-500 font-medium">Activities</div>
@@ -571,7 +571,7 @@ export default function Appendix2Page() {
                   </div>
                   <div>
                     <div className="text-xs text-zinc-500 uppercase">Board Meeting Reference</div>
-                    <div className="text-zinc-200">{docFull.header.board_meeting_ref || "â€”"}</div>
+                    <div className="text-zinc-200">{docFull.header.board_meeting_ref || "—"}</div>
                   </div>
                 </div>
               </div>
@@ -637,7 +637,7 @@ function CreateModal({ templates, packages, existingDocCount, onClose, onCreate 
         {/* Template Picker */}
         <div className="mb-5">
           <label className="text-xs uppercase tracking-wider text-zinc-500 mb-2 block font-medium">
-            âœ¨ Auto-fill from Template (recommended)
+            ✨ Auto-fill from Template (recommended)
           </label>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
             {templates.map((t: Template) => (
@@ -669,7 +669,7 @@ function CreateModal({ templates, packages, existingDocCount, onClose, onCreate 
                   : "bg-zinc-950 border-zinc-800 hover:border-zinc-700"
               }`}
             >
-              <div className="font-bold text-white text-sm">ðŸ“ Empty (no template)</div>
+              <div className="font-bold text-white text-sm">📝 Empty (no template)</div>
               <div className="text-xs text-zinc-500">Start with a blank document. Add activities manually.</div>
             </button>
           </div>

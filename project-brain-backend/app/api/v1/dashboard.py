@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.core.database import get_db
+from app.services.friend_parity import archive_available, dashboard_model
 
 router = APIRouter()
 
@@ -60,6 +61,37 @@ def _delay_category(months_late: float):
 @router.get("/summary")
 def get_summary(db: Session = Depends(get_db)):
     try:
+        if archive_available(db):
+            parity = dashboard_model(db)
+            cards = parity["cards"]
+            kpis = parity["kpis"]
+            status = {row["label"]: row["value"] for row in parity["statusRows"]}
+            return {
+                "total_schemes": cards["totalProjects"],
+                "total_cost_cr": cards["totalProjectCost"],
+                "by_status": {
+                    "ongoing": cards["ongoingProjects"],
+                    "completed": cards["completedProjects"],
+                    "dropped": cards["droppedProjects"],
+                },
+                "by_type": {
+                    "corporate": kpis["corporateProjects"],
+                    "plant": kpis["plantLevelProjects"],
+                },
+                "delay_summary": {
+                    "on_time": status.get("On Time", 0),
+                    "delay_lt_1y": status.get("Delay < 1 Year", 0),
+                    "delay_gt_1y": status.get("Delay > 1 Year", 0),
+                    "completed_this_fy": status.get("Completed this FY", 0),
+                    # Retain old keys for older clients during rollout.
+                    "minor": status.get("Delay < 1 Year", 0),
+                    "moderate": 0,
+                    "critical": status.get("Delay > 1 Year", 0),
+                },
+                "current_fy": parity["financialYear"],
+                "parity": parity,
+            }
+
         # Total schemes + CAPEX
         totals = db.execute(text("""
             SELECT

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Loader2, RotateCcw, Save } from "lucide-react";
 import Link from "next/link";
 
-const API = process.env.NEXT_PUBLIC_AI_API_URL || "http://localhost:8001";
+const API = process.env.NEXT_PUBLIC_AI_API_URL || "http://127.0.0.1:8002";
 
 type PromptResponse = {
   prompt: string;
@@ -107,7 +107,7 @@ export default function AISettingsPage() {
           </div>
         ) : (
           <div className="grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-            <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-5 shadow-2xl shadow-cyan-950/20 backdrop-blur">
+            <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-5 shadow-2xl shadow-cyan-950/20 bg-white">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <div className="text-sm uppercase tracking-[0.25em] text-cyan-300/70">System Prompt</div>

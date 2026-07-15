@@ -1,13 +1,13 @@
 # PROJECT BRAIN — AI SERVICE (Sprint 8)
 
-> Standalone FastAPI on port 8001. Independent of your main backend at port 8000.
+> Standalone FastAPI on port 8002. Independent of your main backend at port 8000.
 
 ## ARCHITECTURE — Why Standalone
 
 ```
 ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
 │  Next.js Frontend│     │  Main Backend    │     │   AI Service     │
-│  port 3000       │────▶│  port 8000       │     │   port 8001      │
+│  port 3000       │────▶│  port 8000       │     │   port 8002      │
 │                  │     │  (your existing) │     │  (this bundle)   │
 └────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘
          │                        │                         │
@@ -78,10 +78,10 @@ cp .env.example .env
 ```bash
 cd ai_service/
 source venv/bin/activate
-uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload
 ```
 
-### Visit http://localhost:8001/docs for the OpenAPI UI
+### Visit http://localhost:8002/docs for the OpenAPI UI
 
 ### Optional: Start Telegram bot (separate process)
 ```bash
@@ -93,19 +93,19 @@ python -m app.routers.telegram_bot
 
 ### Health check
 ```bash
-curl http://localhost:8001/ai/health
+curl http://localhost:8002/ai/health
 # {"ok":true,"providers_configured":["groq","gemini","openai","ollama"],"tools_registered":16}
 ```
 
 ### Start a conversation + ask a question
 ```bash
 # Start conv
-CID=$(curl -sX POST http://localhost:8001/ai/conversations/start \
+CID=$(curl -sX POST http://localhost:8002/ai/conversations/start \
   -H "Content-Type: application/json" \
   -d '{"user_id":1,"source":"web"}' | jq .conversation_id)
 
 # Ask
-curl -sX POST http://localhost:8001/ai/chat \
+curl -sX POST http://localhost:8002/ai/chat \
   -H "Content-Type: application/json" \
   -d "{\"conversation_id\":$CID,\"user_id\":1,\"message\":\"Find COB-7 and show its packages\"}" \
   | jq
@@ -115,7 +115,7 @@ You should see the assistant call `find_scheme` then `list_packages` and reply w
 
 ### Upload a document
 ```bash
-curl -sX POST http://localhost:8001/ai/documents/upload \
+curl -sX POST http://localhost:8002/ai/documents/upload \
   -F "file=@/path/to/contract.pdf" \
   -F "title=COB-7 Main Contract" \
   -F "document_type=contract" \
@@ -125,7 +125,7 @@ curl -sX POST http://localhost:8001/ai/documents/upload \
 
 Then check status:
 ```bash
-curl http://localhost:8001/ai/documents/1/status | jq
+curl http://localhost:8002/ai/documents/1/status | jq
 # Watch extraction_status go: pending → processing → done
 # embedding_status: pending → done
 ```
@@ -138,7 +138,7 @@ Copy `frontend_page.tsx` → `frontend/app/ai/page.tsx`
 
 Set the env var in `frontend/.env.local`:
 ```
-NEXT_PUBLIC_AI_API_URL=http://localhost:8001
+NEXT_PUBLIC_AI_API_URL=http://localhost:8002
 ```
 
 Visit http://localhost:3000/ai
@@ -198,7 +198,7 @@ Type=simple
 User=brain
 WorkingDirectory=/opt/pb/ai_service
 EnvironmentFile=/opt/pb/ai_service/.env
-ExecStart=/opt/pb/ai_service/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8001 --workers 2
+ExecStart=/opt/pb/ai_service/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8002 --workers 2
 Restart=always
 
 [Install]
@@ -232,7 +232,7 @@ Assume average query: 2 tool calls, 800 input tokens, 400 output tokens per call
 - Tools use **closed enums** for entities/columns → AI can't write SQL
 - DB connection is **readonly** for tool calls — no destructive ops possible
 - Document uploads stored in `UPLOAD_DIR` outside the web root — no direct serve
-- Add reverse proxy auth (nginx + JWT) in front of port 8001 for production
+- Add reverse proxy auth (nginx + JWT) in front of port 8002 for production
 
 ## 10. WHAT TO ADD NEXT (Sprint 9)
 

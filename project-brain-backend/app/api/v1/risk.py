@@ -147,4 +147,3 @@ def acknowledge_risk(risk_id: int, user_id: int, db: Session = Depends(get_db)):
     )
     db.commit()
     return {"ok": True}
-

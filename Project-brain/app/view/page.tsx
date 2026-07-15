@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 
-const API_URL = "http://localhost:8002/api/v1/schemes/all";
+const API_URL = "http://localhost:8000/api/v1/schemes/all";
 
 interface Scheme {
   scheme_id: number;
@@ -157,13 +157,13 @@ export default function ViewSchemesMaster() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8 text-white">
+    <div className="min-h-screen p-8 text-[var(--ink)]">
       <div className="max-w-7xl mx-auto">
 
         {/* Header */}
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
           <div>
-            <h1 className="text-3xl font-black tracking-tight text-white">
+            <h1 className="text-3xl font-black tracking-tight text-[var(--ink)]">
               Master <span className="text-cyan-400">Scheme Registry</span>
             </h1>
             <p className="text-zinc-400">All schemes from across the portfolio.</p>
@@ -171,7 +171,7 @@ export default function ViewSchemesMaster() {
           <div className="flex items-center gap-3">
             <button
               onClick={fetchSchemes}
-              className="p-2 bg-zinc-900 border border-zinc-800 rounded-xl hover:text-cyan-400 transition-all"
+              className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2 text-[var(--ink-3)] transition-all hover:bg-[var(--panel-2)] hover:text-[var(--steel)]"
             >
               <RefreshCw size={20} className={loading ? "animate-spin text-cyan-400" : ""} />
             </button>

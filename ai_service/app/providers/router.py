@@ -198,6 +198,18 @@ class ProviderRouter:
             return "lookup"
         return cat
 
+    def _provider_for_request(self, provider_name: str, model_override: Optional[str]):
+        """Return the provider to use for THIS request. When a model override
+        is given, return a shallow clone with model_id swapped so the shared
+        singleton is never mutated (fixes cross-request contamination)."""
+        provider = self.providers[provider_name]
+        if model_override:
+            import copy as _copy
+            clone = _copy.copy(provider)
+            clone.model_id = model_override
+            return clone
+        return provider
+
     async def call(
         self,
         messages: list[ChatMessage],
@@ -207,13 +219,17 @@ class ProviderRouter:
         max_tokens: int = 2048,
         forced_provider: Optional[str] = None,
         strict_forced: bool = False,
+        model_override: Optional[str] = None,
     ) -> ChatResponse:
         chain = self._resolve_chain(task_type, forced_provider, strict_forced)
         last_error = None
         for provider_name in chain:
             if provider_name not in self.providers:
                 continue
-            provider = self.providers[provider_name]
+            # model_override only applies to the explicitly forced provider,
+            # never to fallbacks (a Groq model name means nothing to Ollama).
+            use_override = model_override if (forced_provider and provider_name == forced_provider.strip().lower()) else None
+            provider = self._provider_for_request(provider_name, use_override)
             logger.info(
                 f"Trying {provider_name} for task={task_type} (forced={forced_provider}, strict={strict_forced})"
             )
@@ -246,12 +262,14 @@ class ProviderRouter:
         max_tokens: int = 2048,
         forced_provider: Optional[str] = None,
         strict_forced: bool = False,
+        model_override: Optional[str] = None,
     ):
         chain = self._resolve_chain(task_type, forced_provider, strict_forced)
         for provider_name in chain:
             if provider_name not in self.providers:
                 continue
-            provider = self.providers[provider_name]
+            use_override = model_override if (forced_provider and provider_name == forced_provider.strip().lower()) else None
+            provider = self._provider_for_request(provider_name, use_override)
             logger.info(f"Streaming from {provider_name} for task={task_type}")
             try:
                 async for chunk in provider.chat_stream(
@@ -274,4 +292,3 @@ def get_router() -> ProviderRouter:
     if _router is None:
         _router = ProviderRouter()
     return _router
-

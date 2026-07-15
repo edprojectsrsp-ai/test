@@ -18,7 +18,7 @@ class ChatRequest(BaseModel):
 
 
 def _ai_base() -> str:
-    return os.environ.get("AI_SERVICE_URL", "http://localhost:8001").rstrip("/")
+    return os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:8002").rstrip("/")
 
 
 @router.get("/providers")

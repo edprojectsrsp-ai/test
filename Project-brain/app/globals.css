@@ -1,41 +1,227 @@
 @import "tailwindcss";
 
 :root {
-  --background: #09090b;
-  --foreground: #fafafa;
+  --background: #f4f7fb;
+  --foreground: #0b1f33;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg, var(--background));
+  color: var(--ink, var(--foreground));
+  font-family: var(--font-sans), "DM Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 500;
+  letter-spacing: -0.011em;
+  line-height: 1.55;
+  transition: background-color .25s ease, color .25s ease;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, .fz-display {
+  font-family: var(--font-display), Fraunces, Georgia, serif;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+  line-height: 1.25;
+}
+
+code, pre, .fz-mono, .font-mono {
+  font-family: var(--font-mono), "JetBrains Mono", ui-monospace, monospace !important;
+  font-variant-numeric: tabular-nums;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) {
+  color-scheme: light;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) input,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) select,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) textarea {
+  color-scheme: light;
+}
+
+/* Legacy dark-ui compatibility layer for corporate mode. */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-950,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/50,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/40,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/30,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/20,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/60,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/70,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-950\/80 {
+  background-color: var(--bg) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/20,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/80,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/70,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/60,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/50,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/40,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-900\/30,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-900,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-900\/80,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-900\/50 {
+  background-color: color-mix(in srgb, var(--panel) 92%, transparent) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-800,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-800\/50,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-800\/40,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-zinc-800\/30,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-800,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-gray-800\/50 {
+  background-color: color-mix(in srgb, var(--panel-2) 94%, transparent) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#050505]"] {
+  background-color: var(--bg) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#09090b]"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#0c0c0c]"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#111115]"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-black/40"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-black/50"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-black/60"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-black/70"] {
+  background-color: color-mix(in srgb, var(--panel) 94%, transparent) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-900,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-800,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-800\/50,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-800\/30,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-700,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-gray-800,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-gray-700,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-gray-600 {
+  border-color: var(--line) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="border-white/5"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="border-white/10"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="border-white/20"] {
+  border-color: var(--line) !important;
+}
+
+/* All body copy black on white for maximum visibility */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-100,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-400,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-700,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-100,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-400,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-700,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-100,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-400,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-slate-600 {
+  color: #0a0a0a !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .placeholder-zinc-500::placeholder,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .placeholder-zinc-600::placeholder,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .placeholder\:text-zinc-600::placeholder,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .placeholder\:text-zinc-500::placeholder,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .placeholder\:text-gray-500::placeholder {
+  color: var(--ink-4) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-white:not([class*="bg-cyan"]):not([class*="bg-emerald"]):not([class*="bg-blue"]):not([class*="bg-indigo"]):not([class*="bg-violet"]):not([class*="bg-pink"]):not([class*="bg-red"]):not([class*="bg-amber"]):not([class*="bg-orange"]):not([class*="bg-teal"]):not([class*="bg-gradient"]):not([class*="bg-white"]) {
+  color: var(--ink) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-zinc-900:hover,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-zinc-800:hover,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-zinc-700:hover,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-gray-900:hover,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-gray-800:hover,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:bg-gray-700:hover {
+  background-color: var(--panel-3) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .hover\:text-white:hover {
+  color: var(--ink) !important;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .focus\:border-cyan-400:focus,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .focus\:border-cyan-500:focus,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .focus\:border-blue-500:focus {
+  border-color: var(--steel) !important;
 }
 
 button {
   cursor: pointer;
 }
 
-/* === YOUR MINI MOS CUSTOM CSS === */
-.neural-bg {
-    background: linear-gradient(-45deg, #09090b, #18181b, #082f49, #000000);
-    background-size: 400% 400%;
-    animation: gradientBG 15s ease infinite;
+/* === APP SHELL BACKGROUND === */
+/* Ministry (default): solid white — animated gradients looked hazy under text */
+.neural-bg,
+.ministry-shell {
+  background: #ffffff !important;
+  color: #0a0a0a;
 }
-@keyframes gradientBG {
-    0% { background-position: 0% 50%; }
-    50% { background-position: 100% 50%; }
-    100% { background-position: 0% 50%; }
+:root[data-theme="light"] .neural-bg,
+:root[data-fz-preset="ministry"] .neural-bg,
+:root[data-fz-preset="aurora"] .neural-bg,
+:root[data-fz-preset="ocean"] .neural-bg {
+  background: #ffffff !important;
+  animation: none !important;
+}
+/* Midnight keeps a dark shell */
+:root[data-theme="dark"] .neural-bg,
+:root[data-fz-preset="midnight"] .neural-bg {
+  background: #0b0c0f !important;
+  color: #f1f5f9;
+}
+
+/* Light blue chrome headers (context / page / tables) */
+:root[data-theme="light"] [data-context-bar],
+:root[data-fz-preset="ministry"] [data-context-bar] {
+  background: #dbeafe !important;
+  color: #0a0a0a !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Capex / legacy surfaces: solid white, no frost */
+:root[data-theme="light"] .capex-surface,
+:root[data-fz-preset="ministry"] .capex-surface,
+:root[data-theme="light"] .backdrop-blur,
+:root[data-theme="light"] .backdrop-blur-sm,
+:root[data-theme="light"] .backdrop-blur-md,
+:root[data-theme="light"] .backdrop-blur-lg,
+:root[data-theme="light"] .backdrop-blur-xl,
+:root[data-theme="light"] .backdrop-blur-2xl {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background-color: #ffffff;
+  color: #0a0a0a;
 }
 
 .glass-input {
-    background: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(34, 211, 238, 0.2);
-    backdrop-filter: blur(10px);
+    background: color-mix(in srgb, var(--panel, #fff) 96%, transparent);
+    border: 1px solid color-mix(in srgb, var(--steel, #22d3ee) 24%, transparent);
+    /* no backdrop-filter — softens text on dashboard tables */
     transition: all 0.3s ease;
 }
 .glass-input:focus {
-    border-color: #22d3ee;
-    box-shadow: 0 0 20px rgba(34, 211, 238, 0.2);
+    border-color: var(--steel, #22d3ee);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--steel, #22d3ee) 22%, transparent);
     transform: translateX(10px);
 }
 
@@ -44,11 +230,11 @@ button {
     border-radius: 12px;
     box-shadow: 0 10px 20px rgba(0,0,0,0.5), 0 0 10px rgba(34, 211, 238, 0.1);
     transition: all 0.3s;
-    border: 2px solid rgba(255,255,255,0.1);
+    border: 2px solid color-mix(in srgb, var(--line-2, rgba(255,255,255,.1)) 100%, transparent);
 }
 .mos-image:hover {
     transform: scale(1.1);
-    box-shadow: 0 0 25px rgba(34, 211, 238, 0.5);
+    box-shadow: 0 0 25px color-mix(in srgb, var(--steel, #22d3ee) 50%, transparent);
     cursor: pointer;
 }
 
@@ -82,12 +268,13 @@ button {
 .anim-success { animation: gestureSuccess 0.7s ease-out; }
 
 .msg-mos {
-    background: #0891b2;
+    background: linear-gradient(180deg, var(--steel-2, #0891b2), var(--steel, #0e7490));
     border-radius: 15px 15px 15px 2px;
     padding: 8px 12px;
     margin-bottom: 10px;
     display: inline-block;
     max-width: 90%;
+    color: #fff;
     animation: popIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 @keyframes popIn {
@@ -102,3 +289,467 @@ button {
 .animate-fade-in {
     animation: fadeInUp 0.4s ease-out forwards;
 }
+
+.module-active-capex {
+  min-height: 100vh;
+  background:
+    radial-gradient(1100px 680px at 82% -10%, color-mix(in srgb, var(--steel) 11%, transparent), transparent 56%),
+    radial-gradient(860px 540px at -8% 0%, color-mix(in srgb, var(--molten) 8%, transparent), transparent 52%),
+    var(--bg);
+  color: var(--ink);
+}
+
+.module-active-capex .capex-surface {
+  background: color-mix(in srgb, var(--panel) 90%, transparent) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow) !important;
+  color: var(--ink) !important;
+}
+
+.module-active-capex .capex-tabs {
+  background: color-mix(in srgb, var(--panel-2) 96%, transparent) !important;
+  border-color: var(--line) !important;
+}
+
+.module-active-capex .capex-select,
+.module-active-capex .capex-input {
+  background: color-mix(in srgb, var(--panel-2) 94%, transparent) !important;
+  color: var(--ink) !important;
+  border-color: var(--line-2) !important;
+  box-shadow: none !important;
+}
+
+.module-active-capex .capex-select::placeholder,
+.module-active-capex .capex-input::placeholder {
+  color: var(--ink-4) !important;
+}
+
+.module-active-capex .capex-select:focus,
+.module-active-capex .capex-input:focus {
+  border-color: var(--steel) !important;
+  outline: none !important;
+}
+
+.module-active-capex .capex-input.border-red-500 {
+  border-color: #ef4444 !important;
+  color: #f87171 !important;
+}
+
+.module-active-capex .capex-input.bg-amber-950\/40 {
+  background: color-mix(in srgb, var(--slag-soft) 60%, var(--panel-2)) !important;
+  border-color: color-mix(in srgb, var(--slag) 34%, var(--line-2)) !important;
+  color: var(--slag) !important;
+}
+
+.module-active-capex .capex-select-accent {
+  color: var(--slag) !important;
+  border-color: color-mix(in srgb, var(--slag) 42%, var(--line-2)) !important;
+}
+
+.module-active-capex .capex-pill {
+  background: color-mix(in srgb, var(--panel-2) 96%, transparent) !important;
+  border-color: var(--line) !important;
+  color: var(--ink-2) !important;
+}
+
+.module-active-capex .capex-table-shell {
+  background: color-mix(in srgb, var(--panel) 92%, transparent) !important;
+  border-color: var(--line) !important;
+}
+
+.module-active-capex .capex-table-head {
+  background: color-mix(in srgb, var(--panel-3) 94%, transparent) !important;
+  color: var(--ink-3) !important;
+}
+
+.module-active-capex .capex-table-row {
+  border-color: color-mix(in srgb, var(--line) 86%, transparent) !important;
+}
+
+.module-active-capex .capex-table-row:hover {
+  background: color-mix(in srgb, var(--steel-soft) 36%, transparent) !important;
+}
+
+.module-active-capex .capex-table-row-alt {
+  background: color-mix(in srgb, var(--panel-2) 90%, transparent) !important;
+}
+
+.module-active-capex .capex-table-total {
+  background: color-mix(in srgb, var(--panel-2) 96%, transparent) !important;
+  border-top-color: var(--line-2) !important;
+}
+
+.module-active-capex .capex-sticky-col {
+  background: color-mix(in srgb, var(--panel) 96%, transparent) !important;
+  border-color: var(--line) !important;
+}
+
+.module-active-capex .capex-hover-tools {
+  background: color-mix(in srgb, var(--panel-2) 98%, transparent) !important;
+  border-color: var(--line) !important;
+  box-shadow: var(--shadow-lg) !important;
+}
+
+.module-active-capex .capex-theme-toggle {
+  margin-left: 2px;
+}
+
+.module-active-capex .capex-tabs button {
+  transition: transform .15s ease, filter .15s ease;
+}
+
+.module-active-capex .capex-tabs button:hover {
+  transform: translateY(-1px);
+}
+
+/* Sprint 1 — ministry print stylesheet */
+@media print {
+  .print\:hidden,
+  nav,
+  aside,
+  [data-sidebar],
+  .fz-sidebar {
+    display: none !important;
+  }
+  body {
+    background: #fff !important;
+    color: #0f2238 !important;
+  }
+  .print\:break-after-page {
+    break-after: page;
+  }
+  table {
+    break-inside: avoid;
+  }
+}
+
+/* ============================================================
+   MINISTRY EXECUTIVE THEME — white bg + colorful KPIs
+   Global contrast fix so dark-UI pages remain readable in light.
+   ============================================================ */
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"], .ministry-shell) {
+  color-scheme: light;
+}
+
+/* Hard reset text-white on non-colored surfaces (hidden fonts fix) */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-white {
+  color: var(--ink) !important;
+}
+/* Keep white text on solid brand / status buttons & bars */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-cyan-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-emerald-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-blue-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-indigo-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-violet-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-pink-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-red-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-amber-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-orange-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-teal-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-sky-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-rose-"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#0b3d91]"] .text-white,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-emerald-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-blue-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-indigo-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-violet-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-rose-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-sky-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button.bg-cyan-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button.bg-cyan-600 {
+  color: #ffffff !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#0b3d91]"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) [class*="bg-[#0b3d91]"] * {
+  color: #ffffff !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-500 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-emerald-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-emerald-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-blue-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-blue-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-indigo-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-indigo-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-violet-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-violet-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-rose-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-rose-600 *,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-sky-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-sky-600 * {
+  color: #ffffff !important;
+}
+
+/* Stronger body text hierarchy */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-100,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-100,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-300 {
+  color: var(--ink) !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-400,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-400 {
+  color: var(--ink-2) !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-500,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-500 {
+  color: var(--ink-3) !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-zinc-700,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-gray-700 {
+  color: var(--ink-3) !important;
+}
+
+/* Colorful accent text stays vivid on white (executive KPIs) */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-cyan-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-cyan-400 {
+  color: #0e7490 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-emerald-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-emerald-400 {
+  color: #047857 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-amber-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-amber-400 {
+  color: #b45309 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-orange-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-orange-400 {
+  color: #c2410c !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-red-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-red-400 {
+  color: #b91c1c !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-violet-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-violet-400,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-fuchsia-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-fuchsia-400 {
+  color: #6d28d9 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-blue-200,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-blue-300 {
+  color: #1d4ed8 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-teal-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-teal-400 {
+  color: #0f766e !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-pink-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-pink-400 {
+  color: #be185d !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-indigo-300,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-indigo-400 {
+  color: #4338ca !important;
+}
+
+/* Soft colorful surfaces for KPI tiles */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-500\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-cyan-950\/20 {
+  background-color: #e0f7fa !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-emerald-500\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-emerald-950\/20 {
+  background-color: #d1fae5 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-amber-500\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-orange-950\/20,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-amber-500\/15 {
+  background-color: #fef3c7 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-red-500\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-red-500\/15,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-violet-950\/20 {
+  background-color: #ede9fe !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-blue-950\/20,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-blue-500\/10 {
+  background-color: #dbeafe !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-violet-500\/10,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-fuchsia-500\/10 {
+  background-color: #f3e8ff !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-pink-500\/10 {
+  background-color: #fce7f3 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-teal-500\/10 {
+  background-color: #ccfbf1 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .bg-indigo-500\/10 {
+  background-color: #e0e7ff !important;
+}
+
+/* Inputs / selects — never dark-on-dark */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) input,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) select,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) textarea {
+  background-color: #ffffff !important;
+  color: var(--ink) !important;
+  border-color: var(--line) !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) input::placeholder,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) textarea::placeholder {
+  color: var(--ink-4) !important;
+  opacity: 1;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) option {
+  background: #ffffff;
+  color: #0a1c30;
+}
+
+/* Cards & tables */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) table {
+  color: var(--ink);
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) th {
+  color: var(--ink-2) !important;
+  background: var(--panel-3) !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) td {
+  color: var(--ink) !important;
+}
+
+/* Shell polish */
+.ministry-shell main {
+  background: var(--bg);
+  color: var(--ink);
+}
+
+/* Scrollbar (light) */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) ::-webkit-scrollbar-track {
+  background: var(--panel-3);
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) ::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 8px;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) ::-webkit-scrollbar-thumb:hover {
+  background: var(--steel-dim);
+}
+
+/* KPI chip borders more visible */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-cyan-500\/30 {
+  border-color: #67e8f9 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-emerald-500\/30 {
+  border-color: #6ee7b7 !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-orange-500\/30,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-amber-500\/30 {
+  border-color: #fcd34d !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-violet-500\/30 {
+  border-color: #c4b5fd !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-blue-500\/30 {
+  border-color: #93c5fd !important;
+}
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-pink-500\/30 {
+  border-color: #f9a8d4 !important;
+}
+
+/* Soft glow backgrounds that used dark zinc should read as white cards */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .min-h-screen.bg-zinc-950,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .min-h-screen.bg-black {
+  background: var(--bg) !important;
+  color: var(--ink) !important;
+}
+
+/* file: button labels on uploads */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .file\:text-white::file-selector-button,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) input[type="file"]::file-selector-button {
+  color: #ffffff !important;
+}
+
+/* —— Extra color pop for ministry executive —— */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) {
+  --tw-prose-body: var(--ink);
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .rounded-xl,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .rounded-2xl {
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border {
+  border-color: var(--line);
+}
+
+/* Page titles & bold labels */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .font-bold,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .font-semibold {
+  color: inherit;
+  letter-spacing: -0.015em;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) h1,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-3xl,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-2xl,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-4xl {
+  font-family: var(--font-display), Fraunces, Georgia, serif !important;
+  color: var(--ink) !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.03em;
+}
+
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-xl,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .text-lg {
+  font-weight: 650;
+  color: var(--ink) !important;
+}
+
+/* KPI numbers — mono elegant */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .tabular-nums,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .font-mono {
+  font-family: var(--font-mono), "JetBrains Mono", monospace !important;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+/* Colorful soft borders on cards */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-800,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .border-zinc-700 {
+  border-color: #c5d6eb !important;
+}
+
+/* Gradient page wash behind content */
+.ministry-shell main > div {
+  background:
+    radial-gradient(800px 320px at 100% 0%, rgba(124, 58, 237, 0.06), transparent 55%),
+    radial-gradient(700px 280px at 0% 20%, rgba(8, 145, 178, 0.06), transparent 50%),
+    transparent;
+}
+
+/* Buttons with cyan/steel keep white labels */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) a.bg-cyan-600,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button[class*="bg-cyan"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button[class*="bg-sky"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button[class*="bg-emerald"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button[class*="bg-indigo"],
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) button[class*="bg-violet"] {
+  color: #fff !important;
+}
+
+/* Chip-like accent badges */
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .uppercase.tracking-widest,
+:is(:root[data-theme="light"], :root[data-fz-preset="ministry"]) .uppercase.tracking-wide {
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  color: var(--steel) !important;
+}
+

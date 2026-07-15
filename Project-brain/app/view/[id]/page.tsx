@@ -6,7 +6,7 @@ export async function generateStaticParams(): Promise<Params[]> {
   // Required for `output: "export"` (static HTML export).
   // Best-effort: fetch scheme ids from the backend at build time.
   try {
-    const r = await fetch("http://localhost:8002/api/v1/schemes/all", { cache: "no-store" });
+    const r = await fetch("http://localhost:8000/api/v1/schemes/all", { cache: "no-store" });
     const data = await r.json();
     if (!Array.isArray(data)) return [];
     return data

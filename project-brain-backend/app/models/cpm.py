@@ -27,7 +27,7 @@ def save_schedule_to_db(project_id, filename, activities):
         )
         db.add(import_record)
         db.flush()  # Get the ID without committing
-        
+
         # Add activities
         for activity in activities:
             act = ScheduleActivity(
@@ -53,7 +53,7 @@ def save_schedule_to_db(project_id, filename, activities):
                 raw_data=json.dumps(activity.get("raw_data") or {}, default=str)
             )
             db.add(act)
-        
+
         db.commit()
         return import_record.id
     finally:
@@ -103,10 +103,10 @@ def get_latest_schedule(project_id):
         import_record = db.query(ScheduleImport).filter(
             ScheduleImport.project_id == project_id
         ).order_by(ScheduleImport.id.desc()).first()
-        
+
         if not import_record:
             return None
-        
+
         return {
             'id': import_record.id,
             'project_id': import_record.project_id,
@@ -401,24 +401,24 @@ def calculate_cpm(activities):
 #@app.route('/api/schedule/<int:project_id>', methods=['GET'])
 def get_schedule(project_id):
     schedule = get_latest_schedule(project_id)
-    
+
     if schedule:
         activities = get_schedule_from_db(schedule['id'])
         return {'schedule_id': schedule['id'], 'activities': activities}
-    
+
     return {'schedule_id': None, 'activities': []}
 
 #@app.route('/api/schedule/upload', methods=['POST'])
 def upload_schedule():
     project_id = request.form.get('project_id')
     file = request.files.get('file')
-    
+
     if not file:
         return jsonify({'error': 'No file uploaded'}), 400
-    
+
     temp_path = f"/tmp/{file.filename}"
     file.save(temp_path)
-    
+
     try:
         ext = os.path.splitext(file.filename)[1].lower()
         if ext == '.xer':
@@ -427,39 +427,39 @@ def upload_schedule():
             activities = parse_xml(temp_path)
         else:
             return jsonify({'error': 'Unsupported file type. Please upload .xml or .xer'}), 400
-        
+
         if not activities:
             return jsonify({'error': 'No activities found in schedule file'}), 400
-        
+
         # Calculate CPM
         activities = calculate_cpm(activities)
-        
+
         # Save to PostgreSQL database
         schedule_id = save_schedule_to_db(project_id, file.filename, activities)
-        
+
         os.remove(temp_path)
         return jsonify({'success': True, 'activity_count': len(activities)})
-        
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 #@app.route('/api/schedule/analyze/<int:schedule_id>', methods=['GET'])
 def analyze_schedule(schedule_id):
     activities = get_schedule_from_db(schedule_id)
-    
+
     if not activities:
         return {'error': 'No activities found'}
-    
+
     # Calculate statistics
     critical_count = sum(1 for a in activities if a.get('is_critical') == 'Yes')
     completed_count = sum(1 for a in activities if float(a.get('percent_complete') or 0) >= 100)
     avg_progress = sum(float(a.get('percent_complete') or 0) for a in activities) / max(1, len(activities))
     total_duration = sum(float(a.get('duration_days') or 0) for a in activities)
-    
+
     # Find critical path activities
     critical_path = [a for a in activities if a.get('is_critical') == 'Yes']
     critical_path.sort(key=lambda x: parse_app_date(x.get('early_start')) or date.today())
-    
+
     return {
         'total_activities': len(activities),
         'critical_activities': critical_count,

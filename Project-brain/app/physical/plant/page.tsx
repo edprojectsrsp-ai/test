@@ -1,10 +1,10 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { Activity, CalendarDays, Save } from "lucide-react";
 import { useMos } from "../../../components/brain/MosContext";
 
-const API_URL = "http://localhost:8002/api/v1/plant";
+const API_URL = "http://localhost:8000/api/v1/plant";
 
 export default function PlantProgressWorkspace() {
   const { focusField, speakAndChat } = useMos();
@@ -14,24 +14,24 @@ export default function PlantProgressWorkspace() {
   const [gridData, setGridData] = useState<any[]>([]);
 
   const handleLoadWorkspace = async () => {
-    speakAndChat("Loading the bulk workspace. I am cross-referencing last month's data now.", "ðŸ”„");
+    speakAndChat("Loading the bulk workspace. I am cross-referencing last month's data now.", "🔄");
     try {
       const res = await fetch(`${API_URL}/workspace?year=${year}&month=${month}`);
-      
+
       if (!res.ok) {
         const errorData = await res.json();
         console.error("Backend Error:", errorData);
-        speakAndChat("The backend returned an error. Please check your Python terminal.", "âŒ");
-        return; 
+        speakAndChat("The backend returned an error. Please check your Python terminal.", "❌");
+        return;
       }
 
       const data = await res.json();
       setGridData(data);
       setIsLoaded(true);
-      speakAndChat(`Workspace loaded. ${data.length} schemes ready for bulk update.`, "âœ…");
+      speakAndChat(`Workspace loaded. ${data.length} schemes ready for bulk update.`, "✅");
     } catch (e) {
       console.error(e);
-      speakAndChat("Failed to connect to the backend database.", "âŒ");
+      speakAndChat("Failed to connect to the backend database.", "❌");
     }
   };
 
@@ -42,12 +42,12 @@ export default function PlantProgressWorkspace() {
     if (field === "current_progress") {
       const val = Number.parseFloat(String(value)) || 0;
       if (val === 100 && updated[index].current_status !== "closed") {
-        speakAndChat("Progress is 100%. Please change the status to 'closed' and enter a closure date.", "ðŸŽ‰");
+        speakAndChat("Progress is 100%. Please change the status to 'closed' and enter a closure date.", "🎉");
       }
       if (val < updated[index].last_progress) {
         speakAndChat(
           `Warning: Current progress (${val}%) cannot be less than last month (${updated[index].last_progress}%).`,
-          "âš ï¸"
+          "⚠️"
         );
       }
     }
@@ -58,17 +58,17 @@ export default function PlantProgressWorkspace() {
   const handleSaveWorkspace = async () => {
     for (const row of gridData) {
       const prog = Number.parseFloat(String(row.current_progress));
-      if (prog < 0 || prog > 100) return speakAndChat(`Error in ${row.scheme_name}: Progress must be 0-100%.`, "âŒ");
+      if (prog < 0 || prog > 100) return speakAndChat(`Error in ${row.scheme_name}: Progress must be 0-100%.`, "❌");
       if (prog < row.last_progress)
-        return speakAndChat(`Error in ${row.scheme_name}: Progress dropped below last month.`, "âŒ");
+        return speakAndChat(`Error in ${row.scheme_name}: Progress dropped below last month.`, "❌");
       if (prog === row.last_progress && (!row.current_remark || row.current_remark.trim() === "")) {
         return speakAndChat(
           `Rule violation in ${row.scheme_name}: Progress is unchanged. You MUST enter a remark explaining why.`,
-          "âš ï¸"
+          "⚠️"
         );
       }
       if (row.current_status === "closed" && !row.closure_date) {
-        return speakAndChat(`Error in ${row.scheme_name}: Closed schemes must have a closure date.`, "âŒ");
+        return speakAndChat(`Error in ${row.scheme_name}: Closed schemes must have a closure date.`, "❌");
       }
     }
 
@@ -83,14 +83,14 @@ export default function PlantProgressWorkspace() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      
+
       if (!res.ok) {
-         speakAndChat("Save failed. Check Python terminal.", "âŒ");
+         speakAndChat("Save failed. Check Python terminal.", "❌");
          return;
       }
-      speakAndChat("Massive Success! All Plant AMR updates and lifecycle changes have been locked.", "ðŸ’¾");
+      speakAndChat("Massive Success! All Plant AMR updates and lifecycle changes have been locked.", "💾");
     } catch (e) {
-      speakAndChat("Network failure while saving.", "âŒ");
+      speakAndChat("Network failure while saving.", "❌");
     }
   };
 
@@ -179,7 +179,7 @@ export default function PlantProgressWorkspace() {
                           type="date"
                           value={row.expected_completion_date || ""}
                           onChange={(e) => updateRow(idx, "expected_completion_date", e.target.value)}
-                          onFocus={(e) => focusField(e, "Update the expected completion date if delayed.", "ðŸ“…")}
+                          onFocus={(e) => focusField(e, "Update the expected completion date if delayed.", "📅")}
                           className="bg-transparent outline-none w-full text-zinc-300"
                         />
                       </td>
@@ -196,7 +196,7 @@ export default function PlantProgressWorkspace() {
                           step="0.1"
                           value={row.current_progress}
                           onChange={(e) => updateRow(idx, "current_progress", e.target.value)}
-                          onFocus={(e) => focusField(e, "Enter cumulative progress. Cannot be lower than last month.", "ðŸ“ˆ")}
+                          onFocus={(e) => focusField(e, "Enter cumulative progress. Cannot be lower than last month.", "📈")}
                           className={`w-20 bg-zinc-900 border ${
                             progError ? "border-red-500 text-red-400" : "border-zinc-700 text-emerald-400"
                           } rounded p-2 text-right outline-none focus:border-emerald-400 font-mono font-bold`}
@@ -217,7 +217,7 @@ export default function PlantProgressWorkspace() {
                           type="text"
                           value={row.current_remark}
                           onChange={(e) => updateRow(idx, "current_remark", e.target.value)}
-                          onFocus={(e) => focusField(e, "Provide status remarks. Mandatory if progress is unchanged.", "âœï¸")}
+                          onFocus={(e) => focusField(e, "Provide status remarks. Mandatory if progress is unchanged.", "✍️")}
                           placeholder="Required if unchanged..."
                           className="w-full bg-zinc-900 border border-zinc-700 rounded p-2 outline-none focus:border-emerald-400 text-sm"
                         />
@@ -244,5 +244,3 @@ export default function PlantProgressWorkspace() {
     </div>
   );
 }
-
-

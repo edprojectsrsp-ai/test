@@ -1,35 +1,62 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useState } from "react";
 import { ArrowRight, Lock, User } from "lucide-react";
+import { setSession } from "@/lib/auth";
+
+const API = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1";
 
 export default function Login() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const handleLogin = async (event: FormEvent) => {
     event.preventDefault();
-    const formData = new URLSearchParams();
-    formData.append("username", username);
-    formData.append("password", password);
-
+    setBusy(true);
     try {
-      const res = await fetch("http://localhost:8002/api/v1/auth/login", {
+      // JSON login (auth router) — form-urlencoded was mismatched
+      const res = await fetch(`${API}/auth/login`, {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: formData,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
       });
 
       if (res.ok) {
         const data = await res.json();
-        localStorage.setItem("brain_token", data.access_token);
-        window.location.href = "/view";
+        setSession(data.access_token, {
+          user_id: data.user_id,
+          role: data.role,
+          username,
+        });
+        // enrich from /me when possible
+        try {
+          const me = await fetch(`${API}/auth/me`, {
+            headers: { Authorization: `Bearer ${data.access_token}` },
+          }).then((r) => (r.ok ? r.json() : null));
+          if (me) {
+            setSession(data.access_token, {
+              user_id: me.user_id ?? data.user_id,
+              username: me.username || username,
+              full_name: me.full_name,
+              role: me.role || data.role,
+              designation: me.designation,
+              department: me.department,
+            });
+          }
+        } catch {
+          /* ignore */
+        }
+        window.location.href = "/dashboard";
       } else {
-        alert("Access Denied: Invalid Credentials");
+        const detail = await res.json().catch(() => ({}));
+        alert(detail.detail || "Access Denied: Invalid Credentials");
       }
     } catch (error) {
       console.error(error);
       alert("System Offline: Cannot reach the Brain API");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -39,7 +66,7 @@ export default function Login() {
 
       <div className="z-10 w-full max-w-md rounded-3xl border border-zinc-800 bg-zinc-900 p-10 shadow-2xl backdrop-blur-xl">
         <div className="mb-8 flex flex-col items-center">
-          <div className="mb-4 text-6xl drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">ðŸ§ </div>
+          <div className="mb-4 text-6xl drop-shadow-[0_0_15px_rgba(34,211,238,0.5)]">🧠</div>
           <h1 className="text-3xl font-bold tracking-tight text-white">PROJECT BRAIN</h1>
           <p className="text-sm text-cyan-400">Secure Authentication Protocol</p>
         </div>
@@ -69,12 +96,15 @@ export default function Login() {
             />
           </div>
 
-          <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-500 py-4 text-lg font-bold text-black transition-all hover:bg-cyan-400">
-            Initialize Brain <ArrowRight className="h-5 w-5" />
+          <button
+            type="submit"
+            disabled={busy}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-500 py-4 text-lg font-bold text-black transition-all hover:bg-cyan-400 disabled:opacity-60"
+          >
+            {busy ? "Authenticating…" : "Initialize Brain"} <ArrowRight className="h-5 w-5" />
           </button>
         </form>
       </div>
     </div>
   );
 }
-

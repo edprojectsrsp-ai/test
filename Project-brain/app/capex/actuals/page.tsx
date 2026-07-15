@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useMos } from "@/components/brain/MosContext";
 import { Save, Download } from "lucide-react";
+import { ThemeToggle } from "@/theme/ThemeProvider";
 
 type CapexRow = {
   scheme_id: number;
@@ -38,13 +39,14 @@ export default function CapexActuals() {
   };
 
   return (
-    <div className="p-8 text-white">
-      <div className="flex justify-between items-end mb-8">
+    <div className="module-active-capex capex-shell p-8">
+      <div className="capex-surface flex justify-between items-end mb-8 p-6 rounded-3xl border bg-white gap-4">
         <div>
           <h1 className="text-3xl font-bold text-emerald-400 mb-2">CAPEX Actuals Workspace</h1>
           <p className="text-zinc-400">Bulk monthly expenditure updates.</p>
         </div>
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4 items-center">
+          <ThemeToggle className="capex-theme-toggle" />
           <button className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 flex items-center gap-2 border border-zinc-700">
             <Download className="w-4 h-4" /> Export
           </button>
@@ -54,10 +56,10 @@ export default function CapexActuals() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-2xl border border-zinc-800 bg-zinc-900/80 shadow-2xl">
+      <div className="capex-surface capex-table-shell overflow-x-auto rounded-2xl border shadow-2xl">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-zinc-950/50 text-zinc-400 text-sm uppercase tracking-wider">
+            <tr className="capex-table-head text-zinc-400 text-sm uppercase tracking-wider">
               <th className="p-4 border-b border-zinc-800">Scheme Name</th>
               <th className="p-4 border-b border-zinc-800">Type</th>
               <th className="p-4 border-b border-zinc-800 text-right">BE Plan</th>
@@ -71,7 +73,7 @@ export default function CapexActuals() {
               // Variance Highlighting Logic
               const isOverBudget = row.current_actual > (row.re_total > 0 ? row.re_total : row.be_total);
               return (
-                <tr key={row.scheme_id} className="hover:bg-zinc-800/50 transition-colors border-b border-zinc-800/50">
+                <tr key={row.scheme_id} className="capex-table-row hover:bg-zinc-800/50 transition-colors border-b">
                   <td className="p-4 font-medium">{row.scheme_name}</td>
                   <td className="p-4 text-zinc-400 text-sm">{row.type}</td>
                   <td className="p-4 text-right text-zinc-300">{row.be_total}</td>
@@ -81,7 +83,7 @@ export default function CapexActuals() {
                       type="number"
                       value={row.current_actual}
                       onChange={(e) => handleUpdate(i, "current_actual", Number(e.target.value))}
-                      className={`w-full text-right p-2 rounded-lg bg-zinc-950 border ${isOverBudget ? 'border-red-500 text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-zinc-700 focus:border-emerald-400'} outline-none transition-all`}
+                      className={`capex-input w-full text-right p-2 rounded-lg border ${isOverBudget ? 'border-red-500 text-red-400 shadow-[0_0_10px_rgba(239,68,68,0.2)]' : 'border-zinc-700 focus:border-emerald-400'} outline-none transition-all`}
                     />
                   </td>
                   <td className="p-4">
@@ -90,7 +92,7 @@ export default function CapexActuals() {
                       value={row.current_remarks}
                       onChange={(e) => handleUpdate(i, "current_remarks", e.target.value)}
                       placeholder="Add remarks..."
-                      className="w-full p-2 rounded-lg bg-zinc-950 border border-zinc-700 focus:border-emerald-400 outline-none text-sm"
+                      className="capex-input w-full p-2 rounded-lg border border-zinc-700 focus:border-emerald-400 outline-none text-sm"
                     />
                   </td>
                 </tr>

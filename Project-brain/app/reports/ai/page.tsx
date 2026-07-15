@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function ReportsAiPage() {
+function ReportsAiContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
 
@@ -17,5 +18,13 @@ export default function ReportsAiPage() {
         Back to Reports hub
       </Link>
     </div>
+  );
+}
+
+export default function ReportsAiPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-950 p-8 text-zinc-400">Loading AI analytics…</div>}>
+      <ReportsAiContent />
+    </Suspense>
   );
 }

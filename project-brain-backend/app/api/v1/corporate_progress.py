@@ -51,6 +51,17 @@ def get_corporate_amr(
             WHERE NOT p.is_deleted
             GROUP BY p.scheme_id
         ),
+        scheme_plant_phy AS (
+            -- Fallback for plant AMR schemes tracked via the simplified
+            -- monthly grid (no locked activity plan): latest cumulative %.
+            SELECT DISTINCT ON (p.scheme_id)
+                p.scheme_id,
+                ppm.cumulative_actual_pct
+            FROM plant_progress_monthly ppm
+            JOIN packages p ON p.package_id = ppm.package_id
+            WHERE NOT p.is_deleted
+            ORDER BY p.scheme_id, ppm.month_date DESC
+        ),
         latest_contract AS (
             SELECT DISTINCT ON (p.scheme_id)
                 p.scheme_id,
@@ -86,7 +97,7 @@ def get_corporate_amr(
             ROUND(
                 ((CURRENT_DATE - sm.planned_completion_date)::float / 30.0)::numeric, 1
             ) AS delay_months,
-            COALESCE(sp.avg_physical_pct, 0)  AS physical_pct,
+            COALESCE(sp.avg_physical_pct, spp.cumulative_actual_pct, 0) AS physical_pct,
             lc.contractor_name,
             lc.loa_date,
             lc.contract_value_cr,
@@ -94,7 +105,8 @@ def get_corporate_amr(
             lt.awarded_value_cr,
             lt.estimated_value_cr
         FROM scheme_master sm
-        LEFT JOIN scheme_phy       sp ON sp.scheme_id = sm.scheme_id
+        LEFT JOIN scheme_phy       sp  ON sp.scheme_id = sm.scheme_id
+        LEFT JOIN scheme_plant_phy spp ON spp.scheme_id = sm.scheme_id
         LEFT JOIN latest_contract  lc ON lc.scheme_id = sm.scheme_id
         LEFT JOIN latest_tender    lt ON lt.scheme_id = sm.scheme_id
         WHERE NOT sm.is_deleted

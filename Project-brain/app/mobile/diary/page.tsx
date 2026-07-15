@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useEffect, useRef } from "react";
 import { motion } from "framer-motion";
 import {
@@ -11,7 +11,7 @@ import {
   syncOfflineQueue, showToast,
 } from "@/lib/native";
 
-const API = "http://localhost:8002";
+const API = "http://localhost:8000";
 const USER_ID = 1;
 
 type Pkg = { package_id: number; package_name: string; scheme_name: string; site_location?: string };
@@ -53,7 +53,7 @@ export default function MobileDiaryPage() {
       setQueueLen(q.length);
     })();
 
-    // Network listener â€” auto-sync when back online
+    // Network listener — auto-sync when back online
     const unsub = onNetworkChange(async (isOn) => {
       setOnline(isOn);
       if (isOn) {
@@ -72,7 +72,7 @@ export default function MobileDiaryPage() {
     if (!online) return;
     fetch(`${API}/api/v1/mobile/packages-for-me?user_id=${USER_ID}`)
       .then(r => r.json()).then(d => setPackages(d.packages || []))
-      .catch(() => {/* offline â€” packages list will be empty */});
+      .catch(() => {/* offline — packages list will be empty */});
   }, [online]);
 
   // Load activities for selected package
@@ -141,7 +141,7 @@ export default function MobileDiaryPage() {
       user_id: USER_ID,
     };
 
-    // If offline â†’ queue
+    // If offline → queue
     if (!online) {
       const photosB64 = await Promise.all(photos.map(async (f) => ({
         name: f.name,
@@ -197,7 +197,7 @@ export default function MobileDiaryPage() {
             Site Diary
           </h1>
           <p className="text-xs text-zinc-500">
-            {nativeMode ? `Native ${plat}` : 'Web (PWA)'} Â·
+            {nativeMode ? `Native ${plat}` : 'Web (PWA)'} ·
             {online ? <span className="text-emerald-400 ml-1">online</span> : <span className="text-amber-400 ml-1">offline</span>}
           </p>
         </div>
@@ -222,7 +222,7 @@ export default function MobileDiaryPage() {
             <div className="text-xs">
               <div className="font-mono text-zinc-200">{gps.lat.toFixed(6)}, {gps.lng.toFixed(6)}</div>
               {gps.accuracy != null && (
-                <div className="text-zinc-500">Â±{Math.round(gps.accuracy)}m accuracy</div>
+                <div className="text-zinc-500">±{Math.round(gps.accuracy)}m accuracy</div>
               )}
             </div>
           ) : (
@@ -242,7 +242,7 @@ export default function MobileDiaryPage() {
           <option value="">Choose package...</option>
           {packages.map(p => (
             <option key={p.package_id} value={p.package_id}>
-              {p.scheme_name} Â· {p.package_name}
+              {p.scheme_name} · {p.package_name}
             </option>
           ))}
         </select>
@@ -317,7 +317,7 @@ export default function MobileDiaryPage() {
               <div key={i} className="relative aspect-square bg-zinc-900 rounded overflow-hidden">
                 <img src={URL.createObjectURL(p)} className="w-full h-full object-cover" alt="" />
                 <button onClick={() => setPhotos(ps => ps.filter((_, idx) => idx !== i))}
-                  className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs">Ã—</button>
+                  className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/60 text-white text-xs">×</button>
               </div>
             ))}
           </div>
@@ -369,4 +369,3 @@ async function fileToBase64(file: File): Promise<string> {
     reader.readAsDataURL(file);
   });
 }
-

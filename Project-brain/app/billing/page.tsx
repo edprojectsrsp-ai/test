@@ -5,7 +5,7 @@
  * Matches the friend's "Billing Schedule & PV / Consumption Monitoring" window.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   AlertTriangle,
@@ -21,7 +21,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
 // ─────────────────────── types ────────────────────────────────────────────────
 
@@ -85,7 +85,10 @@ export default function BillingPage() {
       .then((d: any[]) => {
         const active = d.filter(s => s.current_status !== "closed");
         setSchemes(active);
-        if (active.length) setSelectedScheme(String(active[0].id));
+        // COB-7 (scheme 74) carries the richest billing/progress dataset —
+        // default there so the page opens with real milestones, not blanks.
+        const preferred = active.find(s => s.id === 74) ?? active[0];
+        if (preferred) setSelectedScheme(String(preferred.id));
       })
       .catch(() => {});
   }, []);
@@ -100,7 +103,12 @@ export default function BillingPage() {
       .then(r => r.json())
       .then((d: Package[]) => {
         setPackages(d);
-        if (d.length) setSelectedPkg(String(d[0].package_id));
+        if (d.length) {
+          // Prefer the package that actually has billing milestones so the
+          // page opens on real data instead of an empty first-in-list pick.
+          const richest = [...d].sort((a, b) => (b.milestone_count ?? 0) - (a.milestone_count ?? 0))[0];
+          setSelectedPkg(String(richest.package_id));
+        }
       })
       .catch(() => {});
   }, [selectedScheme]);
@@ -199,7 +207,7 @@ export default function BillingPage() {
       overdue: "bg-red-500/20 text-red-400 border-red-500/30",
       pending: "bg-zinc-700 text-zinc-400 border-zinc-600",
     };
-    const icons: Record<string, JSX.Element> = {
+    const icons: Record<string, ReactNode> = {
       paid:    <CheckCircle2 className="h-3 w-3" />,
       billed:  <Receipt className="h-3 w-3" />,
       overdue: <AlertTriangle className="h-3 w-3" />,

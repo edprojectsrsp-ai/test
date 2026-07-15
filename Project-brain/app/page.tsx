@@ -13,7 +13,7 @@ export default function HomeRegistration() {
 
   // Step 2 Dates
   const [dates, setDates] = useState({ stage1_date: "", stage2_date: "", start_date: "", scheduled_completion: "", closure_date: "" });
-  
+
   // Logic to calculate mandatory fields based on your rules
   const [mandatoryFields, setMandatoryFields] = useState<string[]>([]);
 
@@ -38,7 +38,7 @@ export default function HomeRegistration() {
       return;
     }
     // Moves to Step 2
-    setStep(2); 
+    setStep(2);
   };
 
   // Handle clicking "Continue" on Step 2
@@ -68,7 +68,7 @@ export default function HomeRegistration() {
 
       <div className="mx-auto max-w-4xl">
         <AnimatePresence mode="wait">
-          
+
           {/* STEP 1: Basic Info */}
           {step === 1 && (
             <motion.div key="step1" initial={{ opacity: 0, x: 50 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -50 }} className="bg-zinc-900 border border-zinc-800 rounded-3xl p-8 shadow-2xl">
@@ -78,7 +78,7 @@ export default function HomeRegistration() {
                   <label className="block text-sm text-zinc-400 mb-2">Scheme Name <span className="text-red-400">*</span></label>
                   <input type="text" value={name} onChange={(e) => setName(e.target.value)} className="w-full rounded-2xl border border-zinc-700 bg-zinc-950 px-5 py-4 outline-none focus:border-cyan-400" placeholder="e.g. Blast Furnace Mod" />
                 </div>
-                
+
                 {/* ESTIMATED COST IS BACK */}
                 <div className="col-span-1">
                   <label className="block text-sm text-zinc-400 mb-2">Estimated Cost (₹ Cr) <span className="text-zinc-600 italic">- Optional</span></label>
@@ -127,11 +127,11 @@ export default function HomeRegistration() {
                     <label className="flex items-center justify-between text-sm text-zinc-400 mb-2">
                       <span>{field.label} {isMandatory(field.id) && <span className="text-cyan-400 ml-1">*</span>}</span>
                     </label>
-                    <input 
-                      type="date" 
-                      value={dates[field.id as keyof typeof dates]} 
-                      onChange={(e) => setDates({ ...dates, [field.id]: e.target.value })} 
-                      className={`w-full rounded-2xl border bg-zinc-950 px-5 py-4 outline-none transition-all ${isMandatory(field.id) ? "border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]" : "border-zinc-700"}`} 
+                    <input
+                      type="date"
+                      value={dates[field.id as keyof typeof dates]}
+                      onChange={(e) => setDates({ ...dates, [field.id]: e.target.value })}
+                      className={`w-full rounded-2xl border bg-zinc-950 px-5 py-4 outline-none transition-all ${isMandatory(field.id) ? "border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.2)]" : "border-zinc-700"}`}
                     />
                   </div>
                 ))}

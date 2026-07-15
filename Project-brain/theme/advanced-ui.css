@@ -1,0 +1,674 @@
+/* ============================================================
+   PREMIUM VISUAL SYSTEM v2
+   Bigger type · 3D cards · zebra tables · pop-out options/tabs
+   Driven by data-fz-preset · data-fz-fx · data-fz-motion · accent
+   ============================================================ */
+
+:root {
+  --fx-lift: 12px;
+  --fx-tilt: 0.8deg;
+  --fx-glow: 0.42;
+  --fx-speed: 0.32s;
+  --type-scale: 1.06;
+  --nav-pop: 1.04;
+}
+
+html[data-fz-motion="calm"] {
+  --fx-lift: 7px;
+  --fx-tilt: 0.35deg;
+  --fx-glow: 0.22;
+  --fx-speed: 0.42s;
+  --nav-pop: 1.02;
+}
+html[data-fz-motion="bold"] {
+  --fx-lift: 18px;
+  --fx-tilt: 1.25deg;
+  --fx-glow: 0.62;
+  --fx-speed: 0.26s;
+  --nav-pop: 1.06;
+}
+html[data-fz-fx="flat"] {
+  --fx-lift: 0px;
+  --fx-tilt: 0deg;
+  --fx-glow: 0;
+  --nav-pop: 1;
+}
+
+/* ---------- BIGGER, CLEARER TYPE ---------- */
+html[data-fz-preset] body,
+html[data-theme="light"] body,
+.ministry-shell {
+  font-size: calc(15.5px * var(--type-scale));
+  line-height: 1.55;
+  font-weight: 500;
+}
+html[data-fz-density="comfortable"] body {
+  --type-scale: 1.12;
+  font-size: calc(16px * var(--type-scale));
+}
+html[data-fz-density="compact"] body {
+  --type-scale: 0.95;
+}
+
+h1, .text-4xl {
+  font-size: clamp(1.75rem, 2.2vw, 2.15rem) !important;
+  line-height: 1.2 !important;
+  font-weight: 750 !important;
+}
+h2, .text-3xl {
+  font-size: clamp(1.4rem, 1.8vw, 1.75rem) !important;
+  font-weight: 700 !important;
+}
+h3, .text-2xl {
+  font-size: clamp(1.2rem, 1.5vw, 1.45rem) !important;
+  font-weight: 700 !important;
+}
+.text-xl { font-size: 1.2rem !important; font-weight: 650 !important; }
+.text-lg { font-size: 1.08rem !important; font-weight: 650 !important; }
+.text-sm { font-size: 0.95rem !important; }
+.text-xs { font-size: 0.82rem !important; font-weight: 600 !important; }
+.text-\[10px\], .text-\[11px\] { font-size: 0.78rem !important; font-weight: 650 !important; }
+
+/* ---------- AMBIENT ---------- */
+/* Light executive: no soft orbs — they made the whole UI look foggy/blurred. */
+.fx-ambient,
+.fx-ambient::before,
+.fx-ambient::after,
+.fx-ambient .orb-3 {
+  display: none !important;
+}
+/* Keep stacking so chrome stays above any residual layers */
+.ministry-shell > div,
+[data-sidebar],
+[data-context-bar],
+main { position: relative; z-index: 1; }
+
+/* ---------- 3D CARDS ---------- */
+html:not([data-fz-fx="flat"]) .ui-card,
+html:not([data-fz-fx="flat"]) .card-3d,
+html:not([data-fz-fx="flat"]) .fz-card,
+html:not([data-fz-fx="flat"]) main .rounded-xl.border,
+html:not([data-fz-fx="flat"]) main .rounded-2xl.border,
+html:not([data-fz-fx="flat"]) main [class*="rounded-xl"][class*="border-zinc"],
+html:not([data-fz-fx="flat"]) main [class*="rounded-2xl"][class*="border-zinc"],
+html:not([data-fz-fx="flat"]) main [class*="rounded-xl"][class*="bg-zinc"],
+html:not([data-fz-fx="flat"]) main [class*="rounded-2xl"][class*="bg-zinc"] {
+  transform-style: preserve-3d;
+  transition:
+    transform var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1),
+    border-color var(--fx-speed) ease,
+    filter var(--fx-speed) ease;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.88) inset,
+    0 2px 4px rgba(7, 24, 41, 0.04),
+    0 14px 32px -16px color-mix(in srgb, var(--steel) 38%, transparent);
+  will-change: transform;
+  border-radius: 16px !important;
+}
+
+html:not([data-fz-fx="flat"]) .ui-card:hover,
+html:not([data-fz-fx="flat"]) .card-3d:hover,
+html:not([data-fz-fx="flat"]) .fz-card:hover,
+html:not([data-fz-fx="flat"]) main .rounded-xl.border:hover,
+html:not([data-fz-fx="flat"]) main .rounded-2xl.border:hover,
+html:not([data-fz-fx="flat"]) main [class*="rounded-xl"][class*="border-zinc"]:hover,
+html:not([data-fz-fx="flat"]) main [class*="rounded-2xl"][class*="border-zinc"]:hover {
+  /* Small lift only — scale/rotateX caused subpixel blur on text */
+  transform: translateY(-4px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.95) inset,
+    0 0 0 1px color-mix(in srgb, var(--steel) 32%, transparent),
+    0 16px 32px -16px color-mix(in srgb, var(--steel) 40%, transparent);
+  border-color: color-mix(in srgb, var(--steel) 45%, var(--line)) !important;
+  z-index: 3;
+  filter: none;
+}
+
+/* Glass mode: solid white only — no backdrop-filter (blur made text look soft) */
+html[data-fz-fx="glass"] .ui-card:not(table):not(.data-table),
+html[data-fz-fx="glass"] [data-sidebar],
+html[data-fz-fx="glass"] main table,
+html[data-fz-fx="glass"] main .rounded-xl.border,
+html[data-fz-fx="glass"] main .rounded-2xl.border {
+  background: #ffffff !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html[data-fz-fx="neon"] .ui-card,
+html[data-fz-fx="neon"] main .rounded-xl.border,
+html[data-fz-fx="neon"] main .rounded-2xl.border {
+  border-color: color-mix(in srgb, var(--steel) 60%, transparent) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--steel) 35%, transparent),
+    0 0 28px color-mix(in srgb, var(--steel) calc(var(--fx-glow) * 45%), transparent),
+    0 14px 34px -14px rgba(0, 0, 0, 0.22);
+}
+
+/* ---------- ZEBRA TABLES — light pastel + black text ---------- */
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, var(--shadow);
+  background: var(--panel);
+  color: var(--ink);
+}
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #dbeafe !important; /* light blue header row */
+  color: #0a0a0a !important;
+  font-weight: 800 !important;
+  font-size: 0.8rem !important;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 12px 14px !important;
+  border-bottom: 2px solid #93c5fd !important;
+}
+tbody td {
+  padding: 11px 14px !important;
+  font-size: 0.95rem !important;
+  font-weight: 550;
+  border-bottom: 1px solid #e5eef6 !important;
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+  color: #0a0a0a !important;
+  background: var(--table-odd, #fff) !important;
+}
+/* Soft light-green / white zebra */
+tbody tr:nth-child(odd) td {
+  background: var(--table-odd, #ffffff) !important;
+  color: #0a0a0a !important;
+}
+tbody tr:nth-child(even) td {
+  background: var(--table-even, #f0fdf4) !important;
+  color: #0a0a0a !important;
+}
+tbody tr {
+  transition: transform var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1);
+}
+html:not([data-fz-fx="flat"]) tbody tr:hover td {
+  background: var(--table-hover, #ecfeff) !important;
+  box-shadow: inset 3px 0 0 #67e8f9;
+  color: #0a0a0a !important;
+  font-weight: 650;
+}
+html:not([data-fz-fx="flat"]) tbody tr:hover {
+  /* no scale — keeps table text sharp */
+  position: relative;
+  z-index: 2;
+}
+
+/* Light-mode force: any leftover pale text becomes black */
+:root[data-theme="light"] main,
+:root[data-fz-preset="ministry"] main,
+:root[data-fz-preset="aurora"] main,
+:root[data-fz-preset="ocean"] main {
+  color: #0a0a0a;
+}
+:root[data-theme="light"] main .text-white,
+:root[data-fz-preset="ministry"] main .text-white {
+  color: #0a0a0a !important;
+}
+/* Keep white only on solid colored buttons/headers */
+:root[data-theme="light"] main [class*="bg-[#0b3d91]"] .text-white,
+:root[data-theme="light"] main [class*="bg-[#0b3d91]"],
+:root[data-theme="light"] main [class*="bg-[#0b3d91]"] *,
+:root[data-theme="light"] main .bg-cyan-600,
+:root[data-theme="light"] main .bg-cyan-600 *,
+:root[data-theme="light"] main .bg-sky-600,
+:root[data-theme="light"] main .bg-sky-600 *,
+:root[data-theme="light"] main .bg-blue-600,
+:root[data-theme="light"] main .bg-blue-600 *,
+:root[data-theme="light"] main .bg-emerald-600,
+:root[data-theme="light"] main .bg-emerald-600 * {
+  color: #ffffff !important;
+}
+
+/* Softer pastel KPI accents (still readable) */
+:root[data-theme="light"] .text-emerald-400,
+:root[data-theme="light"] .text-emerald-300 { color: #047857 !important; }
+:root[data-theme="light"] .text-cyan-400,
+:root[data-theme="light"] .text-cyan-300 { color: #0e7490 !important; }
+:root[data-theme="light"] .text-amber-400,
+:root[data-theme="light"] .text-amber-300 { color: #b45309 !important; }
+:root[data-theme="light"] .text-violet-400,
+:root[data-theme="light"] .text-violet-300 { color: #6d28d9 !important; }
+:root[data-theme="light"] .text-red-400,
+:root[data-theme="light"] .text-red-300 { color: #b91c1c !important; }
+:root[data-theme="light"] .text-indigo-400,
+:root[data-theme="light"] .text-indigo-300 { color: #4338ca !important; }
+:root[data-theme="light"] .text-purple-400,
+:root[data-theme="light"] .text-purple-300 { color: #7c3aed !important; }
+:root[data-theme="light"] .text-zinc-100,
+:root[data-theme="light"] .text-zinc-200,
+:root[data-theme="light"] .text-zinc-300,
+:root[data-theme="light"] .text-zinc-400,
+:root[data-theme="light"] .text-zinc-500,
+:root[data-theme="light"] .text-zinc-600,
+:root[data-theme="light"] .text-zinc-700,
+:root[data-theme="light"] .text-slate-100,
+:root[data-theme="light"] .text-slate-200,
+:root[data-theme="light"] .text-slate-300,
+:root[data-theme="light"] .text-slate-400,
+:root[data-theme="light"] .text-slate-500,
+:root[data-theme="light"] .text-slate-600,
+:root[data-theme="light"] .text-gray-100,
+:root[data-theme="light"] .text-gray-200,
+:root[data-theme="light"] .text-gray-300,
+:root[data-theme="light"] .text-gray-400,
+:root[data-theme="light"] .text-gray-500,
+:root[data-theme="light"] .text-gray-600,
+:root[data-theme="light"] .text-white {
+  color: #0a0a0a !important;
+}
+
+/* Force dark-zinc utility pages → white panels + black ink on light theme */
+:root[data-theme="light"] main .bg-zinc-950,
+:root[data-theme="light"] main .bg-zinc-900,
+:root[data-theme="light"] main .bg-zinc-900\/50,
+:root[data-theme="light"] main .bg-zinc-900\/40,
+:root[data-theme="light"] main .bg-zinc-900\/80,
+:root[data-theme="light"] main .bg-zinc-800,
+:root[data-theme="light"] .min-h-screen.bg-zinc-950,
+:root[data-theme="light"] .min-h-screen.bg-zinc-900 {
+  background: #ffffff !important;
+  color: #0a0a0a !important;
+}
+:root[data-theme="light"] main .border-zinc-800,
+:root[data-theme="light"] main .border-zinc-700,
+:root[data-theme="light"] main .border-zinc-700\/40 {
+  border-color: #e2e8f0 !important;
+}
+:root[data-theme="light"] main .bg-zinc-800,
+:root[data-theme="light"] main select.bg-zinc-800 {
+  background: #ffffff !important;
+  color: #0a0a0a !important;
+  border-color: #cfe0ec !important;
+}
+:root[data-theme="light"] main thead.bg-zinc-900\/80,
+:root[data-theme="light"] main thead.bg-zinc-900 {
+  background: #f0f9ff !important;
+}
+:root[data-theme="light"] main tbody tr.bg-zinc-900\/10 td,
+:root[data-theme="light"] main tbody tr[class*="bg-zinc"] td {
+  color: #0a0a0a !important;
+}
+
+/* ---------- POP-OUT TABS ---------- */
+html:not([data-fz-fx="flat"]) main [class*="inline-flex"][class*="rounded"] > button,
+html:not([data-fz-fx="flat"]) main .inline-flex.rounded-xl > button,
+html:not([data-fz-fx="flat"]) main .inline-flex.rounded-lg > button {
+  transition:
+    transform var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow var(--fx-speed) ease,
+    background var(--fx-speed) ease,
+    color 0.15s ease;
+}
+html:not([data-fz-fx="flat"]) main [class*="inline-flex"][class*="rounded"] > button:hover,
+html:not([data-fz-fx="flat"]) main .inline-flex.rounded-xl > button:hover,
+html:not([data-fz-fx="flat"]) main .inline-flex.rounded-lg > button:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 8px 16px -10px color-mix(in srgb, var(--steel) 45%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--steel) 30%, transparent);
+  z-index: 2;
+  /* no filter:brightness — softens glyph edges */
+}
+
+/* Active tab slab */
+html:not([data-fz-fx="flat"]) main button[class*="bg-amber"],
+html:not([data-fz-fx="flat"]) main button[class*="bg-cyan"],
+html:not([data-fz-fx="flat"]) main button[class*="bg-sky"],
+html:not([data-fz-fx="flat"]) main button[class*="bg-violet"] {
+  box-shadow: 0 10px 22px -10px color-mix(in srgb, var(--steel) 50%, transparent);
+}
+
+/* ---------- OPTION GRID (many choices — admin schemes, chips, tiles) ---------- */
+html:not([data-fz-fx="flat"]) main [style*="gridTemplateColumns"] > button,
+html:not([data-fz-fx="flat"]) main [class*="grid"] > button,
+html:not([data-fz-fx="flat"]) main [class*="grid-cols"] > button,
+html:not([data-fz-fx="flat"]) main [class*="grid-cols"] > a,
+html:not([data-fz-fx="flat"]) main [class*="grid"] > a {
+  transition:
+    transform var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow var(--fx-speed) ease,
+    border-color 0.18s ease,
+    background 0.18s ease;
+  transform-style: preserve-3d;
+}
+html:not([data-fz-fx="flat"]) main [style*="gridTemplateColumns"] > button:hover,
+html:not([data-fz-fx="flat"]) main [class*="grid"] > button:hover,
+html:not([data-fz-fx="flat"]) main [class*="grid-cols"] > button:hover,
+html:not([data-fz-fx="flat"]) main [class*="grid-cols"] > a:hover,
+html:not([data-fz-fx="flat"]) main [class*="grid"] > a:hover {
+  /* Lift only — scale/rotate softens glyph edges */
+  transform: translateY(-3px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 12px 24px -12px color-mix(in srgb, var(--steel) 40%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--steel) 35%, transparent);
+  border-color: color-mix(in srgb, var(--steel) 50%, var(--line)) !important;
+  z-index: 4;
+  background: #dbeafe !important;
+  color: #0a0a0a !important;
+  filter: none;
+}
+
+/* Select / dropdown options look like chips when wrapped */
+html:not([data-fz-fx="flat"]) main select {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+  font-weight: 600 !important;
+  font-size: 0.95rem !important;
+  min-height: 42px;
+}
+html:not([data-fz-fx="flat"]) main select:hover,
+html:not([data-fz-fx="flat"]) main select:focus {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px -12px color-mix(in srgb, var(--steel) 40%, transparent);
+  border-color: var(--steel) !important;
+}
+
+/* ---------- SIDEBAR NAV POP ---------- */
+[data-sidebar] button {
+  transition:
+    transform var(--fx-speed) cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow var(--fx-speed) ease,
+    background 0.18s ease,
+    border-color 0.18s ease !important;
+}
+[data-sidebar] button:hover {
+  transform: translateX(6px) scale(1.02);
+  box-shadow: 0 10px 22px -14px color-mix(in srgb, var(--steel) 50%, transparent);
+  background: color-mix(in srgb, var(--steel-soft) 90%, #fff) !important;
+}
+
+/* ---------- BUTTONS ---------- */
+html:not([data-fz-fx="flat"]) button:not(:disabled) {
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.18s ease;
+}
+html:not([data-fz-fx="flat"]) button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+html:not([data-fz-fx="flat"]) button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+html:not([data-fz-fx="flat"]) .bg-cyan-500,
+html:not([data-fz-fx="flat"]) .bg-cyan-600,
+html:not([data-fz-fx="flat"]) .bg-sky-600,
+html:not([data-fz-fx="flat"]) .bg-emerald-600 {
+  box-shadow: 0 10px 24px -8px color-mix(in srgb, var(--steel) 70%, transparent);
+  font-weight: 700 !important;
+}
+
+/* ---------- ENTRANCE (no filter:blur — that made tables look permanently soft) ---------- */
+@keyframes fx-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Only animate once on first paint via .fx-reveal — do NOT animate all main children
+   (React re-renders restarted blur/fade and left the UI looking foggy). */
+.fx-reveal {
+  animation: fx-rise 0.4s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Headings: solid black on white (gradient text looked faint / “blurred”) */
+:root[data-theme="light"] h1.fz-display,
+:root[data-fz-preset="ministry"] h1.fz-display,
+:root[data-fz-preset="aurora"] h1.fz-display,
+:root[data-fz-preset="ocean"] h1.fz-display {
+  background: none;
+  -webkit-text-fill-color: #0a0a0a;
+  color: #0a0a0a !important;
+}
+
+/* ---------- FAB ---------- */
+#theme-studio-fab {
+  animation: fx-fab 2.8s ease-in-out infinite;
+}
+@keyframes fx-fab {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--steel) 55%, transparent); }
+  50% { transform: scale(1.07); box-shadow: 0 0 0 14px transparent; }
+}
+
+/* Context bar / sidebar / headers: solid light-blue, no frost */
+[data-context-bar],
+[data-sidebar],
+.page-header,
+.fz-page-header {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  filter: none !important;
+  -webkit-filter: none !important;
+}
+
+/* Content must stay sharp — no filter on main (blur/brightness softens text) */
+main {
+  filter: none !important;
+  -webkit-filter: none !important;
+  color: #0a0a0a;
+  background-color: #ffffff;
+}
+
+/* Kill every leftover frosted glass / soft focus utility on light theme */
+:root[data-theme="light"] .backdrop-blur,
+:root[data-theme="light"] .backdrop-blur-sm,
+:root[data-theme="light"] .backdrop-blur-md,
+:root[data-theme="light"] .backdrop-blur-lg,
+:root[data-theme="light"] .backdrop-blur-xl,
+:root[data-theme="light"] .backdrop-blur-2xl,
+:root[data-theme="light"] .backdrop-blur-3xl,
+:root[data-fz-preset="ministry"] .backdrop-blur,
+:root[data-fz-preset="ministry"] .backdrop-blur-md,
+:root[data-fz-preset="ministry"] .backdrop-blur-xl,
+:root[data-fz-preset="aurora"] .backdrop-blur-md,
+:root[data-fz-preset="ocean"] .backdrop-blur-md {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Global: no CSS filter:blur on interactive chrome (orbs already disabled) */
+:root[data-theme="light"] [style*="backdrop-filter"],
+:root[data-fz-preset="ministry"] [style*="backdrop-filter"] {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+/* Force black readable ink on white — all muted/zinc utilities */
+:root[data-theme="light"] body,
+:root[data-theme="light"] .fz,
+:root[data-theme="light"] .ministry-shell,
+:root[data-fz-preset="ministry"] body,
+:root[data-fz-preset="ministry"] .fz,
+:root[data-fz-preset="aurora"] body,
+:root[data-fz-preset="ocean"] body {
+  color: #0a0a0a !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:root[data-theme="light"] p,
+:root[data-theme="light"] span,
+:root[data-theme="light"] label,
+:root[data-theme="light"] li,
+:root[data-theme="light"] td,
+:root[data-theme="light"] th,
+:root[data-theme="light"] h1,
+:root[data-theme="light"] h2,
+:root[data-theme="light"] h3,
+:root[data-theme="light"] h4,
+:root[data-theme="light"] h5,
+:root[data-theme="light"] h6,
+:root[data-theme="light"] a,
+:root[data-theme="light"] button,
+:root[data-theme="light"] input,
+:root[data-theme="light"] select,
+:root[data-theme="light"] textarea,
+:root[data-fz-preset="ministry"] p,
+:root[data-fz-preset="ministry"] span,
+:root[data-fz-preset="ministry"] label,
+:root[data-fz-preset="ministry"] li,
+:root[data-fz-preset="ministry"] td,
+:root[data-fz-preset="ministry"] th,
+:root[data-fz-preset="ministry"] h1,
+:root[data-fz-preset="ministry"] h2,
+:root[data-fz-preset="ministry"] h3,
+:root[data-fz-preset="ministry"] button {
+  color: #0a0a0a;
+}
+
+/* Placeholders still readable but slightly softer */
+:root[data-theme="light"] ::placeholder {
+  color: #52525b !important;
+  opacity: 1 !important;
+}
+
+/* Solid colored CTAs keep white text */
+:root[data-theme="light"] button.bg-cyan-500,
+:root[data-theme="light"] button.bg-cyan-600,
+:root[data-theme="light"] button.bg-sky-600,
+:root[data-theme="light"] button.bg-blue-600,
+:root[data-theme="light"] button.bg-emerald-600,
+:root[data-theme="light"] button.bg-emerald-500,
+:root[data-theme="light"] .bg-cyan-500,
+:root[data-theme="light"] .bg-cyan-600,
+:root[data-theme="light"] .bg-sky-600,
+:root[data-theme="light"] .bg-blue-600,
+:root[data-theme="light"] .bg-emerald-600 {
+  color: #ffffff !important;
+}
+:root[data-theme="light"] button.bg-cyan-500 *,
+:root[data-theme="light"] button.bg-cyan-600 *,
+:root[data-theme="light"] button.bg-sky-600 *,
+:root[data-theme="light"] button.bg-blue-600 *,
+:root[data-theme="light"] button.bg-emerald-600 * {
+  color: #ffffff !important;
+}
+
+/* ---------- 4 PREMIUM THEMES ---------- */
+html[data-fz-preset="ministry"] {
+  --bg: #ffffff;
+  --bg-tint-cool: transparent;
+  --bg-tint-warm: transparent;
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #eff6ff;
+  --ink: #0a0a0a;
+  --ink-2: #0a0a0a;
+  --ink-3: #0a0a0a;
+  --ink-4: #171717;
+  --steel: #2563eb;
+  --steel-2: #3b82f6;
+  --steel-deep: #1d4ed8;
+  --steel-soft: #dbeafe;
+  --verdigris: #059669;
+  --ember: #ea580c;
+  --molten: #dc2626;
+  --accent-violet: #7c3aed;
+  --line: #93c5fd;
+  --line-2: #bfdbfe;
+  --table-odd: #ffffff;
+  --table-even: #f0fdf4;
+  --table-hover: #ecfeff;
+  --table-head: #dbeafe;
+}
+html[data-fz-preset="aurora"] {
+  --bg: #faf5ff;
+  --bg-tint-cool: rgba(233, 213, 255, 0.5);
+  --bg-tint-warm: rgba(252, 231, 243, 0.45);
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #f5f3ff;
+  --ink: #0a0a0a;
+  --ink-2: #171717;
+  --ink-3: #3f3f46;
+  --steel: #7c3aed;
+  --steel-2: #8b5cf6;
+  --steel-deep: #6d28d9;
+  --steel-soft: #f5f3ff;
+  --verdigris: #0891b2;
+  --ember: #db2777;
+  --molten: #e11d48;
+  --accent-violet: #a855f7;
+  --line: #ede9fe;
+  --line-2: #ddd6fe;
+  --table-odd: #ffffff;
+  --table-even: #faf5ff;
+  --table-hover: #f5f3ff;
+  --table-head: #f5f3ff;
+}
+html[data-fz-preset="ocean"] {
+  --bg: #f0fdfa;
+  --bg-tint-cool: rgba(204, 251, 241, 0.55);
+  --bg-tint-warm: rgba(224, 242, 254, 0.45);
+  --panel: #ffffff;
+  --panel-2: #ffffff;
+  --panel-3: #ecfeff;
+  --ink: #0a0a0a;
+  --ink-2: #171717;
+  --ink-3: #3f3f46;
+  --steel: #0891b2;
+  --steel-2: #06b6d4;
+  --steel-deep: #0e7490;
+  --steel-soft: #ecfeff;
+  --verdigris: #10b981;
+  --ember: #f59e0b;
+  --molten: #ef4444;
+  --accent-violet: #6366f1;
+  --line: #ccfbf1;
+  --line-2: #99f6e4;
+  --table-odd: #ffffff;
+  --table-even: #ecfdf5;
+  --table-hover: #ecfeff;
+  --table-head: #ecfeff;
+}
+html[data-fz-preset="midnight"] {
+  color-scheme: dark;
+  --bg: #070b14;
+  --bg-tint-cool: rgba(56, 189, 248, 0.08);
+  --bg-tint-warm: rgba(167, 139, 250, 0.08);
+  --panel: #111827;
+  --panel-2: #0b1220;
+  --panel-3: #1e293b;
+  --ink: #f1f5f9;
+  --ink-2: #e2e8f0;
+  --ink-3: #94a3b8;
+  --ink-4: #64748b;
+  --steel: #38bdf8;
+  --steel-2: #7dd3fc;
+  --steel-deep: #0ea5e9;
+  --steel-soft: rgba(56, 189, 248, 0.16);
+  --verdigris: #34d399;
+  --ember: #fb923c;
+  --molten: #f87171;
+  --accent-violet: #a78bfa;
+  --line: rgba(148, 163, 184, 0.2);
+  --line-2: rgba(148, 163, 184, 0.35);
+  --shadow: 0 12px 40px -18px rgba(0, 0, 0, 0.75);
+}
+/* Midnight table zebra */
+html[data-fz-preset="midnight"] tbody tr:nth-child(even) td {
+  background: rgba(30, 41, 59, 0.65) !important;
+}
+html[data-fz-preset="midnight"] tbody tr:hover td {
+  background: rgba(56, 189, 248, 0.12) !important;
+}
+html[data-fz-preset="midnight"] thead th {
+  background: linear-gradient(180deg, #1e293b, #0f172a) !important;
+  color: #7dd3fc !important;
+}
+
+/* ---------- A11Y ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .fx-ambient { display: none; }
+}

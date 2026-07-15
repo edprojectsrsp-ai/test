@@ -226,4 +226,3 @@ async def quick_observation(
     )
     db.commit()
     return {"observation_id": row["observation_id"], "photo_urls": photo_urls}
-

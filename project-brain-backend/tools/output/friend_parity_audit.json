@@ -1,0 +1,215 @@
+{
+  "generated_at": "2026-07-13T17:00:31",
+  "source_database": "friend_brain",
+  "archive": {
+    "exact_tables": 23,
+    "expected_tables": 23,
+    "tables": {
+      "activities": {
+        "source_rows": 94,
+        "target_rows": 94,
+        "source_sha256": "a5f1e0b55148c018a76aa715c905c965619fe0e35c4f0064f642a3909daa7643",
+        "target_sha256": "a5f1e0b55148c018a76aa715c905c965619fe0e35c4f0064f642a3909daa7643",
+        "exact": true
+      },
+      "app_settings": {
+        "source_rows": 19,
+        "target_rows": 19,
+        "source_sha256": "d52232daeca3f8957cdeec985f60f40caa9d8b151f813d7acc7c09ae86d57d5d",
+        "target_sha256": "d52232daeca3f8957cdeec985f60f40caa9d8b151f813d7acc7c09ae86d57d5d",
+        "exact": true
+      },
+      "appendix2": {
+        "source_rows": 64,
+        "target_rows": 64,
+        "source_sha256": "3ed0f3b7c9b4ba59bd38a7cf8348aff2436d297467b31c7ec1b61512254ab95d",
+        "target_sha256": "3ed0f3b7c9b4ba59bd38a7cf8348aff2436d297467b31c7ec1b61512254ab95d",
+        "exact": true
+      },
+      "billing_schedule": {
+        "source_rows": 72,
+        "target_rows": 72,
+        "source_sha256": "efb017db620e843a8162f2c8032dcbbdae884b325c3e61332149617b03541024",
+        "target_sha256": "efb017db620e843a8162f2c8032dcbbdae884b325c3e61332149617b03541024",
+        "exact": true
+      },
+      "capex_plans": {
+        "source_rows": 1,
+        "target_rows": 1,
+        "source_sha256": "7eb1e88854f1c13b2e20b7dc1fb7a531de14cdef922a831e5ca7502f062c3255",
+        "target_sha256": "7eb1e88854f1c13b2e20b7dc1fb7a531de14cdef922a831e5ca7502f062c3255",
+        "exact": true
+      },
+      "capex_settings": {
+        "source_rows": 2,
+        "target_rows": 2,
+        "source_sha256": "9e507b32350d94db7de2455c32f03d9405d6655baf64f70c92072fbc41758555",
+        "target_sha256": "9e507b32350d94db7de2455c32f03d9405d6655baf64f70c92072fbc41758555",
+        "exact": true
+      },
+      "corporate_amr_master": {
+        "source_rows": 17,
+        "target_rows": 17,
+        "source_sha256": "b4b2cfb23cc110b017a24e736d5b4016b087cb47fa4a6c32c1f7cf43c3be2965",
+        "target_sha256": "b4b2cfb23cc110b017a24e736d5b4016b087cb47fa4a6c32c1f7cf43c3be2965",
+        "exact": true
+      },
+      "corporate_amr_tender_openings": {
+        "source_rows": 4,
+        "target_rows": 4,
+        "source_sha256": "078bedce9deb59885e659727ec414d5e74a1a931602b396a46c0fdb2c280fade",
+        "target_sha256": "078bedce9deb59885e659727ec414d5e74a1a931602b396a46c0fdb2c280fade",
+        "exact": true
+      },
+      "daily_actuals": {
+        "source_rows": 205,
+        "target_rows": 205,
+        "source_sha256": "59192e52ad09f9833c67158a21e3e5d6fb07f5ee36096a5fae799430c9982a9d",
+        "target_sha256": "59192e52ad09f9833c67158a21e3e5d6fb07f5ee36096a5fae799430c9982a9d",
+        "exact": true
+      },
+      "daily_progress": {
+        "source_rows": 14,
+        "target_rows": 14,
+        "source_sha256": "62b7bc55abae6207da3feda378d0aac7e0a451392d42ffba2021742efd3eafcf",
+        "target_sha256": "62b7bc55abae6207da3feda378d0aac7e0a451392d42ffba2021742efd3eafcf",
+        "exact": true
+      },
+      "daily_progress_manpower": {
+        "source_rows": 93,
+        "target_rows": 93,
+        "source_sha256": "ae8b57f318877c195897f7034a9cf5a798f24c74979f3c36ae0c871e9f4c3969",
+        "target_sha256": "ae8b57f318877c195897f7034a9cf5a798f24c74979f3c36ae0c871e9f4c3969",
+        "exact": true
+      },
+      "monthly_plans": {
+        "source_rows": 2538,
+        "target_rows": 2538,
+        "source_sha256": "c2c5e9ddfecdbfbcc60261a1627017ecf1e3b69c3ce991e08d5229cdaa703bb9",
+        "target_sha256": "c2c5e9ddfecdbfbcc60261a1627017ecf1e3b69c3ce991e08d5229cdaa703bb9",
+        "exact": true
+      },
+      "plans": {
+        "source_rows": 12,
+        "target_rows": 12,
+        "source_sha256": "6a5ae00ac2df7aac46af3762e3a36c5ee4071bc3db438e95cea2da011345cfb1",
+        "target_sha256": "6a5ae00ac2df7aac46af3762e3a36c5ee4071bc3db438e95cea2da011345cfb1",
+        "exact": true
+      },
+      "plant_level_amr_details": {
+        "source_rows": 62,
+        "target_rows": 62,
+        "source_sha256": "3a390a4c2d32a432adc6eac17195f87f5e7c82a5f354086555153314c7aa8fb7",
+        "target_sha256": "3a390a4c2d32a432adc6eac17195f87f5e7c82a5f354086555153314c7aa8fb7",
+        "exact": true
+      },
+      "plant_level_amr_edc_idc": {
+        "source_rows": 12,
+        "target_rows": 12,
+        "source_sha256": "87b9e8c7f92674d02b14987ea592dbde4327edd79f2a92c1a6f3a4dca52e6834",
+        "target_sha256": "87b9e8c7f92674d02b14987ea592dbde4327edd79f2a92c1a6f3a4dca52e6834",
+        "exact": true
+      },
+      "plant_level_amr_monthly": {
+        "source_rows": 768,
+        "target_rows": 768,
+        "source_sha256": "85a9cc1d0fd078c722ad1505c7ad5014acefac8296561bd5c569d399fe03e053",
+        "target_sha256": "85a9cc1d0fd078c722ad1505c7ad5014acefac8296561bd5c569d399fe03e053",
+        "exact": true
+      },
+      "project_approval_field_history": {
+        "source_rows": 35,
+        "target_rows": 35,
+        "source_sha256": "19e4b434c0425c31d89f002c53900e829df392a3b8a0dae82b8570d20d12943b",
+        "target_sha256": "19e4b434c0425c31d89f002c53900e829df392a3b8a0dae82b8570d20d12943b",
+        "exact": true
+      },
+      "project_approval_fields": {
+        "source_rows": 852,
+        "target_rows": 852,
+        "source_sha256": "a8b3401b82230ecded9bc9df96a46306dc6f9deeb5e9367c3404cd7622c863a6",
+        "target_sha256": "a8b3401b82230ecded9bc9df96a46306dc6f9deeb5e9367c3404cd7622c863a6",
+        "exact": true
+      },
+      "projects": {
+        "source_rows": 82,
+        "target_rows": 82,
+        "source_sha256": "81f65477c86acd8cd5c108000d9164550bb3294dbdce6429abf91721a8b234d4",
+        "target_sha256": "81f65477c86acd8cd5c108000d9164550bb3294dbdce6429abf91721a8b234d4",
+        "exact": true
+      },
+      "schedule_activities": {
+        "source_rows": 4481,
+        "target_rows": 4481,
+        "source_sha256": "681479cbe3fc97595904628343226491e2710b36660fe484f834a57627285126",
+        "target_sha256": "681479cbe3fc97595904628343226491e2710b36660fe484f834a57627285126",
+        "exact": true
+      },
+      "schedule_baselines": {
+        "source_rows": 1,
+        "target_rows": 1,
+        "source_sha256": "d97479ff3ee40f07e65bd6bd47f6c5aed90f4395ceb84a7148a39d749596d323",
+        "target_sha256": "d97479ff3ee40f07e65bd6bd47f6c5aed90f4395ceb84a7148a39d749596d323",
+        "exact": true
+      },
+      "schedule_imports": {
+        "source_rows": 3,
+        "target_rows": 3,
+        "source_sha256": "86532686c84f83d13724b76aae9075973e996004ece814fac1f53c9eb0c86f0f",
+        "target_sha256": "86532686c84f83d13724b76aae9075973e996004ece814fac1f53c9eb0c86f0f",
+        "exact": true
+      },
+      "tods": {
+        "source_rows": 0,
+        "target_rows": 0,
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "target_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "exact": true
+      }
+    },
+    "security_rows_intentionally_excluded": {
+      "app_users": 2,
+      "password_reset_otps": 3,
+      "role_project_permissions": 0,
+      "user_permissions": 21,
+      "user_preferences": 1,
+      "user_project_permissions": 0,
+      "user_projects": 0
+    }
+  },
+  "normalized": {
+    "schemes": 79,
+    "packages": 81,
+    "friend_plans": 12,
+    "friend_activities": 94,
+    "friend_monthly_plans": 2538,
+    "friend_daily_actuals": 328,
+    "appendix_revisions": 5,
+    "appendix_items": 89,
+    "billing_rows": 72
+  },
+  "sections": {
+    "dashboard": {
+      "source_figures": 1604,
+      "matched_figures": 1604
+    },
+    "mos_summary": {
+      "source_figures": 85,
+      "matched_figures": 85
+    },
+    "capex_detail": {
+      "source_figures": 267,
+      "matched_figures": 267
+    },
+    "pmc": {
+      "source_figures": 16,
+      "matched_figures": 16
+    }
+  },
+  "extended_payload": {
+    "friend_numeric_cells": 157294,
+    "note": "Activity/month drill-down payload is preserved in friend_archive; Project Brain exposes the matched dashboard, MoS, CAPEX and PMC figures above."
+  },
+  "mismatch_count": 0,
+  "mismatches": []
+}

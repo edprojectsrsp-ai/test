@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { Suspense } from "react";
 
-export default function ReportsDataTablePage() {
+function ReportsDataTableContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") ?? "";
 
@@ -17,5 +18,13 @@ export default function ReportsDataTablePage() {
         Back to Reports hub
       </Link>
     </div>
+  );
+}
+
+export default function ReportsDataTablePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-zinc-950 p-8 text-zinc-400">Loading data table…</div>}>
+      <ReportsDataTableContent />
+    </Suspense>
   );
 }

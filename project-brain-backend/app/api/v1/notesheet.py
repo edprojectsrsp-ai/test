@@ -195,6 +195,47 @@ def my_pending(user_id: int, db: Session = Depends(get_db)):
     return {"pending": [dict(r) for r in rows]}
 
 
+# Sprint 7 mailbox (must be registered BEFORE /{notesheet_id})
+_MAIL_SELECT = """
+    SELECT ns.notesheet_id, ns.notesheet_no, ns.subject, ns.category::text AS category,
+           ns.priority::text AS priority, ns.status::text AS status,
+           ns.scheme_id, sm.scheme_name, ns.package_id, p.package_name,
+           ns.cost_implication_cr, ns.time_implication_days,
+           ns.current_owner_id, u_own.full_name AS current_owner_name,
+           ns.initiated_by, u_init.full_name AS initiated_by_name,
+           ns.initiated_at, ns.last_action_at,
+           CURRENT_DATE - DATE(ns.last_action_at) AS days_pending,
+           ns.is_deleted
+    FROM notesheets ns
+    LEFT JOIN scheme_master sm ON sm.scheme_id = ns.scheme_id
+    LEFT JOIN packages p ON p.package_id = ns.package_id
+    LEFT JOIN users u_own ON u_own.user_id = ns.current_owner_id
+    LEFT JOIN users u_init ON u_init.user_id = ns.initiated_by
+"""
+
+
+@router.get("/mailbox/{box}")
+def mailbox(box: str, user_id: int, limit: int = 50, db: Session = Depends(get_db)):
+    """Inbox = pending with me · Outbox = initiated by me · Trash = soft-deleted."""
+    key = (box or "").strip().lower()
+    params: dict = {"uid": user_id, "limit": limit}
+    if key == "inbox":
+        where = "NOT ns.is_deleted AND ns.current_owner_id = :uid AND ns.status IN ('in_circulation','pending_approval','returned')"
+    elif key == "outbox":
+        where = "NOT ns.is_deleted AND ns.initiated_by = :uid"
+    elif key == "trash":
+        where = "ns.is_deleted AND (ns.initiated_by = :uid OR ns.current_owner_id = :uid)"
+    else:
+        raise HTTPException(400, "box must be inbox | outbox | trash")
+    rows = db.execute(text(f"""
+        {_MAIL_SELECT}
+        WHERE {where}
+        ORDER BY ns.last_action_at DESC NULLS LAST
+        LIMIT :limit
+    """), params).mappings().all()
+    return {"box": key, "notesheets": [dict(r) for r in rows]}
+
+
 @router.get("/{notesheet_id}")
 def get_notesheet(notesheet_id: int, db: Session = Depends(get_db)):
     """Full notesheet details: notes, track, attachments."""
@@ -449,3 +490,49 @@ def list_workflows(db: Session = Depends(get_db)):
         ORDER BY wt.template_name
     """)).mappings().all()
     return {"templates": [dict(r) for r in rows]}
+
+
+@router.post("/{notesheet_id}/trash")
+def trash_notesheet(notesheet_id: int, user_id: int, db: Session = Depends(get_db)):
+    """Soft-delete into Trash (friend parity)."""
+    ns = db.execute(text(
+        "SELECT notesheet_id, is_deleted FROM notesheets WHERE notesheet_id=:id"
+    ), {"id": notesheet_id}).mappings().first()
+    if not ns:
+        raise HTTPException(404, "Notesheet not found")
+    db.execute(text("""
+        UPDATE notesheets SET is_deleted = TRUE, last_action_at = CURRENT_TIMESTAMP
+        WHERE notesheet_id = :id
+    """), {"id": notesheet_id})
+    try:
+        db.execute(text("""
+            INSERT INTO notesheet_track(notesheet_id, action, actor_id, remarks)
+            VALUES (:nid, 'noted'::notesheet_action_enum, :uid, 'Moved to Trash')
+        """), {"nid": notesheet_id, "uid": user_id})
+    except Exception:
+        pass
+    db.commit()
+    return {"ok": True, "notesheet_id": notesheet_id, "status": "trashed"}
+
+
+@router.post("/{notesheet_id}/restore")
+def restore_notesheet(notesheet_id: int, user_id: int, db: Session = Depends(get_db)):
+    """Restore from Trash back to active mailbox."""
+    ns = db.execute(text(
+        "SELECT notesheet_id FROM notesheets WHERE notesheet_id=:id"
+    ), {"id": notesheet_id}).mappings().first()
+    if not ns:
+        raise HTTPException(404, "Notesheet not found")
+    db.execute(text("""
+        UPDATE notesheets SET is_deleted = FALSE, last_action_at = CURRENT_TIMESTAMP
+        WHERE notesheet_id = :id
+    """), {"id": notesheet_id})
+    try:
+        db.execute(text("""
+            INSERT INTO notesheet_track(notesheet_id, action, actor_id, remarks)
+            VALUES (:nid, 'noted'::notesheet_action_enum, :uid, 'Restored from Trash')
+        """), {"nid": notesheet_id, "uid": user_id})
+    except Exception:
+        pass
+    db.commit()
+    return {"ok": True, "notesheet_id": notesheet_id, "status": "restored"}

@@ -1,0 +1,228 @@
+{
+  "versions": [
+    {
+      "version": 1,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1783576355.4586792,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 2,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\voxdroid-enterprise.pt",
+      "note": "Enterprise PPE Model (VoxDroid)",
+      "metrics": {},
+      "ts": 1783578373.837591,
+      "zoo_key": "voxdroid-enterprise",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 3,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1783578509.4629574,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 4,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\voxdroid-enterprise.pt",
+      "note": "Enterprise PPE Model (VoxDroid)",
+      "metrics": {},
+      "ts": 1783587041.746869,
+      "zoo_key": "voxdroid-enterprise",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 5,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1783589415.6045473,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 6,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1783604493.4134705,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 7,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\nduka1999.onnx",
+      "note": "PPE YOLO11s (nduka1999)",
+      "metrics": {},
+      "ts": 1783663762.2865345,
+      "zoo_key": "nduka1999",
+      "classes": [
+        "hardhat",
+        "no-hardhat",
+        "vest",
+        "no-vest",
+        "person"
+      ]
+    },
+    {
+      "version": 8,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\hexmon-vyra.pt",
+      "note": "Vyra YOLOv8m (Hexmon)",
+      "metrics": {},
+      "ts": 1783682247.154418,
+      "zoo_key": "hexmon-vyra",
+      "classes": [
+        "Fall-Detected",
+        "Gloves",
+        "Goggles",
+        "Hardhat",
+        "Ladder",
+        "Mask",
+        "NO-Gloves",
+        "NO-Goggles",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest"
+      ]
+    },
+    {
+      "version": 9,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1783682376.2035248,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 10,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\voxdroid-enterprise.pt",
+      "note": "Enterprise PPE Model (VoxDroid)",
+      "metrics": {},
+      "ts": 1783683018.5990531,
+      "zoo_key": "voxdroid-enterprise",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 11,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\hexmon-vyra.pt",
+      "note": "Vyra YOLOv8m (Hexmon)",
+      "metrics": {},
+      "ts": 1783683368.6786888,
+      "zoo_key": "hexmon-vyra",
+      "classes": [
+        "Fall-Detected",
+        "Gloves",
+        "Goggles",
+        "Hardhat",
+        "Ladder",
+        "Mask",
+        "NO-Gloves",
+        "NO-Goggles",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest"
+      ]
+    }
+  ],
+  "active": 11
+}

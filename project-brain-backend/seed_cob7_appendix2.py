@@ -150,8 +150,8 @@ def seed(conn):
 
     print(f"  seeded revision {rev_id}: {len(cat_id)} categories, {len(APPENDIX2)} items, weight=100")
     print(f"  NEXT: approve it, then sync-to-plan:")
-    print(f"    curl.exe -X POST http://127.0.0.1:8002/api/v1/appendix2/{rev_id}/approve -H \"Content-Type: application/json\" -d \"{{}}\"")
-    print(f"    curl.exe -X POST http://127.0.0.1:8002/api/v1/appendix2/{rev_id}/sync-to-plan -H \"Content-Type: application/json\" -d \"{{}}\"")
+    print(f"    curl.exe -X POST http://127.0.0.1:8000/api/v1/appendix2/{rev_id}/approve -H \"Content-Type: application/json\" -d \"{{}}\"")
+    print(f"    curl.exe -X POST http://127.0.0.1:8000/api/v1/appendix2/{rev_id}/sync-to-plan -H \"Content-Type: application/json\" -d \"{{}}\"")
 
 
 def main():

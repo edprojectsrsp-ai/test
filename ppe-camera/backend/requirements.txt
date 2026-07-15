@@ -1,0 +1,34 @@
+# --- Core API + DB (verified in this environment) ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+greenlet>=3.0
+aiosqlite>=0.20
+pydantic>=2.7
+python-dotenv>=1.0
+httpx>=0.27            # test client
+python-multipart>=0.0.9  # video-upload (multipart/form-data) demo endpoint
+numpy>=1.26
+Pillow>=10.0
+
+# --- Postgres (production; swap PPE_DATABASE_URL) ---
+asyncpg>=0.29
+# psycopg[binary]>=3.1  # alternative driver
+
+# --- ML runtime (needs your machine: pulls torch + weights on first run) ---
+ultralytics>=8.3       # YOLO12/YOLO11 + ByteTrack/BoT-SORT, auto-downloads weights
+# torch is pulled in by ultralytics; for CUDA install the matching wheel:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu121
+# Non-headless OpenCV is required for local USB/webcam capture + video upload.
+opencv-python==4.12.0.88
+
+# --- Ingestion (real cameras / screen fallback / ONVIF) ---
+vidgear>=0.3.3         # CamGear (RTSP) + ScreenGear (fallback)
+# onvif-zeep>=0.2.12   # optional: ONVIF stream-URI discovery (source_kind="onvif")
+
+# --- Optional: dataset acquisition (public datasets registry) ---
+# roboflow>=1.1         # Roboflow Universe datasets (needs ROBOFLOW_API_KEY)
+# kaggle>=1.6           # Kaggle datasets e.g. SH17 (needs KAGGLE_USERNAME/KEY)
+
+# --- Alerts (optional channels; wire as needed) ---
+# httpx already present -> used for WhatsApp Cloud API / webhooks

@@ -113,12 +113,9 @@ def list_messages(conversation_id: int, limit: int = 200):
 async def chat(payload: ChatIn):
     """Non-streaming response. Returns {reply, provider, model, ...}."""
     provider = _normalize_provider(payload.provider)
-    # Apply model_override for providers like openrouter that support free model selection
-    if provider and payload.model_override:
-        from app.providers.router import get_router as _get_router
-        r = _get_router()
-        if provider in r.providers and hasattr(r.providers[provider], "model_id"):
-            r.providers[provider].model_id = payload.model_override
+    # model_override is now passed per-request (provider clone inside the
+    # router) instead of mutating the shared singleton — the old approach
+    # leaked one user's model choice into every concurrent request.
     resp = await chat_once(
         conversation_id=payload.conversation_id,
         user_id=payload.user_id,
@@ -127,6 +124,7 @@ async def chat(payload: ChatIn):
         package_id=payload.package_id,
         forced_provider=provider,
         strict_forced=payload.strict_provider,
+        model_override=payload.model_override if provider else None,
     )
     return resp
 
@@ -145,6 +143,7 @@ async def chat_stream_endpoint(payload: ChatIn):
             package_id=payload.package_id,
             forced_provider=provider,
             strict_forced=payload.strict_provider,
+            model_override=payload.model_override if provider else None,
         ):
             yield json.dumps(chunk) + "\n"
 
@@ -220,4 +219,3 @@ def health():
         "default_provider": r.get_default_provider(),
         "tools_registered": len(__import__("app.tools.db_tools", fromlist=["TOOL_REGISTRY"]).TOOL_REGISTRY),
     }
-

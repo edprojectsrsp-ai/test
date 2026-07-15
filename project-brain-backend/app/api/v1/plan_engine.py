@@ -43,6 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from app.core.database import get_db
+from app.services.flow_balance import validate_physical_plan
 
 router = APIRouter()
 
@@ -77,6 +78,55 @@ def _month_range(start: date, end: date):
 
 def _status_of(is_locked):
     return "locked" if is_locked else "draft"
+
+
+def _build_balance_payload(db: Session, plan_id: int, overrides: Optional[dict[tuple[int, str], float]] = None):
+    header = db.execute(text("""
+        SELECT plan_id, plan_start_date, extra_fields
+        FROM progress_plans
+        WHERE plan_id = :pid
+    """), {"pid": plan_id}).mappings().first()
+    if not header:
+        raise HTTPException(status_code=404, detail="Plan not found")
+
+    effective_month = (header["extra_fields"] or {}).get("effective_month") or _date(header["plan_start_date"])
+    activities = db.execute(text("""
+        SELECT activity_id, scope_qty, actuals_till_last_fy,
+               planned_finish_date, expected_finish_date, weight_pct
+        FROM plan_activities
+        WHERE plan_id = :pid AND is_deleted = FALSE
+        ORDER BY sort_order, activity_id
+    """), {"pid": plan_id}).mappings().all()
+
+    planned_by_activity: dict[int, dict[str, float]] = {}
+    existing_cells = db.execute(text("""
+        SELECT activity_id, month_date, planned_qty
+        FROM monthly_plan_entries
+        WHERE activity_id IN (
+            SELECT activity_id FROM plan_activities
+            WHERE plan_id = :pid AND is_deleted = FALSE
+        )
+          AND row_type = 'plan'
+    """), {"pid": plan_id}).mappings().all()
+    for row in existing_cells:
+        planned_by_activity.setdefault(int(row["activity_id"]), {})[_date(row["month_date"])] = float(row["planned_qty"] or 0)
+
+    for (activity_id, month_key), qty in (overrides or {}).items():
+        planned_by_activity.setdefault(int(activity_id), {})[month_key[:7]] = float(qty or 0)
+
+    return [
+        {
+            "activity_id": int(row["activity_id"]),
+            "scope_qty": float(row["scope_qty"] or 0),
+            "actuals_till_last_fy": float(row["actuals_till_last_fy"] or 0),
+            "planned_cells": planned_by_activity.get(int(row["activity_id"]), {}),
+            "effective_month": effective_month,
+            "scheduled_finish": row["planned_finish_date"],
+            "expected_finish": row["expected_finish_date"],
+            "weight_pct": float(row["weight_pct"] or 0),
+        }
+        for row in activities
+    ]
 
 
 # ============================================================================
@@ -269,7 +319,91 @@ def get_plan_full(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 4) POST /plans/{plan_id}/activities
+# 4) PUT /plans/{plan_id}/activities
+# ============================================================================
+@router.put("/plans/{plan_id}/activities")
+def sync_activities(plan_id: int, data: dict, db: Session = Depends(get_db)):
+    try:
+        plan = db.execute(text("""
+            SELECT is_locked FROM progress_plans WHERE plan_id = :pid
+        """), {"pid": plan_id}).first()
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        if plan.is_locked:
+            raise HTTPException(status_code=403, detail="Plan is locked. Create a new version.")
+
+        activities = data.get("activities", [])
+        if not isinstance(activities, list):
+            raise HTTPException(status_code=400, detail="`activities` must be a list")
+
+        existing_rows = db.execute(text("""
+            SELECT activity_id
+            FROM plan_activities
+            WHERE plan_id = :pid AND is_deleted = FALSE
+        """), {"pid": plan_id}).fetchall()
+        existing_ids = {int(r.activity_id) for r in existing_rows}
+        seen_existing: set[int] = set()
+        next_order = 10
+
+        for item in activities:
+            activity_id = item.get("plan_activity_id") or item.get("activity_id")
+            payload = {
+                "name": item.get("activity_name", "New Activity"),
+                "qty": float(item.get("scope_qty") or 0),
+                "wt": float(item.get("weightage", item.get("weight_pct", 0)) or 0),
+                "start": item.get("contract_start_month") or item.get("planned_start_date") or item.get("activity_start_date"),
+                "finish": item.get("expected_completion_month") or item.get("planned_finish_date") or item.get("activity_finish_date"),
+                "sort_order": next_order,
+            }
+
+            if activity_id and int(activity_id) in existing_ids:
+                db.execute(text("""
+                    UPDATE plan_activities
+                    SET activity_name = :name,
+                        scope_qty = :qty,
+                        weight_pct = :wt,
+                        planned_start_date = :start,
+                        planned_finish_date = :finish,
+                        sort_order = :sort_order,
+                        is_deleted = FALSE,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE activity_id = :aid
+                """), {"aid": int(activity_id), **payload})
+                seen_existing.add(int(activity_id))
+            else:
+                db.execute(text("""
+                    INSERT INTO plan_activities (
+                        plan_id, activity_name, scope_qty, weight_pct, actuals_till_last_fy,
+                        planned_start_date, planned_finish_date, sort_order, is_deleted,
+                        extra_fields, created_at, updated_at
+                    ) VALUES (
+                        :pid, :name, :qty, :wt, 0,
+                        :start, :finish, :sort_order, FALSE,
+                        '{}'::jsonb, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+                    )
+                """), {"pid": plan_id, **payload})
+
+            next_order += 10
+
+        missing_ids = existing_ids - seen_existing
+        if missing_ids:
+            db.execute(text(f"""
+                UPDATE plan_activities
+                SET is_deleted = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE activity_id IN ({",".join(str(i) for i in sorted(missing_ids))})
+            """))
+
+        db.commit()
+        return {"ok": True, "saved": len(activities), "deleted": len(missing_ids)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Sync activities failed: {e}")
+
+
+# ============================================================================
+# 5) POST /plans/{plan_id}/activities
 # ============================================================================
 @router.post("/plans/{plan_id}/activities")
 def add_activity(plan_id: int, data: dict, db: Session = Depends(get_db)):
@@ -316,7 +450,7 @@ def add_activity(plan_id: int, data: dict, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 5) PUT /activities/{activity_id}
+# 6) PUT /activities/{activity_id}
 # ============================================================================
 @router.put("/activities/{activity_id}")
 def update_activity(activity_id: int, data: dict, db: Session = Depends(get_db)):
@@ -360,7 +494,7 @@ def update_activity(activity_id: int, data: dict, db: Session = Depends(get_db))
 
 
 # ============================================================================
-# 6) DELETE /activities/{activity_id}  (soft delete)
+# 7) DELETE /activities/{activity_id}  (soft delete)
 # ============================================================================
 @router.delete("/activities/{activity_id}")
 def delete_activity(activity_id: int, db: Session = Depends(get_db)):
@@ -384,7 +518,7 @@ def delete_activity(activity_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 7) PUT /plans/{plan_id}/cells  → upsert monthly_plan_entries (row_type='plan')
+# 8) PUT /plans/{plan_id}/cells  → upsert monthly_plan_entries (row_type='plan')
 # ============================================================================
 @router.put("/plans/{plan_id}/cells")
 def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
@@ -399,6 +533,18 @@ def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
         cells = data.get("cells", [])
         if not isinstance(cells, list):
             raise HTTPException(status_code=400, detail="`cells` must be a list")
+
+        overrides: dict[tuple[int, str], float] = {}
+        for c in cells:
+            aid = c.get("plan_activity_id") or c.get("activity_id")
+            month = _first_of_month(c.get("plan_month") or c.get("month_date"))
+            if not aid or month is None:
+                raise HTTPException(status_code=400, detail="Each cell needs activity and month")
+            overrides[(int(aid), month.isoformat())] = float(c.get("planned_qty") or 0)
+
+        validation = validate_physical_plan(_build_balance_payload(db, plan_id, overrides))
+        if not validation["ok"]:
+            raise HTTPException(status_code=422, detail={"detail": "Balance check failed", "errors": validation["errors"]})
 
         upsert = text("""
             INSERT INTO monthly_plan_entries (activity_id, month_date, planned_qty, row_type, created_at, updated_at)
@@ -423,7 +569,7 @@ def update_cells(plan_id: int, data: dict, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 8) POST /plans/{plan_id}/lock
+# 9) POST /plans/{plan_id}/lock
 # ============================================================================
 @router.post("/plans/{plan_id}/lock")
 def lock_plan(plan_id: int, db: Session = Depends(get_db)):
@@ -433,6 +579,12 @@ def lock_plan(plan_id: int, db: Session = Depends(get_db)):
             {"pid": plan_id}).scalar()
         if abs(float(total_wt or 0) - 100.0) > 0.01:
             raise HTTPException(status_code=400, detail=f"Cannot lock: weightages sum to {total_wt}, not 100")
+
+        validation = validate_physical_plan(_build_balance_payload(db, plan_id))
+        if not validation["ok"]:
+            raise HTTPException(status_code=400, detail={"detail": "Balance check failed", "errors": validation["errors"]})
+        if not all(balance.balanced for balance in validation["balances"]):
+            raise HTTPException(status_code=400, detail="Cannot lock: every activity must be fully balanced to scope")
 
         db.execute(text("""
             UPDATE progress_plans SET is_locked = TRUE, updated_at = CURRENT_TIMESTAMP
@@ -449,7 +601,7 @@ def lock_plan(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 9) POST /plans/{plan_id}/unlock
+# 10) POST /plans/{plan_id}/unlock
 # ============================================================================
 @router.post("/plans/{plan_id}/unlock")
 def unlock_plan(plan_id: int, db: Session = Depends(get_db)):
@@ -466,7 +618,7 @@ def unlock_plan(plan_id: int, db: Session = Depends(get_db)):
 
 
 # ============================================================================
-# 10) POST /activities/{activity_id}/daily-actual
+# 11) POST /activities/{activity_id}/daily-actual
 # ============================================================================
 @router.post("/activities/{activity_id}/daily-actual")
 def add_daily_actual(activity_id: int, data: dict, db: Session = Depends(get_db)):
@@ -498,7 +650,7 @@ def add_daily_actual(activity_id: int, data: dict, db: Session = Depends(get_db)
 
 
 # ============================================================================
-# 11) GET /packages/{package_id}/progress  → calculation engine
+# 12) GET /packages/{package_id}/progress  → calculation engine
 # ============================================================================
 @router.get("/packages/{package_id}/progress")
 def get_package_progress(package_id: int, as_of: Optional[str] = None, db: Session = Depends(get_db)):
@@ -561,7 +713,7 @@ def get_package_progress(package_id: int, as_of: Optional[str] = None, db: Sessi
 
 
 # ============================================================================
-# 12) GET /schemes/{scheme_id}/progress  → scheme rollup
+# 13) GET /schemes/{scheme_id}/progress  → scheme rollup
 # ============================================================================
 @router.get("/schemes/{scheme_id}/progress")
 def get_scheme_progress(scheme_id: int, as_of: Optional[str] = None, db: Session = Depends(get_db)):
@@ -614,7 +766,7 @@ def get_scheme_progress(scheme_id: int, as_of: Optional[str] = None, db: Session
 
 
 # ============================================================================
-# 13) POST /plans/{plan_id}/auto-distribute
+# 14) POST /plans/{plan_id}/auto-distribute
 #     Distribute scope_qty evenly across planned months per activity.
 #     Uses commencement_months/completion_months from appendix2_items if linked,
 #     otherwise spreads evenly across all plan months.

@@ -13,7 +13,7 @@ import {
   TrendingDown, TrendingUp,
 } from "lucide-react";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
 type KPIs = {
   total_schemes: number; ongoing: number; under_tendering: number; closed: number;
@@ -60,7 +60,6 @@ export default function CorporateAMRPage() {
   const [loading, setLoading]     = useState(false);
   const [search, setSearch]       = useState("");
   const [statusFilter, setStatus] = useState("all");
-  const [typeFilter, setType]     = useState("all");
 
   const load = () => {
     setLoading(true);
@@ -70,8 +69,12 @@ export default function CorporateAMRPage() {
     ])
       .then(([k, r]) => {
         setKpis(k);
-        setRows(Array.isArray(r) ? r : []);
-        setFiltered(Array.isArray(r) ? r : []);
+        // Corporate AMR report covers corporate schemes only.
+        const corp = (Array.isArray(r) ? r : []).filter(
+          (row: SchemeRow) => row.scheme_type === "corporate",
+        );
+        setRows(corp);
+        setFiltered(corp);
       })
       .catch(() => {})
       .finally(() => setLoading(false));
@@ -84,9 +87,8 @@ export default function CorporateAMRPage() {
     let f = rows;
     if (search) f = f.filter(r => r.scheme_name.toLowerCase().includes(search.toLowerCase()));
     if (statusFilter !== "all") f = f.filter(r => r.current_status === statusFilter);
-    if (typeFilter   !== "all") f = f.filter(r => r.scheme_type   === typeFilter);
     setFiltered(f);
-  }, [search, statusFilter, typeFilter, rows]);
+  }, [search, statusFilter, rows]);
 
   const fmt = (v: number | null | undefined) =>
     v != null ? `₹ ${Number(v).toFixed(1)} Cr` : "—";
@@ -156,16 +158,7 @@ export default function CorporateAMRPage() {
           <option value="under_tendering">Under Tendering</option>
           <option value="closed">Closed</option>
         </select>
-        <select
-          value={typeFilter}
-          onChange={e => setType(e.target.value)}
-          className="rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm outline-none focus:border-sky-400"
-        >
-          <option value="all">All types</option>
-          <option value="plant">Plant</option>
-          <option value="corporate">Corporate</option>
-        </select>
-        <span className="ml-2 text-sm text-zinc-500">{filtered.length} schemes</span>
+        <span className="ml-2 text-sm text-zinc-500">{filtered.length} corporate schemes</span>
       </div>
 
       {/* AMR Grid */}

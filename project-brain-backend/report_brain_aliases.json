@@ -1,0 +1,78 @@
+{
+ "projects": {
+  "COB7-PKG2": [
+   "battery 7a",
+   "battery 7b",
+   "battery proper",
+   "battery-7a",
+   "cob 7 p2",
+   "cob#7 main",
+   "cob#7 p2",
+   "cob#7 pkg-2",
+   "cob#7-battery",
+   "cob7 ramp",
+   "eb-7",
+   "end bench",
+   "oven machine",
+   "piling work",
+   "silo:",
+   "stamp charge"
+  ],
+  "COB7-PKG4": [
+   "bpp",
+   "by product",
+   "by-product",
+   "cob#7 -- by product",
+   "cob#7 pkg-4"
+  ],
+  "OXY-1000": [
+   "1000 tpd oxygen",
+   "1000tpd oxygen",
+   "oxygen  plant",
+   "oxygen plant"
+  ],
+  "BF5-STOVE4": [
+   "4th stove",
+   "bf 5",
+   "bf#5",
+   "bf-5",
+   "stove shell"
+  ],
+  "PELLET-2MTPA": [
+   "2.0 mtpa pellet",
+   "2.0mtpa pellet",
+   "pellet plant project"
+  ],
+  "MICROPELLET": [
+   "micro pellet",
+   "micro-pellet"
+  ],
+  "TS2": [
+   "treatment system 2",
+   "treatment system-2",
+   "ts 2",
+   "ts-2"
+  ],
+  "NPTL": [
+   "new product testing",
+   "nptl",
+   "product testing laboratory"
+  ],
+  "STP30": [
+   "30 mld stp",
+   "stp"
+  ],
+  "BWALL": [
+   "boundary wall"
+  ]
+ },
+ "senders": {
+  "K K Patra GM Proj": "COB7-PKG2",
+  "Bhabani Dash": "OXY-1000",
+  "Mangal Das Tirkey": "BF5-STOVE4",
+  "Subrat Rout": "COB7-PKG2",
+  "Prasanth Kumar Pedapudi": "COB7-PKG2",
+  "Kartik Xalxo": "OXY-1000"
+ },
+ "activity_map": {}
+}

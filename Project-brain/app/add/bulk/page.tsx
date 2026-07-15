@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useRef } from "react";
 import { UploadCloud, FileSpreadsheet, CheckCircle, AlertTriangle, Download, ArrowLeft, X } from "lucide-react";
@@ -14,7 +14,7 @@ export default function BulkUploadPage() {
 
   const handleDownload = async () => {
     try {
-      const res = await fetch("http://localhost:8002/api/v1/schemes/template");
+      const res = await fetch("http://localhost:8000/api/v1/schemes/template");
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -41,7 +41,7 @@ export default function BulkUploadPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8002/api/v1/schemes/bulk-upload", {
+      const res = await fetch("http://localhost:8000/api/v1/schemes/bulk-upload", {
         method: "POST",
         body: formData,
       });
@@ -60,69 +60,69 @@ export default function BulkUploadPage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 p-8 text-white">
+    <div className="min-h-screen p-8 text-[var(--ink)]">
       <div className="max-w-4xl mx-auto">
-        
+
         {/* Navigation */}
         <div className="flex justify-between items-center mb-12">
           <div>
-            <h1 className="text-4xl font-black text-white">Bulk <span className="text-emerald-400">Import</span></h1>
-            <p className="text-zinc-400 mt-2">Initialize multiple schemes using the stylized Step-1 template.</p>
+            <h1 className="text-4xl font-black text-[var(--ink)]">Bulk <span className="text-[var(--verdigris)]">Import</span></h1>
+            <p className="mt-2 text-[var(--ink-3)]">Initialize multiple schemes using the stylized Step-1 template.</p>
           </div>
           <Link href="/add">
-            <button className="flex items-center gap-2 px-4 py-2 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400 hover:text-white transition-all">
+            <button className="flex items-center gap-2 rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-2 text-[var(--ink-3)] transition-all hover:bg-[var(--panel-2)] hover:text-[var(--ink)]">
               <ArrowLeft size={18} /> Manual Entry
             </button>
           </Link>
         </div>
 
-        <div className="bg-zinc-900/50 border border-zinc-800 rounded-3xl p-8 backdrop-blur-xl shadow-2xl">
-          
+        <div className="rounded-3xl border border-[var(--line)] bg-white p-8 shadow-[var(--shadow-lg)]">
+
           {/* Instructions Header */}
-          <div className="flex justify-between items-start mb-8 pb-8 border-b border-zinc-800">
+          <div className="mb-8 flex items-start justify-between border-b border-[var(--line)] pb-8">
             <div className="space-y-2">
-              <h3 className="font-bold text-lg text-zinc-200">Mandatory Registration Fields:</h3>
+              <h3 className="text-lg font-bold text-[var(--ink)]">Mandatory Registration Fields:</h3>
               <div className="flex gap-4 text-xs font-mono">
-                <span className="px-2 py-1 bg-zinc-800 rounded text-cyan-400 border border-cyan-900/50">Scheme Name</span>
-                <span className="px-2 py-1 bg-zinc-800 rounded text-cyan-400 border border-cyan-900/50">Scheme Type</span>
-                <span className="px-2 py-1 bg-zinc-800 rounded text-cyan-400 border border-cyan-900/50">Estimated Cost</span>
-                <span className="px-2 py-1 bg-zinc-800 rounded text-cyan-400 border border-cyan-900/50">Current Status</span>
+                <span className="rounded border border-[var(--steel-dim)] bg-[var(--steel-soft)] px-2 py-1 text-[var(--steel)]">Scheme Name</span>
+                <span className="rounded border border-[var(--steel-dim)] bg-[var(--steel-soft)] px-2 py-1 text-[var(--steel)]">Scheme Type</span>
+                <span className="rounded border border-[var(--steel-dim)] bg-[var(--steel-soft)] px-2 py-1 text-[var(--steel)]">Estimated Cost</span>
+                <span className="rounded border border-[var(--steel-dim)] bg-[var(--steel-soft)] px-2 py-1 text-[var(--steel)]">Current Status</span>
               </div>
             </div>
-            <button onClick={handleDownload} className="flex items-center gap-2 px-5 py-3 bg-emerald-600 hover:bg-emerald-500 rounded-2xl font-bold text-white shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all">
+            <button onClick={handleDownload} className="flex items-center gap-2 rounded-2xl border border-[var(--verdigris)] bg-[var(--verdigris)] px-5 py-3 font-bold text-white shadow-[var(--shadow)] transition-all hover:brightness-110">
               <Download size={20} /> Download Template
             </button>
           </div>
 
           {/* Drag & Drop Area */}
-          <div 
+          <div
             onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
             onDragLeave={() => setIsDragging(false)}
             onDrop={onDrop}
             onClick={() => fileInputRef.current?.click()}
             className={`h-64 border-2 border-dashed rounded-3xl flex flex-col items-center justify-center cursor-pointer transition-all duration-300 ${
-              isDragging ? "border-emerald-400 bg-emerald-900/10" : "border-zinc-700 bg-zinc-950/50 hover:border-zinc-500"
+              isDragging ? "border-[var(--verdigris)] bg-[var(--verdigris-soft)]" : "border-[var(--line-2)] bg-[var(--panel-2)] hover:border-[var(--steel-dim)]"
             }`}
           >
             <input type="file" ref={fileInputRef} className="hidden" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-            
+
             {file ? (
               <div className="text-center">
-                <FileSpreadsheet size={50} className="text-emerald-400 mx-auto mb-4" />
-                <p className="font-bold text-emerald-400">{file.name}</p>
-                <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="text-xs text-zinc-500 mt-2 hover:text-red-400 flex items-center gap-1 mx-auto"><X size={12}/> Remove</button>
+                <FileSpreadsheet size={50} className="mx-auto mb-4 text-[var(--verdigris)]" />
+                <p className="font-bold text-[var(--verdigris)]">{file.name}</p>
+                <button onClick={(e) => { e.stopPropagation(); setFile(null); }} className="mx-auto mt-2 flex items-center gap-1 text-xs text-[var(--ink-4)] hover:text-[var(--molten)]"><X size={12}/> Remove</button>
               </div>
             ) : (
               <div className="text-center group">
-                <UploadCloud size={50} className={`mx-auto mb-4 transition-transform group-hover:scale-110 ${isDragging ? 'text-emerald-400' : 'text-zinc-600'}`} />
-                <p className="text-zinc-400">Drag your completed template here or <span className="text-emerald-400 underline">browse</span></p>
+                <UploadCloud size={50} className={`mx-auto mb-4 transition-transform group-hover:scale-110 ${isDragging ? 'text-[var(--verdigris)]' : 'text-[var(--ink-4)]'}`} />
+                <p className="text-[var(--ink-3)]">Drag your completed template here or <span className="text-[var(--verdigris)] underline">browse</span></p>
               </div>
             )}
           </div>
 
           {/* Status Message */}
           {status.message && (
-            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`mt-6 p-4 rounded-2xl flex items-center gap-3 border ${status.type === "success" ? "bg-emerald-900/20 border-emerald-800 text-emerald-400" : "bg-red-900/20 border-red-800 text-red-400"}`}>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`mt-6 flex items-center gap-3 rounded-2xl border p-4 ${status.type === "success" ? "border-[var(--verdigris)] bg-[var(--verdigris-soft)] text-[var(--verdigris)]" : "border-[var(--molten)] bg-[var(--molten-soft)] text-[var(--molten)]"}`}>
               {status.type === "success" ? <CheckCircle size={20} /> : <AlertTriangle size={20} />}
               <p className="text-sm font-medium">{status.message}</p>
             </motion.div>
@@ -130,10 +130,10 @@ export default function BulkUploadPage() {
 
           {/* Upload Action */}
           <div className="mt-8 flex justify-end">
-            <button 
-              onClick={handleUpload} 
-              disabled={!file || isUploading} 
-              className={`px-10 py-4 rounded-2xl font-black transition-all ${!file || isUploading ? "bg-zinc-800 text-zinc-600 cursor-not-allowed" : "bg-white text-black hover:bg-emerald-400 hover:scale-105"}`}
+            <button
+              onClick={handleUpload}
+              disabled={!file || isUploading}
+              className={`rounded-2xl px-10 py-4 font-black transition-all ${!file || isUploading ? "cursor-not-allowed border border-[var(--line)] bg-[var(--panel-3)] text-[var(--ink-4)]" : "border border-[var(--steel-dim)] bg-[var(--steel)] text-white hover:scale-105 hover:bg-[var(--steel-2)]"}`}
             >
               {isUploading ? "PROCESSING..." : "IMPORT PROJECTS"}
             </button>

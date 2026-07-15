@@ -1,7 +1,7 @@
-﻿"use client";
+"use client";
 
 /**
- * Plant Level AMR Dashboard â€” Sprint 17
+ * Plant Level AMR Dashboard — Sprint 17
  *
  * Read-only analytics over PLANT-type packages. Shows:
  *   - KPI cards (total projects, gross cost, overall progress, capex)
@@ -20,7 +20,7 @@ import {
 import { motion } from "framer-motion";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
-const API = "http://localhost:8002/api/v1";
+const API = "http://localhost:8000/api/v1";
 
 type Project = {
   package_id: number; scheme_id: number; scheme_name: string; amr_no: string | null;
@@ -78,7 +78,28 @@ export default function PlantAmrDashboard() {
     finally { setLoading(false); }
   }, [fy]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+
+    const run = async () => {
+      setLoading(true);
+      setErr(null);
+      try {
+        const r = await fetch(`${API}/plant-amr/dashboard?financial_year=${encodeURIComponent(fy)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+        if (active) setData(await r.json());
+      } catch (e: any) {
+        if (active) setErr(e.message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    void run();
+    return () => {
+      active = false;
+    };
+  }, [fy]);
 
   const projects = data?.projects ?? [];
   const filtered = statusFilter ? projects.filter((p) => p.status === statusFilter) : projects;
@@ -96,7 +117,7 @@ export default function PlantAmrDashboard() {
             <Factory className="text-cyan-400" /> Plant Level AMR
           </h1>
           <p className="text-zinc-400 mt-1 text-sm">
-            Plant-type packages (&lt; â‚¹30 Cr) Â· delay analytics Â· monthly capex
+            Plant-type packages (&lt; ₹30 Cr) · delay analytics · monthly capex
           </p>
         </div>
         <div className="flex items-end gap-3">
@@ -120,7 +141,7 @@ export default function PlantAmrDashboard() {
         </div>
       )}
 
-      {!data && loading && <div className="animate-pulse text-cyan-400">Loading plant AMR dashboardâ€¦</div>}
+      {!data && loading && <div className="animate-pulse text-cyan-400">Loading plant AMR dashboard…</div>}
 
       {data && (
         <>
@@ -129,12 +150,12 @@ export default function PlantAmrDashboard() {
             <KpiCard icon={<Factory size={18} />} label="Total Projects"
                      value={data.summary.total_projects.toString()} accent="cyan" />
             <KpiCard icon={<IndianRupee size={18} />} label="Total Gross Cost"
-                     value={`â‚¹${data.summary.total_gross_cost_cr.toFixed(1)} Cr`} accent="emerald" />
+                     value={`₹${data.summary.total_gross_cost_cr.toFixed(1)} Cr`} accent="emerald" />
             <KpiCard icon={<TrendingUp size={18} />} label="Overall Progress"
                      value={`${data.summary.overall_progress_percent}%`} accent="indigo" />
             <KpiCard icon={<IndianRupee size={18} />} label="Actual Capex (FY)"
-                     value={`â‚¹${data.summary.cumulative_actual_cr.toFixed(1)} Cr`}
-                     sub={`BE â‚¹${data.summary.cumulative_be_cr.toFixed(1)} Â· RE â‚¹${data.summary.cumulative_re_cr.toFixed(1)}`}
+                     value={`₹${data.summary.cumulative_actual_cr.toFixed(1)} Cr`}
+                     sub={`BE ₹${data.summary.cumulative_be_cr.toFixed(1)} · RE ₹${data.summary.cumulative_re_cr.toFixed(1)}`}
                      accent="amber" />
           </div>
 
@@ -148,7 +169,7 @@ export default function PlantAmrDashboard() {
                     <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={45} outerRadius={75} paddingAngle={2}>
                       {pieData.map((e) => <Cell key={e.name} fill={STATUS_COLORS[e.name] || "#71717a"} />)}
                     </Pie>
-                    <Tooltip contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, fontSize: 12 }} />
+                    <Tooltip contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 12, color: "var(--ink)" }} />
                   </PieChart>
                 </ResponsiveContainer>
               </div>
@@ -170,7 +191,7 @@ export default function PlantAmrDashboard() {
                       </div>
                       <div className="text-right">
                         <div className="text-sm font-bold" style={{ color: STATUS_COLORS[s] }}>{count}</div>
-                        <div className="text-[10px] text-zinc-500">â‚¹{gross.toFixed(1)} Cr Â· {pct}%</div>
+                        <div className="text-[10px] text-zinc-500">₹{gross.toFixed(1)} Cr · {pct}%</div>
                       </div>
                     </button>
                   );
@@ -184,9 +205,9 @@ export default function PlantAmrDashboard() {
             <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-800">
               <h3 className="text-sm font-bold text-zinc-300">
                 Project Register
-                {statusFilter && <span className="ml-2 text-xs text-cyan-400">Â· filtered: {statusFilter}</span>}
+                {statusFilter && <span className="ml-2 text-xs text-cyan-400">· filtered: {statusFilter}</span>}
               </h3>
-              <span className="text-xs text-zinc-500">{filtered.length} of {projects.length} projects Â· as on {data.as_on}</span>
+              <span className="text-xs text-zinc-500">{filtered.length} of {projects.length} projects · as on {data.as_on}</span>
             </div>
 
             {filtered.length === 0 ? (
@@ -201,7 +222,7 @@ export default function PlantAmrDashboard() {
                       <th className="p-3">#</th>
                       <th className="p-3">Project</th>
                       <th className="p-3">Contractor</th>
-                      <th className="p-3 text-right">Gross â‚¹Cr</th>
+                      <th className="p-3 text-right">Gross ₹Cr</th>
                       <th className="p-3 text-center">Progress</th>
                       <th className="p-3">Scheduled</th>
                       <th className="p-3">Expected</th>
@@ -224,9 +245,9 @@ export default function PlantAmrDashboard() {
                             </td>
                             <td className="p-3">
                               <div className="text-zinc-200 font-medium">{p.project_name}</div>
-                              <div className="text-[10px] text-zinc-600">{p.scheme_name} {p.amr_no ? `Â· ${p.amr_no}` : ""}</div>
+                              <div className="text-[10px] text-zinc-600">{p.scheme_name} {p.amr_no ? `· ${p.amr_no}` : ""}</div>
                             </td>
-                            <td className="p-3 text-zinc-400 text-xs">{p.contractor_name || "â€”"}</td>
+                            <td className="p-3 text-zinc-400 text-xs">{p.contractor_name || "—"}</td>
                             <td className="p-3 text-right font-mono text-zinc-300">{p.gross_cost_cr.toFixed(2)}</td>
                             <td className="p-3">
                               <div className="flex items-center gap-2">
@@ -236,10 +257,10 @@ export default function PlantAmrDashboard() {
                                 <span className="text-[10px] text-zinc-400 font-mono w-9 text-right">{p.physical_progress_percent}%</span>
                               </div>
                             </td>
-                            <td className="p-3 text-xs text-zinc-400 font-mono">{p.scheduled_completion_date || "â€”"}</td>
+                            <td className="p-3 text-xs text-zinc-400 font-mono">{p.scheduled_completion_date || "—"}</td>
                             <td className="p-3 text-xs font-mono">
                               <span className={p.delay_days > 0 ? "text-amber-400" : "text-zinc-400"}>
-                                {p.expected_completion_date || "â€”"}
+                                {p.expected_completion_date || "—"}
                               </span>
                             </td>
                             <td className="p-3 text-center">
@@ -263,19 +284,19 @@ export default function PlantAmrDashboard() {
                                     {p.delay_reason && <Detail label="Delay reason" value={p.delay_reason} />}
                                   </div>
                                   <div className="lg:col-span-2">
-                                    <div className="text-zinc-500 uppercase tracking-wider text-[9px] mb-1">Monthly Capex (â‚¹ Cr)</div>
+                                    <div className="text-zinc-500 uppercase tracking-wider text-[9px] mb-1">Monthly Capex (₹ Cr)</div>
                                     <div className="overflow-x-auto">
                                       <table className="text-[10px] font-mono w-full">
                                         <thead className="text-zinc-600">
                                           <tr>
-                                            <th className="p-1 text-left">Â·</th>
+                                            <th className="p-1 text-left">·</th>
                                             {p.monthly.map((m) => <th key={m.month} className="p-1 text-center">{m.month}</th>)}
                                           </tr>
                                         </thead>
                                         <tbody>
-                                          <tr><td className="p-1 text-cyan-400">BE</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-cyan-300">{m.be || "Â·"}</td>)}</tr>
-                                          <tr><td className="p-1 text-amber-400">RE</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-amber-300">{m.re ?? "Â·"}</td>)}</tr>
-                                          <tr><td className="p-1 text-emerald-400">Act</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-emerald-300">{m.actual || "Â·"}</td>)}</tr>
+                                          <tr><td className="p-1 text-cyan-400">BE</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-cyan-300">{m.be || "·"}</td>)}</tr>
+                                          <tr><td className="p-1 text-amber-400">RE</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-amber-300">{m.re ?? "·"}</td>)}</tr>
+                                          <tr><td className="p-1 text-emerald-400">Act</td>{p.monthly.map((m) => <td key={m.month} className="p-1 text-center text-emerald-300">{m.actual || "·"}</td>)}</tr>
                                         </tbody>
                                       </table>
                                     </div>
@@ -317,8 +338,7 @@ function Detail({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex justify-between gap-3">
       <span className="text-zinc-600">{label}</span>
-      <span className="text-zinc-300 text-right">{value || "â€”"}</span>
+      <span className="text-zinc-300 text-right">{value || "—"}</span>
     </div>
   );
 }
-
