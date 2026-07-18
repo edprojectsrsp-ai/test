@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pcms.local/schemas/report-definition.schema.json",
+  "title": "Dynamic Report Definition",
+  "type": "object",
+  "required": ["version", "name", "mode", "dataset", "scope", "parameters", "layout"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "description": { "type": "string", "maxLength": 2000 },
+    "mode": { "enum": ["grid", "pivot", "formatted"] },
+    "dataset": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "scope": { "$ref": "#/$defs/scope" },
+    "parameters": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/parameter" }
+    },
+    "filters": { "$ref": "#/$defs/filterGroup" },
+    "sorts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sort" }
+    },
+    "layout": {
+      "oneOf": [
+        { "$ref": "#/$defs/gridLayout" },
+        { "$ref": "#/$defs/pivotLayout" },
+        { "$ref": "#/$defs/formattedLayout" }
+      ]
+    },
+    "formatting": { "type": "object", "additionalProperties": true },
+    "permissions": { "type": "object", "additionalProperties": true }
+  },
+  "$defs": {
+    "scope": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "enum": ["project", "selected_projects", "department", "agency", "category", "portfolio"] },
+        "ids": { "type": "array", "items": { "type": ["string", "integer"] } }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": ["key", "label", "type"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "label": { "type": "string" },
+        "type": { "enum": ["text", "integer", "decimal", "date", "datetime", "boolean", "enum", "project", "department", "agency"] },
+        "required": { "type": "boolean", "default": false },
+        "default": {},
+        "options": { "type": "array" }
+      },
+      "additionalProperties": false
+    },
+    "filter": {
+      "type": "object",
+      "required": ["field", "operator"],
+      "properties": {
+        "field": { "type": "string" },
+        "operator": { "enum": ["eq", "neq", "contains", "not_contains", "starts_with", "ends_with", "gt", "gte", "lt", "lte", "between", "in", "not_in", "is_empty", "is_not_empty", "before", "after", "relative_date"] },
+        "value": {},
+        "value2": {},
+        "parameter": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "filterGroup": {
+      "type": "object",
+      "required": ["logic", "items"],
+      "properties": {
+        "logic": { "enum": ["and", "or"] },
+        "items": {
+          "type": "array",
+          "items": { "oneOf": [{ "$ref": "#/$defs/filter" }, { "$ref": "#/$defs/filterGroup" }] }
+        }
+      },
+      "additionalProperties": false
+    },
+    "sort": {
+      "type": "object",
+      "required": ["field", "direction"],
+      "properties": {
+        "field": { "type": "string" },
+        "direction": { "enum": ["asc", "desc"] },
+        "nulls": { "enum": ["first", "last"] }
+      },
+      "additionalProperties": false
+    },
+    "column": {
+      "type": "object",
+      "required": ["id", "source", "label"],
+      "properties": {
+        "id": { "type": "string" },
+        "source": { "enum": ["field", "metric", "formula", "static"] },
+        "field": { "type": "string" },
+        "metric": { "type": "string" },
+        "formula": { "type": "string" },
+        "label": { "type": "string" },
+        "dataType": { "enum": ["text", "integer", "decimal", "currency", "percentage", "date", "datetime", "boolean", "enum", "duration"] },
+        "aggregation": { "enum": ["none", "sum", "count", "distinct_count", "average", "min", "max"] },
+        "width": { "type": "integer", "minimum": 40 },
+        "visible": { "type": "boolean" },
+        "filters": { "$ref": "#/$defs/filterGroup" },
+        "format": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "gridLayout": {
+      "type": "object",
+      "required": ["kind", "columns"],
+      "properties": {
+        "kind": { "const": "grid" },
+        "columns": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+        "groupBy": { "type": "array", "items": { "type": "string" } },
+        "showTotals": { "type": "boolean" },
+        "pageSize": { "type": "integer", "minimum": 10, "maximum": 1000 }
+      },
+      "additionalProperties": false
+    },
+    "pivotLayout": {
+      "type": "object",
+      "required": ["kind", "rows", "columns", "values"],
+      "properties": {
+        "kind": { "const": "pivot" },
+        "rows": { "type": "array", "items": { "type": "string" } },
+        "columns": { "type": "array", "items": { "type": "string" } },
+        "values": { "type": "array", "items": { "$ref": "#/$defs/column" } },
+        "showSubtotals": { "type": "boolean" },
+        "showGrandTotals": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "cell": {
+      "type": "object",
+      "required": ["address", "type"],
+      "properties": {
+        "address": { "type": "string", "pattern": "^[A-Z]+[1-9][0-9]*$" },
+        "type": { "enum": ["static", "field", "metric", "formula", "parameter", "repeater"] },
+        "value": {},
+        "field": { "type": "string" },
+        "metric": { "type": "string" },
+        "formula": { "type": "string" },
+        "parameter": { "type": "string" },
+        "aggregation": { "enum": ["sum", "count", "distinct_count", "average", "min", "max"] },
+        "filters": { "$ref": "#/$defs/filterGroup" },
+        "format": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "sheet": {
+      "type": "object",
+      "required": ["id", "name", "cells"],
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "cells": { "type": "array", "items": { "$ref": "#/$defs/cell" } },
+        "merges": { "type": "array", "items": { "type": "string" } },
+        "rowHeights": { "type": "object" },
+        "columnWidths": { "type": "object" },
+        "print": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "formattedLayout": {
+      "type": "object",
+      "required": ["kind", "sheets"],
+      "properties": {
+        "kind": { "const": "formatted" },
+        "sheets": { "type": "array", "items": { "$ref": "#/$defs/sheet" } }
+      },
+      "additionalProperties": false
+    }
+  }
+}
