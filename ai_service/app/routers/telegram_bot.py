@@ -86,6 +86,13 @@ async def handle_update(update: dict):
     text = msg.get("text")
     if not text:
         return
+    # ---- scheduled-digest subscription commands (no gateway round-trip) ----
+    if text.strip().lower().startswith("/digest"):
+        from app.services.report_push import handle_digest_command
+        reply = await asyncio.to_thread(handle_digest_command, chat_id, text)
+        if reply:
+            await send(chat_id, reply)
+            return
     if not text.startswith("/"):
         await send(chat_id, "🧠 Thinking…")
     reply = await handle_text("telegram", tg_user_id, text)

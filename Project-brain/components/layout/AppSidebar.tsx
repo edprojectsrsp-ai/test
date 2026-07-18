@@ -21,6 +21,7 @@ import {
   Settings,
   ShieldCheck,
   FlaskConical,
+  Gauge,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { ThemeToggle } from "../../theme/ThemeProvider";
@@ -75,6 +76,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Document Vault", icon: FileText, path: "/documents" },
       { name: "Knowledge Graph", icon: Network, path: "/knowledge-graph" },
       { name: "Delay Analysis", icon: Calendar, path: "/delay-analysis" },
+      { name: "EVM Studio", icon: Gauge, path: "/evm" },
       { name: "4D BIM", icon: Boxes, path: "/bim" },
       { name: "PPE Camera AI", icon: ShieldCheck, path: "/ppe" },
     ],

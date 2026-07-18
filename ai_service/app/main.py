@@ -136,6 +136,9 @@ async def startup():
         app.state.telegram_stop = asyncio.Event()
         app.state.telegram_task = asyncio.create_task(poll(app.state.telegram_stop))
         logger.info("Telegram assistant poller launched.")
+        from app.services.report_push import push_loop
+        app.state.push_task = asyncio.create_task(push_loop(app.state.telegram_stop))
+        logger.info("Scheduled report push launched (daily digests at send_hour IST).")
     else:
         logger.info("TELEGRAM_BOT_TOKEN not set — Telegram assistant idle.")
 

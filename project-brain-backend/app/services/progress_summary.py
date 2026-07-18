@@ -486,7 +486,8 @@ def scheme_physical_progress_by_month(db, scheme_id: int, fy_start_year: int):
             plan_by_month = monthly_plans.get(aid, {})
             monthly_actual = index.monthly_for(aid, name)
             last_fy_actual = _f(a["actuals_till_last_fy"]) or \
-                index.sum_for(aid, name, None, fy_start - timedelta(days=1))
+                index.sum_for(aid, name, a["activity_category"] or "",
+                              None, fy_start - timedelta(days=1))
             current_fy_plan = sum(q for d, q in plan_by_month.items()
                                   if fy_start <= d <= months[-1])
             plan_upto = sum(q for d, q in plan_by_month.items() if d in upto)
