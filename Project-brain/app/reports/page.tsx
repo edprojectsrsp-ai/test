@@ -166,6 +166,15 @@ export default function ReportsHub() {
       badge: "Live",
     },
     {
+      name: "CAPEX Standard Formats (3 Reports)",
+      desc: "Physical-financial MoS format, month-wise BE/RE/Actual monitoring & MoS backup — built from Report Studio KPIs, view + Excel/Word download",
+      icon: BarChart2,
+      color: "border-emerald-500/40 hover:bg-emerald-500/10",
+      iconCls: "text-emerald-400",
+      href: "/reports/mos-capex?section=formats",
+      badge: "Live",
+    },
+    {
       name: "CAPEX PMC Report",
       desc: "Project-wise PMC report with CAPEX plan vs expenditure detail",
       icon: IndianRupee,

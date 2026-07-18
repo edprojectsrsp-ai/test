@@ -88,7 +88,7 @@ export default function ViewSchemesMaster() {
       }
     } catch (e: any) {
       console.error("Fetch error:", e);
-      setError(e.message || "Failed to fetch schemes. Is the backend running on port 8000?");
+      setError(e.message || "Failed to fetch schemes. Is the backend running on port 8002?");
       setSchemes([]);
     } finally {
       setLoading(false);
@@ -247,7 +247,7 @@ export default function ViewSchemesMaster() {
               <div className="font-bold text-red-400 mb-1">Backend Error</div>
               <div className="text-sm text-red-300/80">{error}</div>
               <div className="text-xs text-red-400/60 mt-2">
-                Tips: Check FastAPI is running on port 8000, and the database schema is GOD MODE v2.
+                Tips: Check FastAPI is running on port 8002, and the database schema is GOD MODE v2.
               </div>
             </div>
           </div>

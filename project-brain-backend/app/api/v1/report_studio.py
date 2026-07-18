@@ -54,6 +54,7 @@ def _run_query(db: Session, q: RS.QueryIn) -> dict[str, Any]:
             else:
                 row[k] = float(v)  # Decimal
         out_rows.append(row)
+    columns, out_rows = RS.apply_postprocess(q, columns, out_rows)
     return {"columns": columns, "rows": out_rows, "sql": sql, "row_count": len(out_rows)}
 
 
@@ -65,6 +66,26 @@ def datasets():
 @router.post("/query")
 def run_query(q: RS.QueryIn, db: Session = Depends(get_db)):
     return _run_query(db, q)
+
+
+@router.get("/field-values")
+def field_values(dataset: str, field: str, search: Optional[str] = None,
+                 limit: int = 200, db: Session = Depends(get_db)):
+    """Distinct values of a dimension — powers the filter member-picker."""
+    try:
+        sql, params = RS.compile_field_values(dataset, field, search, limit)
+    except RS.CompileError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        rows = db.execute(text(sql), params).all()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Lookup failed: {str(e)[:200]}")
+    vals = []
+    for (v,) in rows:
+        if v is None:
+            continue
+        vals.append(v.isoformat() if hasattr(v, "isoformat") else v)
+    return {"dataset": dataset, "field": field, "values": vals}
 
 
 # ---------------------------------------------------------------- saved metrics
@@ -163,3 +184,394 @@ def run_metric(metric_id: int, db: Session = Depends(get_db)):
     result = _run_query(db, q)
     result["metric"] = {"metric_id": metric_id, "name": row["name"], "viz": row["viz"]}
     return result
+
+
+# ---------------------------------------------------------------- custom reports
+# A custom report = an ordered list of sections, each a full Report Studio
+# query spec (dimensions/measures/formulas/filters/pivot/totals) + a title.
+# Runs live against the semantic layer; exports to XLSX and DOCX.
+
+class SectionIn(BaseModel):
+    title: str
+    note: Optional[str] = None
+    spec: RS.QueryIn
+
+
+class ReportIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    category: Optional[str] = None
+    sections: list[SectionIn]
+
+
+def _ensure_reports_table(db: Session):
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_reports ("
+        " report_id SERIAL PRIMARY KEY,"
+        " name VARCHAR(200) NOT NULL,"
+        " description TEXT,"
+        " category VARCHAR(80),"
+        " sections JSONB NOT NULL DEFAULT '[]'::jsonb,"
+        " created_at TIMESTAMP NOT NULL DEFAULT now(),"
+        " updated_at TIMESTAMP NOT NULL DEFAULT now())"
+    ))
+    db.commit()
+
+
+def _validate_sections(payload: ReportIn):
+    if not payload.sections:
+        raise HTTPException(status_code=400, detail="A report needs at least one section")
+    for s in payload.sections:
+        try:
+            RS.compile_query(s.spec)
+        except RS.CompileError as e:
+            raise HTTPException(status_code=400, detail=f"Section '{s.title}': {e}")
+
+
+def _report_row(db: Session, report_id: int) -> dict:
+    row = db.execute(text("SELECT * FROM rs_reports WHERE report_id = :r"),
+                     {"r": report_id}).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Report not found")
+    out = dict(row)
+    if isinstance(out.get("sections"), str):
+        out["sections"] = json.loads(out["sections"])
+    return out
+
+
+@router.get("/reports")
+def list_reports(category: Optional[str] = None, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    where = "WHERE category = :cat" if category else ""
+    rows = db.execute(text(
+        "SELECT report_id, name, description, category, "
+        "       jsonb_array_length(sections) AS section_count, updated_at "
+        f"FROM rs_reports {where} ORDER BY updated_at DESC"
+    ), {"cat": category} if category else {}).mappings().all()
+    return {"reports": [dict(r) for r in rows]}
+
+
+@router.post("/reports")
+def create_report(payload: ReportIn, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    _validate_sections(payload)
+    rid = db.execute(text(
+        "INSERT INTO rs_reports (name, description, category, sections) "
+        "VALUES (:n, :d, :c, CAST(:s AS jsonb)) RETURNING report_id"
+    ), {"n": payload.name, "d": payload.description, "c": payload.category,
+        "s": json.dumps([s.model_dump(mode="json") for s in payload.sections])}).scalar()
+    db.commit()
+    return {"report_id": rid}
+
+
+@router.get("/reports/{report_id}")
+def get_report(report_id: int, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    return _report_row(db, report_id)
+
+
+@router.put("/reports/{report_id}")
+def update_report(report_id: int, payload: ReportIn, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    _report_row(db, report_id)
+    _validate_sections(payload)
+    db.execute(text(
+        "UPDATE rs_reports SET name=:n, description=:d, category=:c, "
+        "sections=CAST(:s AS jsonb), updated_at=now() WHERE report_id=:r"
+    ), {"n": payload.name, "d": payload.description, "c": payload.category,
+        "s": json.dumps([s.model_dump(mode="json") for s in payload.sections]),
+        "r": report_id})
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/reports/{report_id}")
+def delete_report(report_id: int, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    _report_row(db, report_id)
+    db.execute(text("DELETE FROM rs_reports WHERE report_id = :r"), {"r": report_id})
+    db.commit()
+    return {"ok": True}
+
+
+def _run_report(db: Session, report: dict) -> dict[str, Any]:
+    sections_out = []
+    for s in report["sections"]:
+        q = RS.QueryIn(**s["spec"])
+        res = _run_query(db, q)
+        sections_out.append({
+            "title": s.get("title") or "Section",
+            "note": s.get("note"),
+            "columns": res["columns"],
+            "rows": res["rows"],
+        })
+    return {
+        "report_id": report["report_id"], "name": report["name"],
+        "description": report.get("description"), "category": report.get("category"),
+        "sections": sections_out,
+    }
+
+
+@router.post("/reports/{report_id}/run")
+def run_report(report_id: int, db: Session = Depends(get_db)):
+    _ensure_reports_table(db)
+    return _run_report(db, _report_row(db, report_id))
+
+
+# ---------------------------------------------------------------- export
+
+def _fmt_cell(v: Any) -> Any:
+    if isinstance(v, float):
+        return round(v, 2)
+    return v
+
+
+@router.get("/reports/{report_id}/export")
+def export_report(report_id: int, fmt: str = "xlsx", db: Session = Depends(get_db)):
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    _ensure_reports_table(db)
+    data = _run_report(db, _report_row(db, report_id))
+    stem = "".join(c if c.isalnum() or c in " -_" else "_" for c in data["name"]).strip()[:80] or "report"
+
+    if fmt == "xlsx":
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+        wb = Workbook()
+        wb.remove(wb.active)
+        thin = Side(style="thin", color="999999")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        head_fill = PatternFill("solid", fgColor="0B3D91")
+        head_font = Font(bold=True, color="FFFFFF", size=10)
+        title_font = Font(bold=True, size=13, color="0B3D91")
+        used_names: set[str] = set()
+        for i, sec in enumerate(data["sections"], 1):
+            base = "".join(c for c in sec["title"] if c not in "[]:*?/\\")[:28] or f"Section {i}"
+            name = base
+            n = 1
+            while name in used_names:
+                n += 1
+                name = f"{base[:25]} {n}"
+            used_names.add(name)
+            ws = wb.create_sheet(title=name)
+            cols = sec["columns"]
+            ws.cell(row=1, column=1, value=sec["title"]).font = title_font
+            if sec.get("note"):
+                ws.cell(row=2, column=1, value=sec["note"]).font = Font(italic=True, size=9, color="666666")
+            hr = 3
+            for ci, c in enumerate(cols, 1):
+                cell = ws.cell(row=hr, column=ci, value=c["label"])
+                cell.font = head_font
+                cell.fill = head_fill
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+                ws.column_dimensions[cell.column_letter].width = max(11, min(38, len(c["label"]) + 4))
+            for ri, r in enumerate(sec["rows"], hr + 1):
+                is_total = bool(r.get("__total__"))
+                for ci, c in enumerate(cols, 1):
+                    cell = ws.cell(row=ri, column=ci, value=_fmt_cell(r.get(c["key"])))
+                    cell.border = border
+                    if c["type"] in ("int", "number", "money"):
+                        cell.number_format = "#,##0.00" if c["type"] != "int" else "#,##0"
+                    if is_total:
+                        cell.font = Font(bold=True)
+                        cell.fill = PatternFill("solid", fgColor="E8EEF9")
+            ws.freeze_panes = ws.cell(row=hr + 1, column=2)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.xlsx"'})
+
+    if fmt == "docx":
+        from docx import Document
+        from docx.enum.section import WD_ORIENT
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.shared import Pt
+
+        doc = Document()
+        sec0 = doc.sections[0]
+        sec0.orientation = WD_ORIENT.LANDSCAPE
+        sec0.page_width, sec0.page_height = sec0.page_height, sec0.page_width
+        h = doc.add_heading(data["name"], level=0)
+        h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        if data.get("description"):
+            p = doc.add_paragraph(data["description"])
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        for sec in data["sections"]:
+            doc.add_heading(sec["title"], level=2)
+            if sec.get("note"):
+                doc.add_paragraph(sec["note"]).runs[0].font.size = Pt(8)
+            cols = sec["columns"]
+            table = doc.add_table(rows=1, cols=len(cols))
+            table.style = "Table Grid"
+            hdr = table.rows[0].cells
+            for ci, c in enumerate(cols):
+                hdr[ci].text = c["label"]
+                for run in hdr[ci].paragraphs[0].runs:
+                    run.font.bold = True
+                    run.font.size = Pt(8)
+            for r in sec["rows"]:
+                cells = table.add_row().cells
+                for ci, c in enumerate(cols):
+                    v = _fmt_cell(r.get(c["key"]))
+                    cells[ci].text = "" if v is None else (f"{v:,.2f}" if isinstance(v, float) else str(v))
+                    for run in cells[ci].paragraphs[0].runs:
+                        run.font.size = Pt(8)
+                        if r.get("__total__"):
+                            run.font.bold = True
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+        return StreamingResponse(
+            buf, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{stem}.docx"'})
+
+    raise HTTPException(status_code=400, detail="fmt must be xlsx or docx")
+
+
+# ---------------------------------------------------------------- seed: CAPEX pack
+
+CAPEX_PACK = "capex-pack"
+
+
+def _capex_pack_defs() -> list[dict]:
+    from datetime import date
+    today = date.today()
+    fy_year = today.year if today.month >= 4 else today.year - 1
+    fy_label = f"{fy_year}-{str(fy_year + 1)[2:]}"
+    money = ["gross", "exp_last_fy", "be_fy", "actual_fy", "total_exp"]
+
+    def ms(fields):
+        return [{"field": f} for f in fields]
+
+    r1 = {
+        "name": f"Physical & Financial Progress of CAPEX Projects — FY {fy_label}",
+        "description": "MoS format: quarterly CAPEX overview, category summary, "
+                       "project-wise ongoing detail and new projects under consideration. "
+                       "All figures in Rs Cr.",
+        "category": CAPEX_PACK,
+        "sections": [
+            {"title": "Overview of CAPEX Progress — BE vs Actual by Month",
+             "note": "All figures in Rs. crs. Quarter totals and annual total computed live.",
+             "spec": {"dataset": "capex_monthly", "dimensions": ["month_label"],
+                      "measures": ms(["be", "actual"]),
+                      "pivot": {"on": "month_label", "row_total": True, "quarter_totals": True},
+                      "limit": 5000}},
+            {"title": "Overview of CAPEX Projects by Category",
+             "spec": {"dataset": "pf_projects", "dimensions": ["mos_category"],
+                      "measures": ms(["project_count"] + money),
+                      "sort": [{"by": "mos_category", "dir": "asc"}],
+                      "grand_total": True, "limit": 100}},
+            {"title": "Ongoing Projects >= Rs 50 Cr — Physical & Financial Progress",
+             "note": "Physical %: i. till last FY / ii. FY plan / iii. FY actual (weighted).",
+             "spec": {"dataset": "pf_projects",
+                      "dimensions": ["scheme_name", "approval_date", "award_date",
+                                     "original_completion", "anticipated_completion", "reason"],
+                      "measures": ms(["gross", "phys_last_fy", "phys_fy_plan", "phys_fy_actual",
+                                      "exp_last_fy", "be_fy", "actual_fy", "total_exp"]),
+                      "filters": {"op": "AND", "conditions": [
+                          {"field": "status", "op": "in", "value": ["ongoing", "on_hold"]},
+                          {"field": "cost_band", "op": "starts_with", "value": "A"}]},
+                      "sort": [{"by": "gross", "dir": "desc"}], "limit": 200}},
+            {"title": "Projects < Rs 50 Cr (grouped)",
+             "spec": {"dataset": "pf_projects", "dimensions": ["cost_band"],
+                      "measures": ms(["project_count"] + money),
+                      "filters": {"op": "AND", "conditions": [
+                          {"field": "status", "op": "in", "value": ["ongoing", "on_hold"]},
+                          {"field": "cost_band", "op": "starts_with", "value": "B"}]},
+                      "limit": 10}},
+            {"title": "New CAPEX Projects Under Consideration",
+             "spec": {"dataset": "pf_projects",
+                      "dimensions": ["mos_category", "scheme_name", "approval_date", "award_date"],
+                      "measures": ms(["gross", "be_fy", "actual_fy"]),
+                      "filters": {"op": "AND", "conditions": [
+                          {"field": "mos_category", "op": "starts_with", "value": "3"}]},
+                      "sort": [{"by": "mos_category", "dir": "asc"}],
+                      "grand_total": True, "limit": 200}},
+        ],
+    }
+
+    r2 = {
+        "name": f"CAPEX Monitoring — Month-wise (FY {fy_label})",
+        "description": "Scheme/head rows with BE, RE and Actual spread across the 12 FY months "
+                       "plus row totals — the month-wise monitoring format.",
+        "category": CAPEX_PACK,
+        "sections": [
+            {"title": "CAPEX Month-wise — BE / RE / Actual by Row",
+             "note": "Rs in crore. Columns: month x (BE, RE, Actual); Total = full-year sum.",
+             "spec": {"dataset": "capex_monthly", "dimensions": ["row_name", "month_label"],
+                      "measures": ms(["be", "re", "actual"]),
+                      "pivot": {"on": "month_label", "row_total": True},
+                      "grand_total": True, "limit": 5000}},
+            {"title": "Physical Progress Month-wise (Weighted %)",
+             "note": "Weighted plan vs actual % per scheme per month, current plans.",
+             "spec": {"dataset": "physical_monthly", "dimensions": ["scheme_name", "month_label"],
+                      "measures": ms(["plan_pct_w", "actual_pct_w"]),
+                      "filters": {"op": "AND", "conditions": [
+                          {"field": "fy", "op": "=", "value": fy_year}]},
+                      "pivot": {"on": "month_label", "row_total": True}, "limit": 5000}},
+        ],
+    }
+
+    r3 = {
+        "name": f"CAPEX Status of Projects — Sanctioned & New (MoS Backup, FY {fy_label})",
+        "description": "MoS presentation backup: per-category and per-scheme sanctioned cost, "
+                       "expenditure till last FY, BE/RE, FY expenditure and balance for completion.",
+        "category": CAPEX_PACK,
+        "sections": [
+            {"title": "CAPEX Status by Category & Scheme",
+             "note": "balance_for_completion = Total cost - Cumulative expenditure.",
+             "spec": {"dataset": "pf_projects", "dimensions": ["mos_category", "scheme_name"],
+                      "measures": ms(["gross", "exp_last_fy", "be_fy", "re_fy", "actual_fy", "total_exp"]),
+                      "computed": [{"alias": "balance_for_completion",
+                                    "expression": "gross - exp_last_fy - actual_fy"}],
+                      "sort": [{"by": "mos_category", "dir": "asc"}],
+                      "grand_total": True, "limit": 500}},
+            {"title": "Quarterly Expenditure — BE / RE / Actual",
+             "spec": {"dataset": "capex_monthly", "dimensions": ["quarter"],
+                      "measures": ms(["be", "re", "actual"]),
+                      "pivot": {"on": "quarter", "row_total": True}, "limit": 100}},
+            {"title": "Delay Profile of Ongoing Projects",
+             "spec": {"dataset": "pf_projects", "dimensions": ["delay_bucket"],
+                      "measures": ms(["project_count", "gross", "total_exp"]),
+                      "filters": {"op": "AND", "conditions": [
+                          {"field": "status", "op": "in", "value": ["ongoing", "on_hold"]}]},
+                      "sort": [{"by": "delay_bucket", "dir": "asc"}],
+                      "grand_total": True, "limit": 10}},
+        ],
+    }
+    return [r1, r2, r3]
+
+
+@router.post("/reports/seed-capex-pack")
+def seed_capex_pack(db: Session = Depends(get_db)):
+    """(Re)create the 3 standard CAPEX physical-financial reports. Idempotent."""
+    _ensure_reports_table(db)
+    created = []
+    for d in _capex_pack_defs():
+        payload = ReportIn(**d)
+        _validate_sections(payload)
+        existing = db.execute(text(
+            "SELECT report_id FROM rs_reports WHERE name = :n AND category = :c"),
+            {"n": d["name"], "c": CAPEX_PACK}).scalar()
+        sections_json = json.dumps([s.model_dump(mode="json") for s in payload.sections])
+        if existing:
+            db.execute(text(
+                "UPDATE rs_reports SET description=:d, sections=CAST(:s AS jsonb), "
+                "updated_at=now() WHERE report_id=:r"),
+                {"d": d["description"], "s": sections_json, "r": existing})
+            created.append({"report_id": existing, "name": d["name"], "updated": True})
+        else:
+            rid = db.execute(text(
+                "INSERT INTO rs_reports (name, description, category, sections) "
+                "VALUES (:n, :d, :c, CAST(:s AS jsonb)) RETURNING report_id"),
+                {"n": d["name"], "d": d["description"], "c": CAPEX_PACK,
+                 "s": sections_json}).scalar()
+            created.append({"report_id": rid, "name": d["name"], "updated": False})
+    db.commit()
+    return {"reports": created}

@@ -89,6 +89,11 @@ export default function KpiBuilder() {
   const [filterOp, setFilterOp] = useState<"AND" | "OR">("AND");
   const [viz, setViz] = useState<Viz>("table");
   const [limit, setLimit] = useState(200);
+  const [pivotOn, setPivotOn] = useState("");
+  const [rowTotal, setRowTotal] = useState(true);
+  const [quarterTotals, setQuarterTotals] = useState(false);
+  const [grandTotal, setGrandTotal] = useState(false);
+  const [showAddTo, setShowAddTo] = useState(false);
 
   const [cols, setCols] = useState<Column[]>([]);
   const [rows, setRows] = useState<any[]>([]);
@@ -113,7 +118,10 @@ export default function KpiBuilder() {
   }, [refreshSaved]);
 
   // reset selections when dataset changes
-  useEffect(() => { setDims([]); setMeasures([]); setComputed([]); setConds([]); setCols([]); setRows([]); }, [dsKey]);
+  useEffect(() => { setDims([]); setMeasures([]); setComputed([]); setConds([]); setCols([]); setRows([]); setPivotOn(""); setGrandTotal(false); setQuarterTotals(false); }, [dsKey]);
+
+  // pivot column must stay a selected dimension
+  useEffect(() => { if (pivotOn && !dims.includes(pivotOn)) setPivotOn(""); }, [dims, pivotOn]);
 
   const spec = useMemo(() => ({
     dataset: dsKey,
@@ -122,7 +130,9 @@ export default function KpiBuilder() {
     computed: computed.filter((c) => c.alias && c.expression),
     filters: conds.length ? { op: filterOp, conditions: conds.map(normalizeCond) } : null,
     limit,
-  }), [dsKey, dims, measures, computed, conds, filterOp, limit]);
+    pivot: pivotOn ? { on: pivotOn, row_total: rowTotal, quarter_totals: quarterTotals } : null,
+    grand_total: grandTotal,
+  }), [dsKey, dims, measures, computed, conds, filterOp, limit, pivotOn, rowTotal, quarterTotals, grandTotal]);
 
   const run = useCallback(async () => {
     if (!dsKey) return;
@@ -157,6 +167,8 @@ export default function KpiBuilder() {
       setDims(s.dimensions || []); setMeasures(s.measures || []); setComputed(s.computed || []);
       setConds((s.filters?.conditions || []).map((c: any) => ({ ...c, value: Array.isArray(c.value) ? c.value.join(",") : c.value })));
       setFilterOp((s.filters?.op as any) || "AND"); setLimit(s.limit || 200); setViz(m.viz || "table");
+      setPivotOn(s.pivot?.on || ""); setRowTotal(s.pivot?.row_total ?? true);
+      setQuarterTotals(s.pivot?.quarter_totals ?? false); setGrandTotal(!!s.grand_total);
     }, 0);
   };
 
@@ -280,6 +292,36 @@ export default function KpiBuilder() {
           })}
         </div>
 
+        {/* pivot & totals */}
+        <div style={{ ...panel, padding: 12 }}>
+          <div style={secLabel}><Table2 size={12} /> Pivot &amp; totals — build month-wise / quarter-wise report tables</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", fontSize: 12, color: "var(--ink-2)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              Pivot columns by
+              <select value={pivotOn} onChange={(e) => setPivotOn(e.target.value)} style={inp}>
+                <option value="">— none —</option>
+                {dims.map((k) => <option key={k} value={k}>{ds?.dimensions.find((d) => d.key === k)?.label || k}</option>)}
+              </select>
+            </label>
+            {pivotOn && (
+              <>
+                <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <input type="checkbox" checked={rowTotal} onChange={(e) => setRowTotal(e.target.checked)} /> Row total
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <input type="checkbox" checked={quarterTotals} onChange={(e) => setQuarterTotals(e.target.checked)} /> Quarter totals (Apr–Mar months)
+                </label>
+              </>
+            )}
+            <label style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              <input type="checkbox" checked={grandTotal} onChange={(e) => setGrandTotal(e.target.checked)} /> Grand-total row
+            </label>
+            <span style={{ fontSize: 10, color: "var(--ink-4)" }}>
+              Tip: select the “Month” dimension and pivot on it for a CAPEX-style month-wise table.
+            </span>
+          </div>
+        </div>
+
         {/* toolbar */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <button onClick={run} disabled={busy} style={btn("primary")}>
@@ -294,6 +336,7 @@ export default function KpiBuilder() {
             limit <input type="number" value={limit} onChange={(e) => setLimit(Number(e.target.value))} style={{ ...inp, width: 70 }} />
           </label>
           <button onClick={() => setShowSave(true)} disabled={!cols.length} style={{ ...btn("ghost"), marginLeft: "auto" }}><Save size={14} /> Save metric</button>
+          <button onClick={() => setShowAddTo(true)} disabled={!cols.length} style={btn("ghost")}><Plus size={14} /> Add to report</button>
           {rows.length > 0 && <span style={{ fontSize: 12, color: "var(--ink-4)" }}>{rows.length} rows</span>}
         </div>
 
@@ -312,6 +355,9 @@ export default function KpiBuilder() {
         </div>
       </div>
 
+      {/* add-to-report modal */}
+      {showAddTo && <AddToReportModal spec={spec} onClose={() => setShowAddTo(false)} />}
+
       {/* save modal */}
       {showSave && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
@@ -326,6 +372,73 @@ export default function KpiBuilder() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function AddToReportModal({ spec, onClose }: { spec: any; onClose: () => void }) {
+  const [reports, setReports] = useState<{ report_id: number; name: string }[]>([]);
+  const [target, setTarget] = useState<string>("new");
+  const [newName, setNewName] = useState("My Custom Report");
+  const [title, setTitle] = useState("New section");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+
+  useEffect(() => {
+    authFetch(rs("/reports")).then((r) => r.json()).then((j) => setReports(j.reports || [])).catch(() => {});
+  }, []);
+
+  const submit = async () => {
+    setBusy(true); setMsg("");
+    try {
+      const section = { title, spec };
+      if (target === "new") {
+        const r = await authFetch(rs("/reports"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName, sections: [section] }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || "Create failed");
+      } else {
+        const r0 = await authFetch(rs(`/reports/${target}`));
+        const doc = await r0.json();
+        if (!r0.ok) throw new Error(doc.detail || "Load failed");
+        const r = await authFetch(rs(`/reports/${target}`), {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: doc.name, description: doc.description, category: doc.category,
+            sections: [...(doc.sections || []), section],
+          }),
+        });
+        if (!r.ok) throw new Error((await r.json()).detail || "Update failed");
+      }
+      setMsg("Added ✓ — see the Custom Reports tab.");
+      setTimeout(onClose, 900);
+    } catch (e: any) { setMsg(String(e.message || e)); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
+      <div style={{ ...panel, padding: 18, width: 400 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+          <b style={{ color: "var(--ink)" }}>Add query as report section</b>
+          <button onClick={onClose} style={btn("ghost")}><X size={14} /></button>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--ink-4)", marginBottom: 6 }}>Section title</div>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} style={{ ...inp, width: "100%", marginBottom: 10 }} />
+        <div style={{ fontSize: 11, color: "var(--ink-4)", marginBottom: 6 }}>Target report</div>
+        <select value={target} onChange={(e) => setTarget(e.target.value)} style={{ ...inp, width: "100%", marginBottom: 10 }}>
+          <option value="new">➕ Create new report…</option>
+          {reports.map((r) => <option key={r.report_id} value={String(r.report_id)}>{r.name}</option>)}
+        </select>
+        {target === "new" && (
+          <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Report name" style={{ ...inp, width: "100%", marginBottom: 10 }} />
+        )}
+        {msg && <div style={{ fontSize: 12, color: msg.startsWith("Added") ? "var(--steel)" : "var(--slag, #e5534b)", marginBottom: 8 }}>{msg}</div>}
+        <button onClick={submit} disabled={busy} style={{ ...btn("primary"), width: "100%", justifyContent: "center" }}>
+          {busy ? <Loader2 size={13} className="spin" /> : <Plus size={13} />} Add section
+        </button>
+      </div>
     </div>
   );
 }
@@ -360,8 +473,8 @@ function ResultTable({ cols, rows }: { cols: Column[]; rows: any[] }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} style={{ borderBottom: "1px solid var(--line)" }}>
-              {cols.map((c) => <td key={c.key} style={{ textAlign: ["int", "number", "money"].includes(c.type) ? "right" : "left", padding: "6px 10px", color: "var(--ink-2)", whiteSpace: "nowrap" }}>{fmtNum(r[c.key], c.type)}</td>)}
+            <tr key={i} style={{ borderBottom: "1px solid var(--line)", ...(r.__total__ ? { background: "var(--steel-soft)", fontWeight: 800 } : {}) }}>
+              {cols.map((c) => <td key={c.key} style={{ textAlign: ["int", "number", "money"].includes(c.type) ? "right" : "left", padding: "6px 10px", color: "var(--ink-2)", whiteSpace: "nowrap", fontWeight: r.__total__ ? 800 : undefined }}>{fmtNum(r[c.key], c.type)}</td>)}
             </tr>
           ))}
         </tbody>

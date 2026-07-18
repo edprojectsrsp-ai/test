@@ -163,6 +163,8 @@ class ProviderRouter:
     def _resolve_chain(self, task_type: str, forced_provider: Optional[str], strict_forced: bool) -> list[str]:
         if forced_provider:
             forced = forced_provider.strip().lower()
+            if forced.startswith("ollama:"):
+                return [forced]
             if forced not in VALID_PROVIDERS:
                 return ROUTING_TABLE.get(task_type, ROUTING_TABLE["lookup"])
             if strict_forced:
@@ -224,25 +226,50 @@ class ProviderRouter:
         chain = self._resolve_chain(task_type, forced_provider, strict_forced)
         last_error = None
         for provider_name in chain:
-            if provider_name not in self.providers:
+            actual_provider_name = provider_name
+            model_override = None
+            if provider_name.startswith("ollama:"):
+                actual_provider_name = "ollama"
+                model_override = provider_name.split(":", 1)[1]
+
+            if actual_provider_name not in self.providers:
                 continue
+<<<<<<< HEAD
             # model_override only applies to the explicitly forced provider,
             # never to fallbacks (a Groq model name means nothing to Ollama).
             use_override = model_override if (forced_provider and provider_name == forced_provider.strip().lower()) else None
             provider = self._provider_for_request(provider_name, use_override)
+=======
+            provider = self.providers[actual_provider_name]
+            
+            orig_model_id = provider.model_id
+            orig_tools_enabled = getattr(provider, "_tools_enabled", None)
+            if model_override:
+                provider.model_id = model_override
+                if hasattr(provider, "_tools_enabled"):
+                    model_lower = model_override.lower()
+                    provider._tools_enabled = "qwen3" in model_lower or "qwen2.5" in model_lower
+
+>>>>>>> eecbf31f67fed59a58aba2277f8c77fef3ca4e03
             logger.info(
-                f"Trying {provider_name} for task={task_type} (forced={forced_provider}, strict={strict_forced})"
+                f"Trying {actual_provider_name} ({provider.model_id}) for task={task_type} (forced={forced_provider}, strict={strict_forced})"
             )
             try:
                 resp = await provider.chat(messages, tools=tools, temperature=temperature, max_tokens=max_tokens)
+                provider.model_id = orig_model_id
+                if orig_tools_enabled is not None:
+                    provider._tools_enabled = orig_tools_enabled
                 if resp.error or resp.finish_reason == "error":
                     last_error = resp.error
-                    logger.warning(f"{provider_name} returned error: {resp.error}")
+                    logger.warning(f"{actual_provider_name} returned error: {resp.error}")
                     continue
                 return resp
             except Exception as e:
+                provider.model_id = orig_model_id
+                if orig_tools_enabled is not None:
+                    provider._tools_enabled = orig_tools_enabled
                 last_error = str(e)
-                logger.warning(f"{provider_name} exception: {e}")
+                logger.warning(f"{actual_provider_name} exception: {e}")
                 continue
 
         return ChatResponse(
@@ -266,19 +293,45 @@ class ProviderRouter:
     ):
         chain = self._resolve_chain(task_type, forced_provider, strict_forced)
         for provider_name in chain:
-            if provider_name not in self.providers:
+            actual_provider_name = provider_name
+            model_override = None
+            if provider_name.startswith("ollama:"):
+                actual_provider_name = "ollama"
+                model_override = provider_name.split(":", 1)[1]
+
+            if actual_provider_name not in self.providers:
                 continue
+<<<<<<< HEAD
             use_override = model_override if (forced_provider and provider_name == forced_provider.strip().lower()) else None
             provider = self._provider_for_request(provider_name, use_override)
             logger.info(f"Streaming from {provider_name} for task={task_type}")
+=======
+            provider = self.providers[actual_provider_name]
+            
+            orig_model_id = provider.model_id
+            orig_tools_enabled = getattr(provider, "_tools_enabled", None)
+            if model_override:
+                provider.model_id = model_override
+                if hasattr(provider, "_tools_enabled"):
+                    model_lower = model_override.lower()
+                    provider._tools_enabled = "qwen3" in model_lower or "qwen2.5" in model_lower
+
+            logger.info(f"Streaming from {actual_provider_name} ({provider.model_id}) for task={task_type}")
+>>>>>>> eecbf31f67fed59a58aba2277f8c77fef3ca4e03
             try:
                 async for chunk in provider.chat_stream(
                     messages, tools=tools, temperature=temperature, max_tokens=max_tokens
                 ):
-                    yield {"provider": provider_name, "model": provider.model_id, "text": chunk}
+                    yield {"provider": actual_provider_name, "model": provider.model_id, "text": chunk}
+                provider.model_id = orig_model_id
+                if orig_tools_enabled is not None:
+                    provider._tools_enabled = orig_tools_enabled
                 return
             except Exception as e:
-                logger.warning(f"Stream from {provider_name} failed: {e}")
+                provider.model_id = orig_model_id
+                if orig_tools_enabled is not None:
+                    provider._tools_enabled = orig_tools_enabled
+                logger.warning(f"Stream from {actual_provider_name} failed: {e}")
                 continue
         yield {"provider": "none", "model": "none", "text": "[All providers failed]"}
 

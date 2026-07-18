@@ -19,7 +19,7 @@ def get_all_schemes(db: Session = Depends(get_db)):
                 sm.scheme_type,
                 sm.current_status AS status,
                 sm.estimated_cost_cr AS total_cost,
-                MAX(c.schedule_completion_date) AS expected_completion_date,
+                MAX(COALESCE(c.expected_completion_date, c.schedule_completion_date)) AS expected_completion_date,
                 MAX(c.schedule_completion_date) AS scheduled_completion_date
             FROM scheme_master sm
             LEFT JOIN packages p ON p.scheme_id = sm.scheme_id AND p.is_deleted = FALSE

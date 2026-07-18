@@ -25,12 +25,12 @@ def save_plant_actual(payload: PlantActualPayload, db: Session = Depends(get_db)
 
     prev_sql = text(
         """
-        SELECT cumulative_progress_percent FROM plant_progress_monthly
-        WHERE scheme_id = :s_id AND progress_month < :p_month
-        ORDER BY progress_month DESC LIMIT 1
+        SELECT cumulative_actual_pct FROM plant_progress_monthly
+        WHERE package_id = :pkg_id AND month_date < :p_month
+        ORDER BY month_date DESC LIMIT 1
         """
     )
-    prev_val = db.execute(prev_sql, {"s_id": payload.scheme_id, "p_month": payload.progress_month}).scalar()
+    prev_val = db.execute(prev_sql, {"pkg_id": payload.scheme_id, "p_month": payload.progress_month}).scalar()
 
     if prev_val is not None and payload.cumulative_progress_percent < float(prev_val):
         raise HTTPException(
@@ -43,19 +43,21 @@ def save_plant_actual(payload: PlantActualPayload, db: Session = Depends(get_db)
     upsert_sql = text(
         """
         INSERT INTO plant_progress_monthly
-          (scheme_id, progress_month, cumulative_progress_percent, progress_remark, scheme_status)
+          (package_id, month_date, actual_progress_pct, cumulative_actual_pct, notes, computed_at)
         VALUES
-          (:s_id, :p_month, :pct, :rem, 'ongoing')
-        ON CONFLICT (scheme_id, progress_month)
+          (:pkg_id, :p_month, :pct, :pct, :rem, CURRENT_TIMESTAMP)
+        ON CONFLICT (package_id, month_date)
         DO UPDATE SET
-          cumulative_progress_percent = EXCLUDED.cumulative_progress_percent,
-          progress_remark = EXCLUDED.progress_remark
+          actual_progress_pct = EXCLUDED.actual_progress_pct,
+          cumulative_actual_pct = EXCLUDED.cumulative_actual_pct,
+          notes = EXCLUDED.notes,
+          computed_at = CURRENT_TIMESTAMP
         """
     )
     db.execute(
         upsert_sql,
         {
-            "s_id": payload.scheme_id,
+            "pkg_id": payload.scheme_id,
             "p_month": payload.progress_month,
             "pct": payload.cumulative_progress_percent,
             "rem": payload.progress_remark,

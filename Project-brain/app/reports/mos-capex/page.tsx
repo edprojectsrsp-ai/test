@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowLeft, Printer, Loader2, IndianRupee, Calendar, Download, FileSpreadsheet } from "lucide-react";
 import MosCapexReport from "@/components/furnace/MosCapexReport";
+import { CapexPackPanel } from "@/components/report/RsReports";
 import { exportMosCapex } from "@/lib/export";
 
 const API = "http://localhost:8000/api/v1";
@@ -36,11 +37,12 @@ const toneCls: Record<string, string> = {
 
 export default function MosCapexPage() {
   const router = useRouter();
-  const [view, setView] = useState<"format" | "pf" | "detail">(() => {
+  const [view, setView] = useState<"format" | "pf" | "detail" | "pack">(() => {
     if (typeof window !== "undefined") {
       const section = new URLSearchParams(window.location.search).get("section");
       if (section === "physical-financial") return "pf";
       if (section === "detail") return "detail";
+      if (section === "formats" || section === "capex-pack") return "pack";
     }
     return "format";
   });
@@ -79,6 +81,33 @@ export default function MosCapexPage() {
           <ViewSeg view={view} setView={setView} />
         </div>
         <PhysicalFinancialDetail />
+      </div>
+    );
+  }
+
+  if (view === "pack") {
+    return (
+      <div className="min-h-screen p-6 text-[var(--ink)]">
+        <div className="mb-4 flex items-center gap-2 print:hidden">
+          <button onClick={() => router.push("/reports")}
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--line)] px-3 py-1.5 text-xs hover:bg-[var(--panel-3)]">
+            <ArrowLeft size={13} /> Reports
+          </button>
+          <h1 className="flex items-center gap-2 text-xl font-bold">
+            <IndianRupee className="h-5 w-5 text-[var(--steel)]" />
+            CAPEX Standard Formats — 3 Reports
+          </h1>
+          <ViewSeg view={view} setView={setView} />
+        </div>
+        <div className="mb-4 rounded-lg bg-[#0b3d91] px-5 py-3 text-center">
+          <div className="text-sm font-bold tracking-widest text-white">
+            PHYSICAL &amp; FINANCIAL PROGRESS · MONTH-WISE MONITORING · MoS BACKUP
+          </div>
+          <div className="text-[11px] text-blue-200">
+            Rourkela Steel Plant · built from Report Studio KPIs · view or download each format below
+          </div>
+        </div>
+        <CapexPackPanel />
       </div>
     );
   }
@@ -215,7 +244,8 @@ export default function MosCapexPage() {
   );
 }
 
-function ViewSeg({ view, setView }: { view: "format" | "pf" | "detail"; setView: (v: "format" | "pf" | "detail") => void }) {
+type ViewKey = "format" | "pf" | "detail" | "pack";
+function ViewSeg({ view, setView }: { view: ViewKey; setView: (v: ViewKey) => void }) {
   const base = "px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer transition-colors";
   return (
     <div className="inline-flex items-center gap-1 rounded-lg border border-[var(--line)] bg-[var(--panel-2)] p-1">
@@ -225,6 +255,8 @@ function ViewSeg({ view, setView }: { view: "format" | "pf" | "detail"; setView:
         onClick={() => setView("pf")}>Physical &amp; Financial Detail</button>
       <button className={`${base} ${view === "detail" ? "bg-[var(--steel)] text-white" : "text-[var(--ink-3)]"}`}
         onClick={() => setView("detail")}>Detail by Scheme</button>
+      <button className={`${base} ${view === "pack" ? "bg-[var(--steel)] text-white" : "text-[var(--ink-3)]"}`}
+        onClick={() => setView("pack")}>Standard Formats (3)</button>
     </div>
   );
 }

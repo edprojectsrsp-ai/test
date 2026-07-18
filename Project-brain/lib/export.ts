@@ -107,6 +107,19 @@ export async function exportPmc(opts: {
   return downloadBlob(res, `PMC.${opts.format}`);
 }
 
+/** Report Studio custom report (multi-section KPI report) */
+export async function exportRsReport(opts: {
+  reportId: number;
+  fmt: "xlsx" | "docx";
+  name?: string;
+}) {
+  const res = await fetch(
+    `${API}/report-studio/reports/${opts.reportId}/export?fmt=${opts.fmt}`,
+    { headers: authHeaders() },
+  );
+  return downloadBlob(res, `${opts.name || "report"}.${opts.fmt}`);
+}
+
 /** Generic payload render (template designer / what-if) */
 export async function exportPayload(opts: {
   format: ExportFormat;

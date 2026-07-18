@@ -28,12 +28,44 @@ from pydantic import BaseModel, Field
 # SQL fragments reference the aliases declared in `base`. They are trusted
 # (author-written), never user input.
 
+# Apr-1 of the current financial year, computed in SQL so every dataset that
+# talks about "this FY" agrees with the MoS reports.
+_FY_START_SQL = "(date_trunc('year', CURRENT_DATE - INTERVAL '3 months') + INTERVAL '3 months')::date"
+
+# month_no in capex_month_values is the CALENDAR month (Apr=4 .. Mar=3).
+_MONTH_LABEL_CASE = (
+    "CASE cmv.month_no WHEN 1 THEN 'Jan' WHEN 2 THEN 'Feb' WHEN 3 THEN 'Mar' "
+    "WHEN 4 THEN 'Apr' WHEN 5 THEN 'May' WHEN 6 THEN 'Jun' WHEN 7 THEN 'Jul' "
+    "WHEN 8 THEN 'Aug' WHEN 9 THEN 'Sep' WHEN 10 THEN 'Oct' WHEN 11 THEN 'Nov' "
+    "WHEN 12 THEN 'Dec' END"
+)
+_QUARTER_CASE = (
+    "CASE WHEN cmv.month_no IN (4,5,6) THEN 'Q1' WHEN cmv.month_no IN (7,8,9) THEN 'Q2' "
+    "WHEN cmv.month_no IN (10,11,12) THEN 'Q3' ELSE 'Q4' END"
+)
+
 _STATUS_CASE = (
     "CASE WHEN pa.actual_finish_date IS NOT NULL THEN 'Completed' "
     "WHEN pa.actual_start_date IS NOT NULL THEN 'In Progress' "
     "WHEN pa.planned_start_date > CURRENT_DATE THEN 'Not Started' "
     "ELSE 'Due / Not Started' END"
 )
+
+
+def _fy_month_label(col: str) -> str:
+    """Apr/May/.../Mar label for any date column — pivot-friendly."""
+    return f"TRIM(to_char({col}, 'Mon'))"
+
+
+def _fy_quarter(col: str) -> str:
+    return (f"CASE WHEN EXTRACT(MONTH FROM {col}) IN (4,5,6) THEN 'Q1' "
+            f"WHEN EXTRACT(MONTH FROM {col}) IN (7,8,9) THEN 'Q2' "
+            f"WHEN EXTRACT(MONTH FROM {col}) IN (10,11,12) THEN 'Q3' ELSE 'Q4' END")
+
+
+def _fy_year(col: str) -> str:
+    return (f"CASE WHEN EXTRACT(MONTH FROM {col}) >= 4 THEN EXTRACT(YEAR FROM {col})::int "
+            f"ELSE EXTRACT(YEAR FROM {col})::int - 1 END")
 
 DATASETS: dict[str, dict[str, Any]] = {
     "schemes": {
@@ -207,6 +239,198 @@ DATASETS: dict[str, dict[str, Any]] = {
             "avg_duration": {"label": "Avg Duration (months)", "sql": "ct.contract_duration_months", "agg": "avg", "type": "number"},
         },
     },
+    "capex_monthly": {
+        "label": "CAPEX Monthly (BE/RE/Actual)",
+        "base": ("FROM capex_month_values cmv "
+                 "JOIN capex_plan_rows cpr ON cpr.id = cmv.plan_row_id "
+                 "JOIN capex_plan_header cph ON cph.id = cpr.plan_id "
+                 "LEFT JOIN scheme_master s ON s.scheme_id = cpr.scheme_id "
+                 "WHERE cph.plan_status != 'Archived'"),
+        "dimensions": {
+            "row_name": {"label": "CAPEX Head / Scheme Row", "sql": "cpr.row_name", "type": "text"},
+            "row_level": {"label": "Row Level", "sql": "cpr.row_level", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "COALESCE(s.scheme_name, cpr.row_name)", "type": "text"},
+            "scheme_status": {"label": "Scheme Status", "sql": "s.current_status", "type": "text"},
+            "fy_year": {"label": "Financial Year", "sql": "cph.fy_year", "type": "text"},
+            "month_no": {"label": "Month No (calendar)", "sql": "cmv.month_no", "type": "int"},
+            "month_label": {"label": "Month", "sql": _MONTH_LABEL_CASE, "type": "text"},
+            "quarter": {"label": "Quarter (FY)", "sql": _QUARTER_CASE, "type": "text"},
+        },
+        "measures": {
+            "be": {"label": "BE (Cr)", "sql": "COALESCE(cmv.be_amount, 0)", "agg": "sum", "type": "money"},
+            "re": {"label": "RE (Cr)", "sql": "COALESCE(cmv.re_amount, 0)", "agg": "sum", "type": "money"},
+            "actual": {"label": "Actual (Cr)", "sql": "COALESCE(cmv.actual_amount, 0)", "agg": "sum", "type": "money"},
+            "row_count": {"label": "# Rows", "sql": "cmv.plan_row_id", "agg": "count_distinct", "type": "int"},
+        },
+    },
+    "physical_monthly": {
+        "label": "Physical Progress Monthly",
+        # one row per activity-month with plan qty and actual qty side by side;
+        # weighted % measures roll up to package/scheme physical progress.
+        "base": ("FROM (SELECT activity_id, month_date, SUM(COALESCE(planned_qty, 0)) AS plan_qty, "
+                 "             0::numeric AS actual_qty "
+                 "      FROM monthly_plan_entries GROUP BY activity_id, month_date "
+                 "      UNION ALL "
+                 "      SELECT activity_id, date_trunc('month', actual_date)::date, 0::numeric, "
+                 "             SUM(COALESCE(actual_qty, 0)) "
+                 "      FROM daily_actuals GROUP BY activity_id, date_trunc('month', actual_date)::date) pm "
+                 "JOIN plan_activities pa ON pa.activity_id = pm.activity_id "
+                 "JOIN progress_plans pp ON pp.plan_id = pa.plan_id "
+                 "JOIN packages pk ON pk.package_id = pp.package_id "
+                 "JOIN scheme_master s ON s.scheme_id = pk.scheme_id "
+                 "WHERE NOT COALESCE(pa.is_deleted, FALSE) AND NOT COALESCE(pp.is_deleted, FALSE) "
+                 "AND pp.is_current"),
+        "dimensions": {
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "activity_name": {"label": "Activity", "sql": "pa.activity_name", "type": "text"},
+            "category": {"label": "Category", "sql": "pa.activity_category", "type": "text"},
+            "month_date": {"label": "Month Date", "sql": "pm.month_date", "type": "date"},
+            "month_label": {"label": "Month", "sql": "TRIM(to_char(pm.month_date, 'Mon'))", "type": "text"},
+            "quarter": {"label": "Quarter (FY)",
+                        "sql": "CASE WHEN EXTRACT(MONTH FROM pm.month_date) IN (4,5,6) THEN 'Q1' "
+                               "WHEN EXTRACT(MONTH FROM pm.month_date) IN (7,8,9) THEN 'Q2' "
+                               "WHEN EXTRACT(MONTH FROM pm.month_date) IN (10,11,12) THEN 'Q3' ELSE 'Q4' END",
+                        "type": "text"},
+            "fy": {"label": "Financial Year",
+                   "sql": "CASE WHEN EXTRACT(MONTH FROM pm.month_date) >= 4 "
+                          "THEN EXTRACT(YEAR FROM pm.month_date)::int ELSE EXTRACT(YEAR FROM pm.month_date)::int - 1 END",
+                   "type": "int"},
+            "is_locked_plan": {"label": "Locked Plan?", "sql": "pp.is_locked", "type": "bool"},
+        },
+        "measures": {
+            "plan_qty": {"label": "Plan Qty", "sql": "pm.plan_qty", "agg": "sum", "type": "number"},
+            "actual_qty": {"label": "Actual Qty", "sql": "pm.actual_qty", "agg": "sum", "type": "number"},
+            "plan_pct_w": {"label": "Weighted Plan %",
+                           "sql": "pm.plan_qty / NULLIF(pa.scope_qty, 0) * COALESCE(pa.weight_pct, 0)",
+                           "agg": "sum", "type": "number"},
+            "actual_pct_w": {"label": "Weighted Actual %",
+                             "sql": "pm.actual_qty / NULLIF(pa.scope_qty, 0) * COALESCE(pa.weight_pct, 0)",
+                             "agg": "sum", "type": "number"},
+        },
+    },
+    "pf_projects": {
+        "label": "Physical–Financial Projects",
+        # One row per (non-dropped) scheme with the full MoS physical-financial
+        # picture pre-joined: CAPEX plan financials, FY actuals, approval /
+        # award / completion dates, delay bucket, MoS category, cost band and
+        # weighted physical progress (till last FY / FY plan / FY actual).
+        "base": ("FROM (SELECT s.scheme_id, s.scheme_name, s.scheme_type::text AS scheme_type, "
+                 "             s.current_status::text AS current_status, "
+                 "             s.last_status_remark, "
+                 "             COALESCE(NULLIF(f.gross, 0), s.estimated_cost_cr, 0) AS gross, "
+                 "             COALESCE(f.last_fy, 0) AS exp_last_fy, COALESCE(f.be_fy, 0) AS be_fy, "
+                 "             COALESCE(f.re_fy, 0) AS re_fy, COALESCE(f.actual_fy, 0) AS actual_fy, "
+                 "             d.pkg_start, d.pkg_end, "
+                 "             m.approval_date, m.award_date, m.sched_completion, m.expected_completion, "
+                 "             ph.phys_last_fy, ph.phys_fy_plan, ph.phys_fy_actual, "
+                 "             CASE WHEN s.current_status IN ('ongoing','on_hold') "
+                 "                       AND (d.pkg_start IS NULL OR d.pkg_start < " + _FY_START_SQL + ") "
+                 "                  THEN '1a. Being implemented from last FY' "
+                 "                  WHEN s.current_status IN ('ongoing','on_hold') "
+                 "                  THEN '1b. Implementation started during FY' "
+                 "                  WHEN s.current_status = 'closed' "
+                 "                  THEN '2. Completed (milestone payments)' "
+                 "                  WHEN s.current_status IN ('under_tendering','under_stage2') "
+                 "                  THEN '3a. New - under tendering / award' "
+                 "                  WHEN s.current_status IN ('under_formulation','under_stage1') "
+                 "                  THEN '3b. New - under Stage-I approval' "
+                 "                  ELSE '4. Other' END AS mos_category, "
+                 "             CASE WHEN COALESCE(NULLIF(f.gross, 0), s.estimated_cost_cr, 0) >= 50 "
+                 "                       OR COALESCE(NULLIF(f.gross, 0), s.estimated_cost_cr, 0) = 0 "
+                 "                  THEN 'A. Projects >= Rs 50 Cr' ELSE 'B. Projects < Rs 50 Cr' END AS cost_band, "
+                 "             CASE WHEN d.pkg_end IS NULL OR d.pkg_end >= CURRENT_DATE THEN 'On Time' "
+                 "                  WHEN CURRENT_DATE - d.pkg_end <= 365 THEN 'Delay < 1 Yr' "
+                 "                  ELSE 'Delay > 1 Yr' END AS delay_bucket "
+                 "      FROM scheme_master s "
+                 "      LEFT JOIN (SELECT cpr.scheme_id, SUM(COALESCE(cpv.gross_cost, 0)) AS gross, "
+                 "                        SUM(COALESCE(cpv.cumulative_exp_till_last_fy, 0)) AS last_fy, "
+                 "                        SUM(COALESCE(cpv.be_fy, 0)) AS be_fy, "
+                 "                        SUM(COALESCE(cpv.re_fy, 0)) AS re_fy, "
+                 "                        SUM(COALESCE(mv.actual, 0)) AS actual_fy "
+                 "                 FROM capex_plan_rows cpr "
+                 "                 JOIN capex_plan_header cph ON cph.id = cpr.plan_id "
+                 "                      AND cph.plan_status != 'Archived' "
+                 "                 LEFT JOIN capex_plan_values cpv ON cpv.plan_row_id = cpr.id "
+                 "                 LEFT JOIN (SELECT plan_row_id, SUM(COALESCE(actual_amount, 0)) AS actual "
+                 "                            FROM capex_month_values GROUP BY plan_row_id) mv "
+                 "                        ON mv.plan_row_id = cpr.id "
+                 "                 WHERE cpr.scheme_id IS NOT NULL AND cpr.row_level IN ('Item', 'Package') "
+                 "                 GROUP BY cpr.scheme_id) f ON f.scheme_id = s.scheme_id "
+                 "      LEFT JOIN (SELECT scheme_id, MIN(planned_start_date) AS pkg_start, "
+                 "                        MAX(planned_end_date) AS pkg_end "
+                 "                 FROM packages WHERE NOT is_deleted GROUP BY scheme_id) d "
+                 "             ON d.scheme_id = s.scheme_id "
+                 "      LEFT JOIN LATERAL (SELECT COALESCE(st2.sanction_date, st1.sanction_date) AS approval_date, "
+                 "                                COALESCE(c.effective_date, c.loa_date, st2.order_date) AS award_date, "
+                 "                                c.schedule_completion_date AS sched_completion, "
+                 "                                c.expected_completion_date AS expected_completion "
+                 "                         FROM (SELECT 1) one "
+                 "                         LEFT JOIN LATERAL (SELECT sanction_date, order_date FROM stage2_approvals "
+                 "                                            WHERE scheme_id = s.scheme_id AND is_current AND NOT is_deleted "
+                 "                                            ORDER BY revision_no DESC LIMIT 1) st2 ON TRUE "
+                 "                         LEFT JOIN LATERAL (SELECT sanction_date FROM stage1_approvals "
+                 "                                            WHERE scheme_id = s.scheme_id AND is_current AND NOT is_deleted "
+                 "                                            ORDER BY revision_no DESC LIMIT 1) st1 ON TRUE "
+                 "                         LEFT JOIN LATERAL (SELECT c2.effective_date, c2.loa_date, "
+                 "                                                   c2.schedule_completion_date, c2.expected_completion_date "
+                 "                                            FROM contracts c2 "
+                 "                                            JOIN packages p2 ON p2.package_id = c2.package_id "
+                 "                                            WHERE p2.scheme_id = s.scheme_id AND c2.is_active AND NOT c2.is_deleted "
+                 "                                            ORDER BY c2.contract_value_cr DESC NULLS LAST, "
+                 "                                                     c2.effective_date ASC NULLS LAST LIMIT 1) c ON TRUE) m ON TRUE "
+                 "      LEFT JOIN (SELECT p2.scheme_id, "
+                 "                        SUM(COALESCE(pa.actuals_till_last_fy, 0) / NULLIF(pa.scope_qty, 0) "
+                 "                            * COALESCE(pa.weight_pct, 0)) AS phys_last_fy, "
+                 "                        SUM(COALESCE(mp.fy_plan, 0) / NULLIF(pa.scope_qty, 0) "
+                 "                            * COALESCE(pa.weight_pct, 0)) AS phys_fy_plan, "
+                 "                        SUM(COALESCE(daf.fy_actual, 0) / NULLIF(pa.scope_qty, 0) "
+                 "                            * COALESCE(pa.weight_pct, 0)) AS phys_fy_actual "
+                 "                 FROM plan_activities pa "
+                 "                 JOIN progress_plans pp2 ON pp2.plan_id = pa.plan_id "
+                 "                      AND pp2.is_current AND NOT COALESCE(pp2.is_deleted, FALSE) "
+                 "                 JOIN packages p2 ON p2.package_id = pp2.package_id "
+                 "                 LEFT JOIN (SELECT activity_id, SUM(COALESCE(planned_qty, 0)) AS fy_plan "
+                 "                            FROM monthly_plan_entries "
+                 "                            WHERE month_date >= " + _FY_START_SQL + " "
+                 "                            GROUP BY activity_id) mp ON mp.activity_id = pa.activity_id "
+                 "                 LEFT JOIN (SELECT activity_id, SUM(COALESCE(actual_qty, 0)) AS fy_actual "
+                 "                            FROM daily_actuals "
+                 "                            WHERE actual_date >= " + _FY_START_SQL + " "
+                 "                            GROUP BY activity_id) daf ON daf.activity_id = pa.activity_id "
+                 "                 WHERE NOT COALESCE(pa.is_deleted, FALSE) "
+                 "                 GROUP BY p2.scheme_id) ph ON ph.scheme_id = s.scheme_id "
+                 "      WHERE NOT COALESCE(s.is_deleted, FALSE) AND s.current_status != 'dropped') pf "
+                 "WHERE TRUE"),
+        "dimensions": {
+            "scheme_name": {"label": "Project / Scheme", "sql": "pf.scheme_name", "type": "text"},
+            "status": {"label": "Status", "sql": "pf.current_status", "type": "text"},
+            "scheme_type": {"label": "Type", "sql": "pf.scheme_type", "type": "text"},
+            "mos_category": {"label": "MoS Category", "sql": "pf.mos_category", "type": "text"},
+            "cost_band": {"label": "Cost Band (₹50 Cr)", "sql": "pf.cost_band", "type": "text"},
+            "delay_bucket": {"label": "Delay Bucket", "sql": "pf.delay_bucket", "type": "text"},
+            "approval_date": {"label": "Approval Date", "sql": "pf.approval_date", "type": "date"},
+            "award_date": {"label": "Award Date", "sql": "pf.award_date", "type": "date"},
+            "original_completion": {"label": "Original Completion",
+                                    "sql": "COALESCE(pf.sched_completion, pf.pkg_end)", "type": "date"},
+            "anticipated_completion": {"label": "Anticipated Completion",
+                                       "sql": "COALESCE(pf.expected_completion, pf.sched_completion, pf.pkg_end)",
+                                       "type": "date"},
+            "reason": {"label": "Reasons of Delay / Remark", "sql": "pf.last_status_remark", "type": "text"},
+        },
+        "measures": {
+            "project_count": {"label": "# Projects", "sql": "pf.scheme_id", "agg": "count_distinct", "type": "int"},
+            "gross": {"label": "Total Cost (Cr)", "sql": "pf.gross", "agg": "sum", "type": "money"},
+            "exp_last_fy": {"label": "Exp till last FY (Cr)", "sql": "pf.exp_last_fy", "agg": "sum", "type": "money"},
+            "be_fy": {"label": "CAPEX BE this FY (Cr)", "sql": "pf.be_fy", "agg": "sum", "type": "money"},
+            "re_fy": {"label": "CAPEX RE this FY (Cr)", "sql": "pf.re_fy", "agg": "sum", "type": "money"},
+            "actual_fy": {"label": "Exp this FY (Cr)", "sql": "pf.actual_fy", "agg": "sum", "type": "money"},
+            "total_exp": {"label": "Cumulative Exp (Cr)", "sql": "pf.exp_last_fy + pf.actual_fy", "agg": "sum", "type": "money"},
+            "phys_last_fy": {"label": "Physical % till last FY", "sql": "COALESCE(pf.phys_last_fy, 0)", "agg": "avg", "type": "number"},
+            "phys_fy_plan": {"label": "Physical % FY plan", "sql": "COALESCE(pf.phys_fy_plan, 0)", "agg": "avg", "type": "number"},
+            "phys_fy_actual": {"label": "Physical % FY actual", "sql": "COALESCE(pf.phys_fy_actual, 0)", "agg": "avg", "type": "number"},
+        },
+    },
     "documents": {
         "label": "Document Vault",
         "base": ("FROM documents d "
@@ -224,6 +448,216 @@ DATASETS: dict[str, dict[str, Any]] = {
             "doc_count": {"label": "# Documents", "sql": "d.document_id", "agg": "count", "type": "int"},
             "total_pages": {"label": "Total Pages", "sql": "d.page_count", "agg": "sum", "type": "int"},
             "total_chunks": {"label": "Total Chunks", "sql": "d.chunk_count", "agg": "sum", "type": "int"},
+        },
+    },
+    "plant_progress": {
+        "label": "Plant Progress (Monthly)",
+        "base": ("FROM plant_progress_monthly ppm "
+                 "JOIN packages pk ON pk.package_id = ppm.package_id "
+                 "JOIN scheme_master s ON s.scheme_id = pk.scheme_id "
+                 "WHERE NOT COALESCE(pk.is_deleted, FALSE)"),
+        "dimensions": {
+            "month_date": {"label": "Month Date", "sql": "ppm.month_date", "type": "date"},
+            "month_label": {"label": "Month", "sql": _fy_month_label("ppm.month_date"), "type": "text"},
+            "quarter": {"label": "Quarter (FY)", "sql": _fy_quarter("ppm.month_date"), "type": "text"},
+            "fy": {"label": "Financial Year", "sql": _fy_year("ppm.month_date"), "type": "int"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "scheme_status": {"label": "Scheme Status", "sql": "s.current_status", "type": "text"},
+            "risk_level": {"label": "Risk Level", "sql": "ppm.risk_level", "type": "text"},
+        },
+        "measures": {
+            "entry_count": {"label": "# Entries", "sql": "ppm.progress_id", "agg": "count", "type": "int"},
+            "planned_pct": {"label": "Planned % (month)", "sql": "ppm.planned_progress_pct", "agg": "sum", "type": "number"},
+            "actual_pct": {"label": "Actual % (month)", "sql": "ppm.actual_progress_pct", "agg": "sum", "type": "number"},
+            "cum_planned_pct": {"label": "Cumulative Planned %", "sql": "ppm.cumulative_planned_pct", "agg": "max", "type": "number"},
+            "cum_actual_pct": {"label": "Cumulative Actual %", "sql": "ppm.cumulative_actual_pct", "agg": "max", "type": "number"},
+            "variance_pct": {"label": "Variance %", "sql": "ppm.variance_pct", "agg": "avg", "type": "number"},
+        },
+    },
+    "monthly_plan": {
+        "label": "Monthly Plan Entries",
+        "base": ("FROM monthly_plan_entries mpe "
+                 "JOIN plan_activities pa ON pa.activity_id = mpe.activity_id "
+                 "JOIN progress_plans pp ON pp.plan_id = pa.plan_id "
+                 "JOIN packages pk ON pk.package_id = pp.package_id "
+                 "JOIN scheme_master s ON s.scheme_id = pk.scheme_id "
+                 "WHERE NOT COALESCE(pa.is_deleted, FALSE) AND NOT COALESCE(pp.is_deleted, FALSE)"),
+        "dimensions": {
+            "month_date": {"label": "Month Date", "sql": "mpe.month_date", "type": "date"},
+            "month_label": {"label": "Month", "sql": _fy_month_label("mpe.month_date"), "type": "text"},
+            "quarter": {"label": "Quarter (FY)", "sql": _fy_quarter("mpe.month_date"), "type": "text"},
+            "fy": {"label": "Financial Year", "sql": _fy_year("mpe.month_date"), "type": "int"},
+            "row_type": {"label": "Row Type", "sql": "mpe.row_type", "type": "text"},
+            "activity_name": {"label": "Activity", "sql": "pa.activity_name", "type": "text"},
+            "category": {"label": "Category", "sql": "pa.activity_category", "type": "text"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "plan_name": {"label": "Plan", "sql": "pp.plan_name", "type": "text"},
+            "financial_year": {"label": "Plan FY", "sql": "pp.financial_year", "type": "text"},
+            "is_current_plan": {"label": "Current Plan?", "sql": "pp.is_current", "type": "bool"},
+            "is_locked_plan": {"label": "Locked Plan?", "sql": "pp.is_locked", "type": "bool"},
+        },
+        "measures": {
+            "entry_count": {"label": "# Entries", "sql": "mpe.monthly_entry_id", "agg": "count", "type": "int"},
+            "planned_qty": {"label": "Planned Qty", "sql": "mpe.planned_qty", "agg": "sum", "type": "number"},
+        },
+    },
+    "stage1": {
+        "label": "Stage-I Approvals",
+        "base": ("FROM stage1_approvals st1 "
+                 "JOIN scheme_master s ON s.scheme_id = st1.scheme_id "
+                 "WHERE NOT COALESCE(st1.is_deleted, FALSE)"),
+        "dimensions": {
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "scheme_status": {"label": "Scheme Status", "sql": "s.current_status", "type": "text"},
+            "revision_label": {"label": "Revision", "sql": "st1.revision_label", "type": "text"},
+            "is_current": {"label": "Current Revision?", "sql": "st1.is_current", "type": "bool"},
+            "sanction_date": {"label": "Sanction Date", "sql": "st1.sanction_date", "type": "date"},
+            "sanction_fy": {"label": "Sanction FY", "sql": _fy_year("st1.sanction_date"), "type": "int"},
+            "order_date": {"label": "Order Date", "sql": "st1.order_date", "type": "date"},
+            "sail_board_date": {"label": "SAIL Board Date", "sql": "st1.sail_board_date", "type": "date"},
+            "chairman_approval_date": {"label": "Chairman Approval", "sql": "st1.chairman_approval_date", "type": "date"},
+            "cod_date": {"label": "COD Date", "sql": "st1.cod_date", "type": "date"},
+        },
+        "measures": {
+            "approval_count": {"label": "# Approvals", "sql": "st1.stage1_id", "agg": "count", "type": "int"},
+            "scheme_count": {"label": "# Schemes", "sql": "st1.scheme_id", "agg": "count_distinct", "type": "int"},
+            "cost_gross": {"label": "Gross Cost (Cr)", "sql": "st1.cost_gross_cr", "agg": "sum", "type": "money"},
+            "cost_net": {"label": "Net Cost (Cr)", "sql": "st1.cost_net_itc_cr", "agg": "sum", "type": "money"},
+            "impl_months": {"label": "Avg Impl. Period (months)", "sql": "st1.implementation_period_months", "agg": "avg", "type": "number"},
+            "cod_to_sanction_days": {"label": "Avg COD→Sanction (days)", "sql": "(st1.sanction_date - st1.cod_date)", "agg": "avg", "type": "number"},
+        },
+    },
+    "stage2": {
+        "label": "Stage-II Approvals",
+        "base": ("FROM stage2_approvals st2 "
+                 "JOIN scheme_master s ON s.scheme_id = st2.scheme_id "
+                 "WHERE NOT COALESCE(st2.is_deleted, FALSE)"),
+        "dimensions": {
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "scheme_status": {"label": "Scheme Status", "sql": "s.current_status", "type": "text"},
+            "revision_label": {"label": "Revision", "sql": "st2.revision_label", "type": "text"},
+            "is_current": {"label": "Current Revision?", "sql": "st2.is_current", "type": "bool"},
+            "sanction_date": {"label": "Sanction Date", "sql": "st2.sanction_date", "type": "date"},
+            "sanction_fy": {"label": "Sanction FY", "sql": _fy_year("st2.sanction_date"), "type": "int"},
+            "order_date": {"label": "Order Date", "sql": "st2.order_date", "type": "date"},
+            "sail_board_date": {"label": "SAIL Board Date", "sql": "st2.sail_board_date", "type": "date"},
+            "pag_date": {"label": "PAG Date", "sql": "st2.pag_date", "type": "date"},
+        },
+        "measures": {
+            "approval_count": {"label": "# Approvals", "sql": "st2.stage2_id", "agg": "count", "type": "int"},
+            "scheme_count": {"label": "# Schemes", "sql": "st2.scheme_id", "agg": "count_distinct", "type": "int"},
+            "firmed_gross": {"label": "Firmed-up Gross (Cr)", "sql": "st2.firmed_up_cost_gross_cr", "agg": "sum", "type": "money"},
+            "firmed_net": {"label": "Firmed-up Net (Cr)", "sql": "st2.firmed_up_cost_net_itc_cr", "agg": "sum", "type": "money"},
+            "consultant_estimate": {"label": "Consultant Estimate (Cr)", "sql": "st2.consultant_estimate_cr", "agg": "sum", "type": "money"},
+            "var_vs_stage1": {"label": "Avg Var vs Stage-I %", "sql": "st2.variance_vs_stage1_pct", "agg": "avg", "type": "number"},
+            "var_vs_consultant": {"label": "Avg Var vs Consultant %", "sql": "st2.variance_vs_consultant_pct", "agg": "avg", "type": "number"},
+        },
+    },
+    "billing": {
+        "label": "Billing Schedule",
+        "base": ("FROM billing_schedules bs "
+                 "JOIN packages pk ON pk.package_id = bs.package_id "
+                 "JOIN scheme_master s ON s.scheme_id = pk.scheme_id "
+                 "LEFT JOIN contracts ct ON ct.contract_id = bs.contract_id "
+                 "WHERE NOT COALESCE(bs.is_deleted, FALSE)"),
+        "dimensions": {
+            "description": {"label": "Milestone", "sql": "bs.description", "type": "text"},
+            "milestone_no": {"label": "Milestone No", "sql": "bs.milestone_no", "type": "int"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "contractor": {"label": "Contractor", "sql": "ct.contractor_name", "type": "text"},
+            "scheduled_date": {"label": "Scheduled Date", "sql": "bs.scheduled_date", "type": "date"},
+            "scheduled_month": {"label": "Scheduled Month", "sql": _fy_month_label("bs.scheduled_date"), "type": "text"},
+            "scheduled_fy": {"label": "Scheduled FY", "sql": _fy_year("bs.scheduled_date"), "type": "int"},
+            "actual_billed_date": {"label": "Billed Date", "sql": "bs.actual_billed_date", "type": "date"},
+            "payment_received_date": {"label": "Payment Date", "sql": "bs.payment_received_date", "type": "date"},
+            "is_billed": {"label": "Billed?", "sql": "bs.is_billed", "type": "bool"},
+            "is_paid": {"label": "Paid?", "sql": "bs.is_paid", "type": "bool"},
+        },
+        "measures": {
+            "milestone_count": {"label": "# Milestones", "sql": "bs.billing_schedule_id", "agg": "count", "type": "int"},
+            "scheduled_amount": {"label": "Scheduled Amount (Cr)", "sql": "bs.scheduled_amount_cr", "agg": "sum", "type": "money"},
+            "actual_amount": {"label": "Actual Billed (Cr)", "sql": "bs.actual_amount_cr", "agg": "sum", "type": "money"},
+            "billed_count": {"label": "# Billed", "sql": "CASE WHEN bs.is_billed THEN 1 END", "agg": "count", "type": "int"},
+            "paid_count": {"label": "# Paid", "sql": "CASE WHEN bs.is_paid THEN 1 END", "agg": "count", "type": "int"},
+        },
+    },
+    "manpower": {
+        "label": "Manpower Deployment (DPR)",
+        "base": ("FROM daily_progress_manpower dpm "
+                 "JOIN scheme_master s ON s.scheme_id = dpm.scheme_id"),
+        "dimensions": {
+            "report_date": {"label": "Date", "sql": "dpm.report_date", "type": "date"},
+            "report_month": {"label": "Month", "sql": _fy_month_label("dpm.report_date"), "type": "text"},
+            "report_fy": {"label": "Financial Year", "sql": _fy_year("dpm.report_date"), "type": "int"},
+            "section_name": {"label": "Section", "sql": "dpm.section_name", "type": "text"},
+            "category_name": {"label": "Category", "sql": "dpm.category_name", "type": "text"},
+            "contractor_name": {"label": "Contractor", "sql": "dpm.contractor_name", "type": "text"},
+            "role_name": {"label": "Role / Trade", "sql": "dpm.role_name", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+        },
+        "measures": {
+            "entry_count": {"label": "# Entries", "sql": "dpm.id", "agg": "count", "type": "int"},
+            "manpower": {"label": "Manpower (sum)", "sql": "dpm.qty", "agg": "sum", "type": "number"},
+            "avg_manpower": {"label": "Avg Manpower", "sql": "dpm.qty", "agg": "avg", "type": "number"},
+            "peak_manpower": {"label": "Peak Manpower", "sql": "dpm.qty", "agg": "max", "type": "number"},
+            "last_month_avg": {"label": "Avg Last-Month", "sql": "dpm.last_month_average", "agg": "avg", "type": "number"},
+            "active_days": {"label": "# Active Days", "sql": "dpm.report_date", "agg": "count_distinct", "type": "int"},
+        },
+    },
+    "appendix2": {
+        "label": "Appendix-2 (Baseline Items)",
+        "base": ("FROM appendix2_items ai "
+                 "JOIN appendix2_revisions ar ON ar.revision_id = ai.revision_id "
+                 "JOIN scheme_master s ON s.scheme_id = ar.scheme_id "
+                 "LEFT JOIN packages pk ON pk.package_id = ar.package_id "
+                 "WHERE NOT COALESCE(ar.is_deleted, FALSE)"),
+        "dimensions": {
+            "item_name": {"label": "Item / Activity", "sql": "ai.item_name", "type": "text"},
+            "category": {"label": "Category", "sql": "ai.category", "type": "text"},
+            "s_no": {"label": "S. No", "sql": "ai.s_no", "type": "text"},
+            "is_category": {"label": "Is Category?", "sql": "ai.is_category", "type": "bool"},
+            "revision_label": {"label": "Revision", "sql": "ar.revision_label", "type": "text"},
+            "is_current_rev": {"label": "Current Revision?", "sql": "ar.is_current", "type": "bool"},
+            "is_locked_rev": {"label": "Locked Revision?", "sql": "ar.is_locked", "type": "bool"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "schedule_start": {"label": "Schedule Start", "sql": "ai.schedule_start", "type": "date"},
+            "schedule_finish": {"label": "Schedule Finish", "sql": "ai.schedule_finish", "type": "date"},
+            "source": {"label": "Source", "sql": "ai.source", "type": "text"},
+        },
+        "measures": {
+            "item_count": {"label": "# Items", "sql": "ai.item_id", "agg": "count", "type": "int"},
+            "weight_pct": {"label": "Weight %", "sql": "ai.weight_pct", "agg": "sum", "type": "number"},
+            "avg_weight": {"label": "Avg Weight %", "sql": "ai.weight_pct", "agg": "avg", "type": "number"},
+            "commencement_months": {"label": "Avg Commencement (months)", "sql": "ai.commencement_months", "agg": "avg", "type": "number"},
+            "completion_months": {"label": "Avg Completion (months)", "sql": "ai.completion_months", "agg": "avg", "type": "number"},
+        },
+    },
+    "lifecycle": {
+        "label": "Lifecycle Events",
+        "base": ("FROM lifecycle_events le "
+                 "JOIN scheme_master s ON s.scheme_id = le.scheme_id "
+                 "LEFT JOIN packages pk ON pk.package_id = le.package_id "
+                 "WHERE NOT COALESCE(le.is_deleted, FALSE)"),
+        "dimensions": {
+            "stage": {"label": "Stage", "sql": "le.stage", "type": "text"},
+            "event_type": {"label": "Event Type", "sql": "le.event_type", "type": "text"},
+            "event_label": {"label": "Event", "sql": "le.event_label", "type": "text"},
+            "event_date": {"label": "Event Date", "sql": "le.event_date", "type": "date"},
+            "event_month": {"label": "Event Month", "sql": _fy_month_label("le.event_date"), "type": "text"},
+            "event_fy": {"label": "Event FY", "sql": _fy_year("le.event_date"), "type": "int"},
+            "party_name": {"label": "Party", "sql": "le.party_name", "type": "text"},
+            "scheme_name": {"label": "Scheme", "sql": "s.scheme_name", "type": "text"},
+            "package_name": {"label": "Package", "sql": "pk.package_name", "type": "text"},
+            "source_table": {"label": "Source Table", "sql": "le.source_table", "type": "text"},
+        },
+        "measures": {
+            "event_count": {"label": "# Events", "sql": "le.event_id", "agg": "count", "type": "int"},
+            "scheme_count": {"label": "# Schemes", "sql": "le.scheme_id", "agg": "count_distinct", "type": "int"},
+            "cost_cr": {"label": "Cost (Cr)", "sql": "le.cost_cr", "agg": "sum", "type": "money"},
         },
     },
 }
@@ -270,6 +704,13 @@ class SortSpec(BaseModel):
     dir: str = "desc"                # asc | desc
 
 
+class PivotSpec(BaseModel):
+    on: str                          # a selected dimension whose values become columns
+    values: list[str] = Field(default_factory=list)  # numeric output aliases to spread (default: all)
+    row_total: bool = True           # append a Total column per measure
+    quarter_totals: bool = False     # for month pivots: insert Q1..Q4 total columns
+
+
 class QueryIn(BaseModel):
     dataset: str
     dimensions: list[str] = Field(default_factory=list)
@@ -278,6 +719,8 @@ class QueryIn(BaseModel):
     filters: Optional[FilterGroup] = None
     sort: list[SortSpec] = Field(default_factory=list)
     limit: int = 500
+    pivot: Optional[PivotSpec] = None
+    grand_total: bool = False        # append a grand-total row (post-pivot)
 
 
 FilterGroup.model_rebuild()
@@ -456,6 +899,14 @@ def compile_query(q: QueryIn) -> tuple[str, dict[str, Any], list[dict[str, str]]
         select_parts.append(f"{sql} AS {_quote_alias(cs.alias)}")
         add_col(cs.alias, cs.alias, "number")
 
+    if q.pivot:
+        if q.pivot.on not in q.dimensions:
+            raise CompileError(f"Pivot column '{q.pivot.on}' must be one of the selected dimensions")
+        numeric_aliases = {c["key"] for c in columns if c["type"] in ("int", "number", "money")}
+        for v in q.pivot.values:
+            if v not in numeric_aliases:
+                raise CompileError(f"Pivot value '{v}' is not a numeric output column")
+
     params: dict[str, Any] = {}
     where_extra = ""
     if q.filters:
@@ -490,6 +941,180 @@ def compile_query(q: QueryIn) -> tuple[str, dict[str, Any], list[dict[str, str]]
     limit = max(1, min(int(q.limit or 500), 5000))
     sql += f" LIMIT {limit}"
     return sql, params, columns
+
+
+# --------------------------------------------------------------------------- #
+#  Post-processing: pivot + totals                                            #
+# --------------------------------------------------------------------------- #
+FY_MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+_QUARTER_OF = {m: f"Q{i // 3 + 1}" for i, m in enumerate(FY_MONTHS)}
+_NUMERIC_TYPES = ("int", "number", "money")
+
+
+def _order_pivot_values(vals: list[Any]) -> list[Any]:
+    svals = [str(v) for v in vals]
+    if all(v in FY_MONTHS for v in svals):
+        return sorted(vals, key=lambda v: FY_MONTHS.index(str(v)))
+    if all(str(v).startswith("Q") and len(str(v)) == 2 for v in svals):
+        return sorted(vals, key=str)
+    try:
+        return sorted(vals)
+    except TypeError:
+        return vals
+
+
+def apply_postprocess(q: QueryIn, columns: list[dict[str, str]],
+                      rows: list[dict[str, Any]]) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Apply pivot / grand-total to an executed result. Runs on jsonified rows."""
+    if q.pivot:
+        columns, rows = _apply_pivot(q, columns, rows)
+    if q.grand_total and rows:
+        total: dict[str, Any] = {}
+        labeled = False
+        for c in columns:
+            if c["type"] in _NUMERIC_TYPES:
+                vals = [r.get(c["key"]) for r in rows if isinstance(r.get(c["key"]), (int, float))]
+                total[c["key"]] = round(sum(vals), 4) if vals else None
+            else:
+                total[c["key"]] = "Total" if not labeled else ""
+                labeled = True
+        total["__total__"] = True
+        rows = rows + [total]
+    return columns, rows
+
+
+def _apply_pivot(q: QueryIn, columns: list[dict[str, str]],
+                 rows: list[dict[str, Any]]) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    pv = q.pivot
+    col_by_key = {c["key"]: c for c in columns}
+    if pv.on not in col_by_key:
+        return columns, rows
+    value_keys = pv.values or [c["key"] for c in columns if c["type"] in _NUMERIC_TYPES]
+    key_cols = [c for c in columns if c["key"] != pv.on and c["key"] not in value_keys]
+
+    pvals = _order_pivot_values(list({r.get(pv.on) for r in rows if r.get(pv.on) is not None}))
+    multi = len(value_keys) > 1
+
+    def cell_key(pval: Any, vkey: str) -> str:
+        return f"{pval}|{vkey}" if multi else str(pval)
+
+    # group rows by the remaining dimensions (order of first appearance)
+    groups: dict[tuple, dict[str, Any]] = {}
+    for r in rows:
+        gk = tuple(r.get(c["key"]) for c in key_cols)
+        g = groups.setdefault(gk, {c["key"]: r.get(c["key"]) for c in key_cols})
+        for vk in value_keys:
+            v = r.get(vk)
+            if isinstance(v, (int, float)):
+                ck = cell_key(r.get(pv.on), vk)
+                g[ck] = round(g.get(ck, 0) + v, 4)
+
+    # single group of measure-rows when there are no remaining dimensions
+    no_dims = not key_cols
+    out_rows: list[dict[str, Any]]
+    out_cols: list[dict[str, str]] = [dict(c) for c in key_cols]
+    if no_dims:
+        out_cols.append({"key": "__measure__", "label": "Measure", "type": "text"})
+
+    def vlabel(vk: str) -> str:
+        return col_by_key.get(vk, {}).get("label", vk)
+
+    months_mode = all(str(p) in FY_MONTHS for p in pvals)
+    seq: list[tuple[str, Any]] = []          # (kind, pval-or-quarter)
+    if months_mode and pv.quarter_totals:
+        for qtr in ("Q1", "Q2", "Q3", "Q4"):
+            qmonths = [m for m in pvals if _QUARTER_OF[str(m)] == qtr]
+            seq += [("val", m) for m in qmonths]
+            if qmonths:
+                seq.append(("qtot", qtr))
+    else:
+        seq = [("val", p) for p in pvals]
+
+    if no_dims:
+        # rows = one per measure, columns = pivot values (+ totals)
+        for kind, p in seq:
+            out_cols.append({"key": f"c|{kind}|{p}", "label": (f"Total {p}" if kind == "qtot" else str(p)),
+                             "type": "money"})
+        if pv.row_total:
+            out_cols.append({"key": "c|total", "label": "Total", "type": "money"})
+        g = groups.get((), {})
+        out_rows = []
+        for vk in value_keys:
+            row: dict[str, Any] = {"__measure__": vlabel(vk)}
+            running = 0.0
+            for kind, p in seq:
+                if kind == "val":
+                    v = g.get(cell_key(p, vk))
+                    row[f"c|val|{p}"] = v
+                    if isinstance(v, (int, float)):
+                        running += v
+                else:
+                    qsum = [g.get(cell_key(m, vk)) for m in pvals if _QUARTER_OF[str(m)] == p]
+                    nums = [x for x in qsum if isinstance(x, (int, float))]
+                    row[f"c|qtot|{p}"] = round(sum(nums), 4) if nums else None
+            if pv.row_total:
+                row["c|total"] = round(running, 4)
+            out_rows.append(row)
+        return out_cols, out_rows
+
+    # normal pivot: rows keyed by remaining dims
+    for kind, p in seq:
+        for vk in value_keys:
+            base_label = f"Total {p}" if kind == "qtot" else str(p)
+            label = f"{base_label} · {vlabel(vk)}" if multi else base_label
+            key = f"{kind}|{p}|{vk}"
+            out_cols.append({"key": key, "label": label, "type": col_by_key.get(vk, {}).get("type", "number")})
+    if pv.row_total:
+        for vk in value_keys:
+            out_cols.append({"key": f"total|{vk}",
+                             "label": f"Total · {vlabel(vk)}" if multi else "Total", "type": "money"})
+
+    out_rows = []
+    for g in groups.values():
+        row = {c["key"]: g.get(c["key"]) for c in key_cols}
+        for vk in value_keys:
+            running = 0.0
+            for kind, p in seq:
+                if kind == "val":
+                    v = g.get(cell_key(p, vk))
+                    row[f"val|{p}|{vk}"] = v
+                    if isinstance(v, (int, float)):
+                        running += v
+                else:
+                    qsum = [g.get(cell_key(m, vk)) for m in pvals if _QUARTER_OF[str(m)] == p]
+                    nums = [x for x in qsum if isinstance(x, (int, float))]
+                    row[f"qtot|{p}|{vk}"] = round(sum(nums), 4) if nums else None
+            if pv.row_total:
+                row[f"total|{vk}"] = round(running, 4)
+        out_rows.append(row)
+    return out_cols, out_rows
+
+
+def compile_field_values(dataset: str, field: str, search: Optional[str] = None,
+                         limit: int = 200) -> tuple[str, dict[str, Any]]:
+    """Compile SQL for the DISTINCT values of one dimension (member picker).
+
+    Powers direct-selection filtering ("pick from the real values"). Identifier
+    is whitelisted against the registry; the optional search term is bound.
+    """
+    ds = _ds(dataset)
+    d = ds["dimensions"].get(field)
+    if not d:
+        raise CompileError(f"Unknown field '{field}'")
+    col = d["sql"]
+    base = ds["base"]
+    params: dict[str, Any] = {}
+    where_extra = f"{col} IS NOT NULL"
+    if search:
+        params["q"] = f"%{search}%"
+        where_extra += f" AND {col}::text ILIKE :q"
+    if " WHERE " in base:
+        base = base + " AND (" + where_extra + ")"
+    else:
+        base = base + " WHERE " + where_extra
+    lim = max(1, min(int(limit or 200), 1000))
+    sql = f"SELECT DISTINCT {col} AS v {base} ORDER BY v LIMIT {lim}"
+    return sql, params
 
 
 def registry_public() -> list[dict[str, Any]]:
