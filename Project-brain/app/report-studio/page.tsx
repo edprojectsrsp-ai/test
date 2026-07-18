@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import {
-  ArrowRight, FileStack, Play, Save, Table2, Wand2, Wrench,
+  ArrowRight, FileStack, LayoutDashboard, Play, Save, Table2, Wand2, Wrench,
 } from "lucide-react";
 
 const card: React.CSSProperties = {
@@ -43,6 +43,19 @@ export default function ReportStudioHub() {
           </div>
           <span style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", display: "inline-flex", alignItems: "center", gap: 4 }}>
             Open designer <ArrowRight size={13} />
+          </span>
+        </Link>
+
+        <Link href="/report-studio/canvas" style={card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
+            <LayoutDashboard size={18} /> <b style={{ fontSize: 14 }}>Dashboard Canvas</b>
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.5, flex: 1 }}>
+            Power BI-style report pages: drag &amp; resize visuals on a grid, slicers,
+            click-to-cross-filter, multi-page dashboards saved as live query specs.
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            Open canvas <ArrowRight size={13} />
           </span>
         </Link>
 

@@ -8,12 +8,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  FileStack, FlaskConical, LayoutTemplate, Table2, Wrench,
+  FileStack, FlaskConical, LayoutDashboard, LayoutTemplate, Table2, Wrench,
 } from "lucide-react";
 
 const NAV = [
   { href: "/report-studio", label: "Hub", icon: FlaskConical, exact: true },
   { href: "/report-studio/builder", label: "Matrix Builder", icon: Table2 },
+  { href: "/report-studio/canvas", label: "Dashboard Canvas", icon: LayoutDashboard },
   { href: "/report-studio/templates", label: "Templates", icon: FileStack },
   { href: "/report-studio/tools", label: "Tools", icon: Wrench },
 ];

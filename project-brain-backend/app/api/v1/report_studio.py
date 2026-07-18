@@ -575,3 +575,181 @@ def seed_capex_pack(db: Session = Depends(get_db)):
             created.append({"report_id": rid, "name": d["name"], "updated": False})
     db.commit()
     return {"reports": created}
+
+
+# ================================================================ dashboards
+# Power BI-style dashboard canvas: pages of visuals + slicers, persisted as
+# query specs (never raw SQL, never frozen numbers). Rendered client-side via
+# POST /query/batch so a whole page refreshes in a single round trip.
+
+class DashLayout(BaseModel):
+    x: int = 0
+    y: int = 0
+    w: int = 6
+    h: int = 5
+
+
+class DashVisual(BaseModel):
+    id: str
+    title: str = ""
+    dataset: str
+    viz: str = "bar"                 # table|bar|stackedbar|line|area|pie|donut|kpi
+    spec: RS.QueryIn
+    layout: DashLayout = DashLayout()
+    options: dict[str, Any] = {}
+
+
+class DashSlicer(BaseModel):
+    id: str
+    dataset: str
+    field: str
+    label: str = ""
+    type: str = "list"               # list | daterange
+
+
+class DashPage(BaseModel):
+    id: str
+    title: str = "Page"
+    slicers: list[DashSlicer] = []
+    visuals: list[DashVisual] = []
+
+
+class DashboardIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    pages: list[DashPage] = []
+    is_pinned: bool = False
+
+
+def _ensure_dashboards_table(db: Session) -> None:
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_dashboards ("
+        " dashboard_id SERIAL PRIMARY KEY,"
+        " name TEXT NOT NULL,"
+        " description TEXT,"
+        " pages JSONB NOT NULL DEFAULT '[]'::jsonb,"
+        " is_pinned BOOLEAN NOT NULL DEFAULT FALSE,"
+        " created_by INTEGER,"
+        " created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        " updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    ))
+    db.commit()
+
+
+def _validate_dashboard(payload: DashboardIn) -> None:
+    """Every visual spec must compile; every slicer field must exist."""
+    for pg in payload.pages:
+        for v in pg.visuals:
+            if v.spec.dataset != v.dataset:
+                raise HTTPException(400, f"Visual '{v.title or v.id}': spec dataset mismatch")
+            try:
+                RS.compile_query(v.spec)
+            except RS.CompileError as e:
+                raise HTTPException(400, f"Visual '{v.title or v.id}': {e}")
+        for s in pg.slicers:
+            try:
+                RS.compile_field_values(s.dataset, s.field, None, 1)
+            except RS.CompileError as e:
+                raise HTTPException(400, f"Slicer '{s.label or s.field}': {e}")
+
+
+def _dashboard_row(db: Session, dashboard_id: int) -> dict:
+    row = db.execute(text(
+        "SELECT * FROM rs_dashboards WHERE dashboard_id = :d"), {"d": dashboard_id}
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+    out = dict(row)
+    if isinstance(out.get("pages"), str):
+        out["pages"] = json.loads(out["pages"])
+    return out
+
+
+@router.get("/dashboards")
+def list_dashboards(db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    rows = db.execute(text(
+        "SELECT dashboard_id, name, description, is_pinned, "
+        "       jsonb_array_length(pages) AS page_count, updated_at "
+        "FROM rs_dashboards ORDER BY is_pinned DESC, updated_at DESC"
+    )).mappings().all()
+    return {"dashboards": [dict(r) for r in rows]}
+
+
+@router.post("/dashboards")
+def create_dashboard(payload: DashboardIn, db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    _validate_dashboard(payload)
+    did = db.execute(text(
+        "INSERT INTO rs_dashboards (name, description, pages, is_pinned) "
+        "VALUES (:n, :d, CAST(:p AS jsonb), :pin) RETURNING dashboard_id"
+    ), {"n": payload.name, "d": payload.description, "pin": payload.is_pinned,
+        "p": json.dumps([p.model_dump(mode="json") for p in payload.pages])}).scalar()
+    db.commit()
+    return {"dashboard_id": did}
+
+
+@router.get("/dashboards/{dashboard_id}")
+def get_dashboard(dashboard_id: int, db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    return _dashboard_row(db, dashboard_id)
+
+
+@router.put("/dashboards/{dashboard_id}")
+def update_dashboard(dashboard_id: int, payload: DashboardIn, db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    _dashboard_row(db, dashboard_id)
+    _validate_dashboard(payload)
+    db.execute(text(
+        "UPDATE rs_dashboards SET name=:n, description=:d, is_pinned=:pin, "
+        "pages=CAST(:p AS jsonb), updated_at=now() WHERE dashboard_id=:r"
+    ), {"n": payload.name, "d": payload.description, "pin": payload.is_pinned,
+        "p": json.dumps([p.model_dump(mode="json") for p in payload.pages]),
+        "r": dashboard_id})
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/dashboards/{dashboard_id}")
+def delete_dashboard(dashboard_id: int, db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    _dashboard_row(db, dashboard_id)
+    db.execute(text("DELETE FROM rs_dashboards WHERE dashboard_id = :d"), {"d": dashboard_id})
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/dashboards/{dashboard_id}/duplicate")
+def duplicate_dashboard(dashboard_id: int, db: Session = Depends(get_db)):
+    _ensure_dashboards_table(db)
+    src = _dashboard_row(db, dashboard_id)
+    did = db.execute(text(
+        "INSERT INTO rs_dashboards (name, description, pages) "
+        "VALUES (:n, :d, CAST(:p AS jsonb)) RETURNING dashboard_id"
+    ), {"n": f"{src['name']} (copy)", "d": src.get("description"),
+        "p": json.dumps(src["pages"])}).scalar()
+    db.commit()
+    return {"dashboard_id": did}
+
+
+# ---------------------------------------------------------------- batch query
+
+class BatchQueryIn(BaseModel):
+    queries: list[RS.QueryIn]
+
+
+@router.post("/query/batch")
+def run_query_batch(payload: BatchQueryIn, db: Session = Depends(get_db)):
+    """Run up to 24 structured queries in one call — powers dashboard page
+    rendering (all visuals refresh in a single round trip). Per-query errors
+    are returned inline so one bad visual never blanks the whole page."""
+    if len(payload.queries) > 24:
+        raise HTTPException(400, "Batch limited to 24 queries")
+    results: list[dict[str, Any]] = []
+    for q in payload.queries:
+        try:
+            results.append({"ok": True, **_run_query(db, q)})
+        except HTTPException as e:
+            results.append({"ok": False, "error": str(e.detail),
+                            "columns": [], "rows": [], "row_count": 0})
+    return {"results": results}
