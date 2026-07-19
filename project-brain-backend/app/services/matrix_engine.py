@@ -461,7 +461,8 @@ def _id_field(dataset: Optional[dict]) -> str:
     return (dataset or {}).get("id_field") or "scheme_id"
 
 
-def run_report(db, definition: dict, report_date: date) -> dict[str, Any]:
+def run_report(db, definition: dict, report_date: date,
+               include_ids: bool = False) -> dict[str, Any]:
     """Calculate every row × column, with per-cell traceability + reconciliation."""
     ctx = period_context(report_date)
     rules = load_rules(db)
@@ -499,11 +500,14 @@ def run_report(db, definition: dict, report_date: date) -> dict[str, Any]:
                     raise ValueError(f"Column '{col.get('name', col['key'])}': {e}")
                 cells[col["key"]] = round(v, 4) if isinstance(v, float) else v
         cells_by_rowid[row["id"]] = cells
-        results.append({
+        entry = {
             "id": row["id"], "name": row["name"], "depth": len(chain),
             "rule": row.get("rule"), "recon": row.get("recon"),
             "scheme_count": len(ids), "cells": cells,
-        })
+        }
+        if include_ids:
+            entry["scheme_ids"] = sorted(ids)
+        results.append(entry)
 
     # pass 2 — calculated rows (spec §4.5: cells referencing other cells)
     def _cell(rid: str, ck: str):

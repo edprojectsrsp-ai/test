@@ -84,6 +84,7 @@ export default function MatrixDesigner() {
   const [err, setErr] = useState("");
   const [drill, setDrill] = useState<any | null>(null);
   const [snaps, setSnaps] = useState<any[]>([]);
+  const [dq, setDq] = useState<any | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [libMeasures, setLibMeasures] = useState<LibMeasure[]>([]);
 
@@ -133,6 +134,10 @@ export default function MatrixDesigner() {
       const j = await r.json();
       if (!r.ok) throw new Error(j.detail || "Run failed");
       setResult(j); setTab("run");
+      try {
+        const d = await authFetch(mx(`/dq?report_date=${reportDate}`));
+        if (d.ok) setDq(await d.json());
+      } catch { /* DQ panel simply hidden */ }
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
 
@@ -356,6 +361,42 @@ export default function MatrixDesigner() {
                   </tbody>
                 </table>
               </div>
+
+              {/* data-quality pre-flight (spec §11) */}
+              {dq && (
+                <div style={{ ...panel, padding: 12, marginBottom: 12,
+                              borderColor: dq.error_violations > 0 ? "rgba(229,83,75,.5)" : "var(--line)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+                    {dq.error_violations > 0
+                      ? <AlertTriangle size={14} style={{ color: "#e5534b" }} />
+                      : <Check size={14} style={{ color: "#3fb950" }} />}
+                    <b style={{ fontSize: 12.5, flex: 1 }}>
+                      Data quality — {dq.error_violations} error{dq.error_violations === 1 ? "" : "s"}, {dq.warning_violations} warning{dq.warning_violations === 1 ? "" : "s"}
+                    </b>
+                    {dq.error_violations > 0 && (
+                      <span style={{ fontSize: 11, color: "#e5534b", fontWeight: 700 }}>
+                        freezing gated — fix or override with reason
+                      </span>
+                    )}
+                  </div>
+                  {dq.checks.filter((c: any) => (c.violation_count || 0) > 0).map((c: any) => (
+                    <div key={c.check_key} style={{ fontSize: 12, padding: "4px 0", borderTop: "1px dashed var(--line)" }}>
+                      <span style={{ fontWeight: 700, color: c.severity === "error" ? "#e5534b" : "#f0883e" }}>
+                        [{c.severity}]
+                      </span>{" "}
+                      <span style={{ color: "var(--ink-2)" }}>{c.name}</span>
+                      <span style={{ color: "var(--ink-4)" }}> — {c.violation_count} scheme(s): </span>
+                      <span style={{ fontFamily: mono, fontSize: 11, color: "var(--ink-3)" }}>
+                        {c.violations.slice(0, 6).map((v: any) => `${v.scheme_id} ${v.scheme_name}`).join(" · ")}
+                        {c.violation_count > 6 ? " …" : ""}
+                      </span>
+                    </div>
+                  ))}
+                  {dq.checks.every((c: any) => !(c.violation_count || 0)) && (
+                    <div style={{ fontSize: 12, color: "var(--ink-4)" }}>All {dq.checks.length} checks clean.</div>
+                  )}
+                </div>
+              )}
 
               {/* reconciliation */}
               <div style={{ ...panel, padding: 12, marginBottom: 12 }}>

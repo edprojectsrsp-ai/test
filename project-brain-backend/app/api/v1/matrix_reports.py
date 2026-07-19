@@ -724,3 +724,141 @@ def audit_log(entity: Optional[str] = None, entity_key: Optional[str] = None,
         f"SELECT * FROM rs_audit_log {w} ORDER BY at DESC LIMIT :lim"), params).mappings().all()
     return {"audit": [{**dict(r), "old_value": _jload(r["old_value"]),
                        "new_value": _jload(r["new_value"])} for r in rows]}
+
+
+# ═════════════════════════════════════════════ M2 — Trust
+
+from app.services import matrix_trust as MT
+
+
+@router.get("/dq")
+def data_quality(report_date: date, dataset_key: Optional[str] = None,
+                 db: Session = Depends(get_db)):
+    """Spec §11 pre-flight: every active check with drillable violations."""
+    _ensure_tables(db)
+    try:
+        return MT.run_dq(db, report_date, dataset_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+class DQCheckIn(BaseModel):
+    check_key: str
+    name: str
+    description: Optional[str] = None
+    dataset_key: str = "schemes"
+    severity: str = "warning"
+    expr: str
+
+
+@router.post("/dq/checks")
+def upsert_dq_check(payload: DQCheckIn, report_date: Optional[date] = None,
+                    db: Session = Depends(get_db)):
+    _ensure_tables(db)
+    if payload.severity not in ("warning", "error"):
+        raise HTTPException(400, "severity must be warning or error")
+    # validate the expression against a sample record before saving (spec §5.3)
+    pop = ME.fetch_population(db, report_date or date.today(), payload.dataset_key)
+    from app.services.formula_engine import validate_formula
+    sample = {**ME.period_context(report_date or date.today()),
+              **(pop[0] if pop else {})}
+    err = validate_formula(payload.expr, sample)
+    if err:
+        raise HTTPException(400, f"Check expression: {err}")
+    db.execute(text("""
+        INSERT INTO rs_dq_checks (check_key, name, description, dataset_key, severity, expr)
+        VALUES (:k, :n, :d, :ds, :s, :e)
+        ON CONFLICT (check_key) DO UPDATE SET name=EXCLUDED.name,
+          description=EXCLUDED.description, dataset_key=EXCLUDED.dataset_key,
+          severity=EXCLUDED.severity, expr=EXCLUDED.expr, is_active=TRUE,
+          updated_at=now()
+    """), {"k": payload.check_key, "n": payload.name, "d": payload.description,
+           "ds": payload.dataset_key, "s": payload.severity, "e": payload.expr})
+    _ensure_gov_tables(db)
+    _audit(db, "dq_check", payload.check_key, "update", None,
+           {"severity": payload.severity, "expr": payload.expr})
+    db.commit()
+    return {"check_key": payload.check_key}
+
+
+# freeze now gates on error-severity DQ violations (override audited)
+
+class SnapshotIn2(SnapshotIn):
+    override_dq: bool = False
+    override_reason: Optional[str] = None
+    actor: Optional[str] = None
+
+
+@router.post("/snapshots/gated")
+def freeze_gated(payload: SnapshotIn2, db: Session = Depends(get_db)):
+    """DQ-gated freeze: error violations block unless explicitly (and
+    auditably) overridden. Snapshots store per-row scheme_ids for compare."""
+    _ensure_tables(db)
+    _ensure_gov_tables(db)
+    definition = _definition_for(db, payload)
+    dq = MT.run_dq(db, payload.report_date, definition.get("dataset"))
+    if not dq["freeze_allowed"] and not payload.override_dq:
+        raise HTTPException(409, f"{dq['error_violations']} error-severity data-quality "
+                                 "violation(s) — fix them or freeze with override_dq=true "
+                                 "and an override_reason")
+    if not dq["freeze_allowed"] and payload.override_dq and not payload.override_reason:
+        raise HTTPException(400, "override_reason is mandatory when overriding DQ errors")
+    try:
+        result = ME.run_report(db, definition, payload.report_date, include_ids=True)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    rules = ME.load_rules(db)
+    sid = db.execute(text(
+        "INSERT INTO rs_matrix_snapshots (report_id, report_date, fy, status, "
+        " result, definition, rules_used) "
+        "VALUES (:r, :d, :fy, :st, CAST(:res AS jsonb), CAST(:def AS jsonb), "
+        " CAST(:ru AS jsonb)) RETURNING snapshot_id"),
+        {"r": payload.report_id, "d": payload.report_date, "fy": result["fy"],
+         "st": payload.status, "res": json.dumps(result),
+         "def": json.dumps(definition), "ru": json.dumps(rules)}).scalar()
+    _audit(db, "snapshot", sid, "create",
+           None, {"report_id": payload.report_id, "status": payload.status,
+                  "dq_errors": dq["error_violations"],
+                  "dq_overridden": bool(payload.override_dq and not dq["freeze_allowed"])},
+           payload.override_reason, payload.actor)
+    db.commit()
+    return {"snapshot_id": sid, "fy": result["fy"], "status": payload.status,
+            "dq": {"errors": dq["error_violations"], "warnings": dq["warning_violations"],
+                   "overridden": bool(payload.override_dq and not dq["freeze_allowed"])}}
+
+
+class CompareIn(BaseModel):
+    snapshot_id: int
+    against_snapshot_id: Optional[int] = None   # None = live at the same position date
+
+
+@router.post("/compare")
+def compare_snapshots(payload: CompareIn, db: Session = Depends(get_db)):
+    """Snapshot vs live (same position date) or vs another snapshot — cell
+    deltas, which records entered/left each row, and rule-version changes."""
+    _ensure_tables(db)
+    base = db.execute(text(
+        "SELECT report_date, result, definition, rules_used FROM rs_matrix_snapshots "
+        "WHERE snapshot_id=:s"), {"s": payload.snapshot_id}).mappings().first()
+    if not base:
+        raise HTTPException(404, "Snapshot not found")
+    base_result = _jload(base["result"])
+    base_rules = _jload(base["rules_used"])
+    if payload.against_snapshot_id:
+        other = db.execute(text(
+            "SELECT result, rules_used FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+            {"s": payload.against_snapshot_id}).mappings().first()
+        if not other:
+            raise HTTPException(404, "Comparison snapshot not found")
+        other_result, other_rules = _jload(other["result"]), _jload(other["rules_used"])
+        other_label = f"snapshot #{payload.against_snapshot_id}"
+    else:
+        try:
+            other_result = ME.run_report(db, _jload(base["definition"]),
+                                         base["report_date"], include_ids=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        other_rules = ME.load_rules(db)
+        other_label = "live"
+    return MT.compare(base_result, other_result, base_rules, other_rules,
+                      f"snapshot #{payload.snapshot_id}", other_label)
