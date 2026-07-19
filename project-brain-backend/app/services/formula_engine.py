@@ -317,6 +317,16 @@ def validate_formula(src: str, sample_context: dict) -> Optional[str]:
         return f"Evaluation error: {e}"
 
 
+def identifiers(src: str) -> set[str]:
+    """Bare identifiers referenced by a formula (excludes function calls)."""
+    toks = _tokenize(src)
+    out = set()
+    for i, (k, v) in enumerate(toks):
+        if k == "ident" and not (i + 1 < len(toks) and toks[i + 1] == ("op", "(")):
+            out.add(v)
+    return out
+
+
 def median(values: list[float]) -> Optional[float]:
     if not values:
         return None

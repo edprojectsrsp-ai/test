@@ -862,3 +862,104 @@ def compare_snapshots(payload: CompareIn, db: Session = Depends(get_db)):
         other_label = "live"
     return MT.compare(base_result, other_result, base_rules, other_rules,
                       f"snapshot #{payload.snapshot_id}", other_label)
+
+
+# ═════════════════════════════════════════════ M3 — Productivity
+
+import uuid as _uuid
+
+
+class TemplateIn(BaseModel):
+    template_key: str
+    name: str
+    description: Optional[str] = None
+    rows: list[dict]
+
+
+def _ensure_m3_tables(db: Session) -> None:
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_section_templates ("
+        " template_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,"
+        " rows JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    db.commit()
+
+
+def _strip_ids(rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        c = {k: v for k, v in r.items() if k != "id"}
+        if c.get("children"):
+            c["children"] = _strip_ids(c["children"])
+        out.append(c)
+    return out
+
+
+def _assign_ids(rows: list[dict]) -> list[dict]:
+    out = []
+    for r in rows:
+        c = dict(r)
+        c["id"] = _uuid.uuid4().hex[:8]
+        if c.get("children"):
+            c["children"] = _assign_ids(c["children"])
+        out.append(c)
+    return out
+
+
+@router.get("/templates")
+def list_templates(db: Session = Depends(get_db)):
+    _ensure_m3_tables(db)
+    rows = db.execute(text(
+        "SELECT template_key, name, description, rows, updated_at "
+        "FROM rs_section_templates ORDER BY template_key")).mappings().all()
+    return {"templates": [{**dict(r), "rows": _jload(r["rows"])} for r in rows]}
+
+
+@router.post("/templates")
+def save_template(payload: TemplateIn, db: Session = Depends(get_db)):
+    """Save a row subtree as a reusable section (ids stripped — assigned fresh
+    on every instantiation so the same template can appear many times)."""
+    _ensure_m3_tables(db)
+    rows = _strip_ids(payload.rows)
+    db.execute(text("""
+        INSERT INTO rs_section_templates (template_key, name, description, rows)
+        VALUES (:k, :n, :d, CAST(:r AS jsonb))
+        ON CONFLICT (template_key) DO UPDATE SET name=EXCLUDED.name,
+          description=EXCLUDED.description, rows=EXCLUDED.rows, updated_at=now()
+    """), {"k": payload.template_key, "n": payload.name,
+           "d": payload.description, "r": json.dumps(rows)})
+    _ensure_gov_tables(db)
+    _audit(db, "template", payload.template_key, "update", None, {"rows": rows})
+    db.commit()
+    return {"template_key": payload.template_key}
+
+
+@router.post("/templates/{template_key}/instantiate")
+def instantiate_template(template_key: str, db: Session = Depends(get_db)):
+    """Fresh-id copy of the template subtree, ready to graft under any parent.
+    Parent rule inheritance is automatic — the engine compounds ancestor rules."""
+    _ensure_m3_tables(db)
+    rows = db.execute(text(
+        "SELECT rows FROM rs_section_templates WHERE template_key=:k"),
+        {"k": template_key}).scalar()
+    if rows is None:
+        raise HTTPException(404, "Template not found")
+    return {"rows": _assign_ids(_jload(rows))}
+
+
+@router.post("/reports/{report_id}/clone")
+def clone_report(report_id: int, db: Session = Depends(get_db)):
+    _ensure_tables(db)
+    src = db.execute(text(
+        "SELECT name, description, definition FROM rs_matrix_reports WHERE report_id=:r"),
+        {"r": report_id}).mappings().first()
+    if not src:
+        raise HTTPException(404, "Report not found")
+    rid = db.execute(text(
+        "INSERT INTO rs_matrix_reports (name, description, definition) "
+        "VALUES (:n, :d, CAST(:def AS jsonb)) RETURNING report_id"),
+        {"n": f"{src['name']} (copy)", "d": src["description"],
+         "def": json.dumps(_jload(src["definition"]))}).scalar()
+    _ensure_gov_tables(db)
+    _audit(db, "report", rid, "create", None, {"cloned_from": report_id})
+    db.commit()
+    return {"report_id": rid, "name": f"{src['name']} (copy)"}

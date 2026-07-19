@@ -32,7 +32,7 @@ const mx = (p: string) => `${API}/report-studio/matrix${p}`;
 type Field = { key: string; label: string; type: string };
 type Cond = { field?: string; op?: string; value?: any; rule?: string; conditions?: Cond[] };
 type Rule = { rule_key: string; rule_name: string; description?: string; condition: any; version: number };
-type LibMeasure = { measure_key: string; name: string; kind: string };
+type LibMeasure = { measure_key: string; name: string; kind: string; field?: string; agg?: string; weight_field?: string; expr?: string; unit?: string; decimals?: number };
 type Col = { key: string; name: string; measure?: { field: string; agg: string; weight_field?: string }; measure_key?: string };
 type Row = { id: string; name: string; rule?: string; recon?: string | null; children?: Row[] };
 type Defn = { columns: Col[]; rows: Row[] };
@@ -71,7 +71,7 @@ const RECONS = [
 /* ================================================================ page */
 
 export default function MatrixDesigner() {
-  const [tab, setTab] = useState<"rules" | "design" | "run">("run");
+  const [tab, setTab] = useState<"rules" | "design" | "run" | "measures" | "data">("run");
   const [fieldsMeta, setFieldsMeta] = useState<{ fields: Field[]; operators: Record<string, string[]> }>({ fields: [], operators: {} });
   const [rules, setRules] = useState<Rule[]>([]);
   const [reports, setReports] = useState<{ report_id: number; name: string }[]>([]);
@@ -87,15 +87,19 @@ export default function MatrixDesigner() {
   const [dq, setDq] = useState<any | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [libMeasures, setLibMeasures] = useState<LibMeasure[]>([]);
+  const [templates, setTemplates] = useState<{ template_key: string; name: string }[]>([]);
+  const [datasets, setDatasets] = useState<any[]>([]);
 
   const fieldByKey = useMemo(() => Object.fromEntries(fieldsMeta.fields.map((f) => [f.key, f])), [fieldsMeta]);
   const numFields = useMemo(() => fieldsMeta.fields.filter((f) => f.type === "number"), [fieldsMeta]);
 
   const loadAll = useCallback(async () => {
     try {
-      const [fr, rr, pr, mr] = await Promise.all([
+      const [fr, rr, pr, mr, tr, dr] = await Promise.all([
         authFetch(mx("/fields")), authFetch(mx("/rules")), authFetch(mx("/reports")),
-        authFetch(mx("/measures"))]);
+        authFetch(mx("/measures")), authFetch(mx("/templates")), authFetch(mx("/datasets"))]);
+      setTemplates((await tr.json()).templates || []);
+      setDatasets((await dr.json()).datasets || []);
       setFieldsMeta(await fr.json());
       setRules((await rr.json()).rules || []);
       setReports((await pr.json()).reports || []);
@@ -186,6 +190,18 @@ export default function MatrixDesigner() {
     }
     return false;
   };
+  const insertTemplate = async (pid: string | null, key: string) => {
+    if (!key) return;
+    const r = await authFetch(mx(`/templates/${key}/instantiate`), { method: "POST" });
+    const j = await r.json();
+    if (!r.ok) { setErr(j.detail || "Template failed"); return; }
+    mutateRows((rows) => {
+      if (!pid) { rows.push(...j.rows); return rows; }
+      findAnd(rows, pid, (arr, i) => { arr[i].children = [...(arr[i].children || []), ...j.rows]; });
+      return rows;
+    });
+  };
+
   const addChild = (pid: string | null) => mutateRows((rows) => {
     const row: Row = { id: uid(), name: "New row", children: [] };
     if (!pid) { rows.push(row); return rows; }
@@ -223,10 +239,17 @@ export default function MatrixDesigner() {
           <option value="">— new report —</option>
           {reports.map((r) => <option key={r.report_id} value={r.report_id}>{r.name}</option>)}
         </select>
+        {reportId && (
+          <button style={btn()} title="Clone this report" onClick={async () => {
+            const r = await authFetch(mx(`/reports/${reportId}/clone`), { method: "POST" });
+            const j = await r.json();
+            if (r.ok) { await loadAll(); openReport(j.report_id); } else setErr(j.detail || "Clone failed");
+          }}><FileSpreadsheet size={13} /> Clone</button>
+        )}
         <div style={{ flex: 1 }} />
-        {(["rules", "design", "run"] as const).map((t) => (
+        {(["rules", "design", "run", "measures", "data"] as const).map((t) => (
           <button key={t} style={{ ...btn(tab === t), textTransform: "capitalize" }} onClick={() => setTab(t)}>
-            {t === "rules" ? <Shield size={13} /> : t === "design" ? <GitBranch size={13} /> : <Play size={13} />} {t}
+            {t === "rules" ? <Shield size={13} /> : t === "design" ? <GitBranch size={13} /> : t === "measures" ? <Scale size={13} /> : t === "data" ? <FolderOpen size={13} /> : <Play size={13} />} {t}
           </button>
         ))}
         <button style={btn()} onClick={saveReport}><Save size={13} /> Save</button>
@@ -252,9 +275,24 @@ export default function MatrixDesigner() {
               <GitBranch size={14} style={{ color: "var(--steel)" }} />
               <b style={{ fontSize: 12.5, flex: 1 }}>Row hierarchy — children inherit every ancestor rule</b>
               <button style={btn()} onClick={() => addChild(null)}><Plus size={12} /> Top row</button>
+              <select style={{ ...inp, width: 220 }} value="" onChange={(e) => insertTemplate(null, e.target.value)}>
+                <option value="">Insert section template…</option>
+                {templates.map((t) => <option key={t.template_key} value={t.template_key}>{t.name}</option>)}
+              </select>
             </div>
-            <RowTree rows={defn.rows} depth={0} rules={rules}
-                     patch={patchRow} addChild={addChild} del={deleteRow} />
+            <RowTree rows={defn.rows} depth={0} rules={rules} templates={templates}
+                     patch={patchRow} addChild={addChild} del={deleteRow}
+                     insertTemplate={insertTemplate}
+                     saveTemplate={async (row) => {
+                       const key = prompt("Template key (a-z, 0-9, _):");
+                       if (!key) return;
+                       const r = await authFetch(mx("/templates"), {
+                         method: "POST", headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ template_key: key.replace(/[^a-z0-9_]/g, ""), name: row.name, rows: [row] }),
+                       });
+                       if (!r.ok) setErr((await r.json()).detail || "Save failed");
+                       else { const t = await authFetch(mx("/templates")); setTemplates((await t.json()).templates || []); }
+                     }} />
             {defn.rows.length === 0 && (
               <div style={{ color: "var(--ink-4)", fontSize: 12, padding: 16, textAlign: "center" }}>
                 Add a top row (e.g. "Total Ongoing projects" → rule <i>ongoing</i>), then children like
@@ -304,6 +342,15 @@ export default function MatrixDesigner() {
             ))}
           </div>
         </div>
+      )}
+
+      {tab === "measures" && (
+        <MeasuresTab measures={libMeasures} numFields={numFields} fields={fieldsMeta.fields}
+                     onChanged={loadAll} setErr={setErr} />
+      )}
+
+      {tab === "data" && (
+        <DataTab datasets={datasets} onChanged={loadAll} setErr={setErr} reportDate={reportDate} />
       )}
 
       {tab === "run" && (
@@ -495,10 +542,12 @@ export default function MatrixDesigner() {
 
 /* ================================================================ row tree */
 
-function RowTree({ rows, depth, rules, patch, addChild, del }: {
-  rows: Row[]; depth: number; rules: Rule[];
+function RowTree({ rows, depth, rules, templates, patch, addChild, del, insertTemplate, saveTemplate }: {
+  rows: Row[]; depth: number; rules: Rule[]; templates: { template_key: string; name: string }[];
   patch: (id: string, p: Partial<Row>) => void;
   addChild: (pid: string) => void; del: (id: string) => void;
+  insertTemplate: (pid: string, key: string) => void;
+  saveTemplate: (row: Row) => void;
 }) {
   return (
     <>
@@ -518,10 +567,18 @@ function RowTree({ rows, depth, rules, patch, addChild, del }: {
               {RECONS.map((x) => <option key={x.v} value={x.v}>{x.label}</option>)}
             </select>
             <button style={{ ...btn(), padding: "4px 7px" }} title="Add child" onClick={() => addChild(r.id)}><Plus size={11} /></button>
+            <select style={{ ...inp, width: 34, padding: "4px 2px" }} value="" title="Insert template as children"
+                    onChange={(e) => insertTemplate(r.id, e.target.value)}>
+              <option value="">§</option>
+              {templates.map((t) => <option key={t.template_key} value={t.template_key}>{t.name}</option>)}
+            </select>
+            <Save size={12} style={{ cursor: "pointer", color: "var(--ink-4)" }} onClick={() => saveTemplate(r)} />
             <Trash2 size={13} style={{ cursor: "pointer", color: "var(--ink-4)" }} onClick={() => del(r.id)} />
           </div>
           {r.children && r.children.length > 0 && (
-            <RowTree rows={r.children} depth={depth + 1} rules={rules} patch={patch} addChild={addChild} del={del} />
+            <RowTree rows={r.children} depth={depth + 1} rules={rules} templates={templates}
+                     patch={patch} addChild={addChild} del={del}
+                     insertTemplate={insertTemplate} saveTemplate={saveTemplate} />
           )}
         </div>
       ))}
@@ -684,6 +741,185 @@ function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged,
                 ))}
               </div>
             )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+/* ================================================================ measures tab */
+
+function MeasuresTab({ measures, numFields, fields, onChanged, setErr }: {
+  measures: LibMeasure[]; numFields: Field[]; fields: Field[];
+  onChanged: () => void; setErr: (s: string) => void;
+}) {
+  const [ed, setEd] = useState<LibMeasure | null>(null);
+  const save = async () => {
+    if (!ed) return;
+    const r = await authFetch(mx("/measures"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ed),
+    });
+    if (!r.ok) { setErr((await r.json()).detail || "Save failed"); return; }
+    setEd(null); onChanged();
+  };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 12 }}>
+      <div style={{ ...panel, padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+          <Scale size={14} style={{ color: "var(--steel)" }} />
+          <b style={{ fontSize: 12.5, flex: 1 }}>Measure library</b>
+          <button style={btn()} onClick={() => setEd({ measure_key: "", name: "", kind: "agg", field: "scheme_id", agg: "count_distinct", decimals: 2 })}>
+            <Plus size={12} /> New
+          </button>
+        </div>
+        {measures.map((m) => (
+          <div key={m.measure_key} onClick={() => setEd({ ...m })}
+               style={{ padding: "7px 9px", borderRadius: 7, cursor: "pointer", marginBottom: 3,
+                        border: `1px solid ${ed?.measure_key === m.measure_key ? "var(--steel)" : "var(--line)"}` }}>
+            <div style={{ fontSize: 12, fontWeight: 750 }}>{m.name} {m.unit ? <span style={{ color: "var(--ink-4)", fontWeight: 500 }}>({m.unit})</span> : null}</div>
+            <div style={{ fontSize: 10.5, color: "var(--ink-4)", fontFamily: mono }}>
+              {m.measure_key} · {m.kind === "formula" ? m.expr : `${m.agg}(${m.field})`}
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ ...panel, padding: 14 }}>
+        {!ed ? (
+          <div style={{ color: "var(--ink-4)", fontSize: 12.5, padding: 20 }}>
+            Select or create a measure. Formula measures may reference any other library
+            measure by key (e.g. <code>fy_exp / be * 100</code>) — dependencies are computed
+            automatically on each row's population.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+              <input style={{ ...inp, width: 150, fontFamily: mono }} placeholder="measure_key" value={ed.measure_key}
+                     onChange={(e) => setEd({ ...ed, measure_key: e.target.value.replace(/[^a-z0-9_]/g, "") })} />
+              <input style={{ ...inp, flex: 1, minWidth: 170, fontWeight: 700 }} placeholder="Name" value={ed.name}
+                     onChange={(e) => setEd({ ...ed, name: e.target.value })} />
+              <select style={{ ...inp, width: 96 }} value={ed.kind} onChange={(e) => setEd({ ...ed, kind: e.target.value })}>
+                <option value="agg">agg</option><option value="formula">formula</option>
+              </select>
+            </div>
+            {ed.kind === "agg" ? (
+              <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+                <select style={{ ...inp, width: 130 }} value={ed.agg || "sum"} onChange={(e) => setEd({ ...ed, agg: e.target.value })}>
+                  {["sum", "count", "count_distinct", "avg", "min", "max", "median", "weighted_avg"].map((a) => <option key={a}>{a}</option>)}
+                </select>
+                <select style={{ ...inp, flex: 1 }} value={ed.field || ""} onChange={(e) => setEd({ ...ed, field: e.target.value })}>
+                  {(ed.agg?.startsWith("count") ? fields : numFields).map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                </select>
+                {ed.agg === "weighted_avg" && (
+                  <select style={{ ...inp, width: 170 }} value={ed.weight_field || ""} onChange={(e) => setEd({ ...ed, weight_field: e.target.value })}>
+                    <option value="">weight field…</option>
+                    {numFields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                  </select>
+                )}
+              </div>
+            ) : (
+              <input style={{ ...inp, width: "100%", fontFamily: mono, marginBottom: 8 }}
+                     placeholder="formula, e.g. fy_exp / be * 100" value={ed.expr || ""}
+                     onChange={(e) => setEd({ ...ed, expr: e.target.value })} />
+            )}
+            <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+              <input style={{ ...inp, width: 110 }} placeholder="unit (₹ Cr, %)" value={ed.unit || ""}
+                     onChange={(e) => setEd({ ...ed, unit: e.target.value })} />
+              <input style={{ ...inp, width: 90 }} type="number" min={0} max={6} placeholder="decimals"
+                     value={ed.decimals ?? 2} onChange={(e) => setEd({ ...ed, decimals: Number(e.target.value) })} />
+              <div style={{ flex: 1 }} />
+              <button style={btn(true)} onClick={save}><Save size={12} /> Save</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ================================================================ data tab */
+
+function DataTab({ datasets, onChanged, setErr, reportDate }: {
+  datasets: any[]; onChanged: () => void; setErr: (s: string) => void; reportDate: string;
+}) {
+  const [ed, setEd] = useState<any | null>(null);
+  const save = async () => {
+    if (!ed) return;
+    let fieldsJ, derivedJ;
+    try { fieldsJ = JSON.parse(ed._fields); derivedJ = JSON.parse(ed._derived); }
+    catch { setErr("Fields/derived must be valid JSON arrays"); return; }
+    const r = await authFetch(mx(`/datasets?report_date=${reportDate}`), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dataset_key: ed.dataset_key, name: ed.name, base_sql: ed.base_sql,
+                             id_field: ed.id_field, name_field: ed.name_field,
+                             fields: fieldsJ, derived: derivedJ }),
+    });
+    if (!r.ok) { setErr((await r.json()).detail || "Save failed"); return; }
+    setEd(null); onChanged();
+  };
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "300px 1fr", gap: 12 }}>
+      <div style={{ ...panel, padding: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+          <FolderOpen size={14} style={{ color: "var(--steel)" }} />
+          <b style={{ fontSize: 12.5, flex: 1 }}>Datasets</b>
+          <button style={btn()} onClick={() => setEd({ dataset_key: "", name: "", base_sql: "SELECT ...",
+            id_field: "scheme_id", name_field: "scheme_name", _fields: "[]", _derived: "[]" })}>
+            <Plus size={12} /> New
+          </button>
+        </div>
+        {datasets.map((d) => (
+          <div key={d.dataset_key}
+               onClick={() => setEd({ ...d, _fields: JSON.stringify(d.fields, null, 1), _derived: JSON.stringify(d.derived, null, 1) })}
+               style={{ padding: "7px 9px", borderRadius: 7, cursor: "pointer", marginBottom: 3,
+                        border: `1px solid ${ed?.dataset_key === d.dataset_key ? "var(--steel)" : "var(--line)"}` }}>
+            <div style={{ fontSize: 12, fontWeight: 750 }}>{d.name}</div>
+            <div style={{ fontSize: 10.5, color: "var(--ink-4)", fontFamily: mono }}>
+              {d.dataset_key} · {d.fields.length} fields · {d.derived.length} derived
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ ...panel, padding: 14 }}>
+        {!ed ? (
+          <div style={{ color: "var(--ink-4)", fontSize: 12.5, padding: 20 }}>
+            Datasets are pure configuration: a SELECT (with :fy / :report_date parameters),
+            a field registry, and derived-field formulas (priority chains like
+            <code> coalesce(revised_completion, planned_completion)</code>). Saving dry-runs
+            the SQL and validates every formula before accepting.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+              <input style={{ ...inp, width: 130, fontFamily: mono }} placeholder="dataset_key" value={ed.dataset_key}
+                     onChange={(e) => setEd({ ...ed, dataset_key: e.target.value.replace(/[^a-z0-9_]/g, "") })} />
+              <input style={{ ...inp, flex: 1, minWidth: 160, fontWeight: 700 }} placeholder="Name" value={ed.name}
+                     onChange={(e) => setEd({ ...ed, name: e.target.value })} />
+              <input style={{ ...inp, width: 110, fontFamily: mono }} value={ed.id_field}
+                     onChange={(e) => setEd({ ...ed, id_field: e.target.value })} title="id field" />
+              <input style={{ ...inp, width: 120, fontFamily: mono }} value={ed.name_field}
+                     onChange={(e) => setEd({ ...ed, name_field: e.target.value })} title="name field" />
+            </div>
+            <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--ink-4)", textTransform: "uppercase", margin: "6px 0 4px" }}>Base SQL</div>
+            <textarea style={{ ...inp, width: "100%", height: 150, fontFamily: mono, fontSize: 11, resize: "vertical" }}
+                      value={ed.base_sql} onChange={(e) => setEd({ ...ed, base_sql: e.target.value })} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 6 }}>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--ink-4)", textTransform: "uppercase", marginBottom: 4 }}>Fields (JSON)</div>
+                <textarea style={{ ...inp, width: "100%", height: 170, fontFamily: mono, fontSize: 10.5, resize: "vertical" }}
+                          value={ed._fields} onChange={(e) => setEd({ ...ed, _fields: e.target.value })} />
+              </div>
+              <div>
+                <div style={{ fontSize: 10.5, fontWeight: 800, color: "var(--ink-4)", textTransform: "uppercase", marginBottom: 4 }}>Derived formulas (JSON)</div>
+                <textarea style={{ ...inp, width: "100%", height: 170, fontFamily: mono, fontSize: 10.5, resize: "vertical" }}
+                          value={ed._derived} onChange={(e) => setEd({ ...ed, _derived: e.target.value })} />
+              </div>
+            </div>
+            <div style={{ textAlign: "right", marginTop: 8 }}>
+              <button style={btn(true)} onClick={save}><Save size={12} /> Validate & save</button>
+            </div>
           </>
         )}
       </div>

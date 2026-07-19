@@ -33,6 +33,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 
 from app.services.formula_engine import (FormulaError, evaluate as feval,
+                                         identifiers as fidents,
                                          median as _median, validate_formula)
 
 
@@ -353,8 +354,8 @@ def load_measures(db) -> dict[str, dict]:
     """User-defined measure library (rs_measures) — spec §5.6."""
     try:
         rows = db.execute(text(
-            "SELECT measure_key, name, kind, field, agg, weight_field, expr "
-            "FROM rs_measures WHERE is_active")).mappings().all()
+            "SELECT measure_key, name, kind, field, agg, weight_field, expr, "
+            "unit, decimals FROM rs_measures WHERE is_active")).mappings().all()
     except Exception:
         db.rollback()
         return {}
@@ -449,10 +450,19 @@ def _resolve_columns(columns: list[dict], measure_lib: dict[str, dict]) -> list[
                 raise ValueError(f"Unknown measure '{mk}'")
             if m["kind"] == "formula":
                 c["formula"] = m["expr"]
+                c["formula_deps"] = {
+                    name: {"field": lib_m["field"], "agg": lib_m["agg"],
+                           "weight_field": lib_m.get("weight_field")}
+                    for name in fidents(m["expr"])
+                    if (lib_m := measure_lib.get(name)) and lib_m["kind"] == "agg"}
             else:
                 c["measure"] = {"field": m["field"], "agg": m["agg"],
                                 "weight_field": m.get("weight_field")}
             c.setdefault("name", m["name"])
+            if m.get("unit"):
+                c.setdefault("unit", m["unit"])
+            if m.get("decimals") is not None:
+                c.setdefault("decimals", int(m["decimals"]))
         out.append(c)
     return out
 
@@ -494,8 +504,12 @@ def run_report(db, definition: dict, report_date: date,
         # formula columns evaluate over this row's own agg cells (spec §4.2)
         for col in columns:
             if "formula" in col:
+                env = dict(cells)
+                for dep, dm in (col.get("formula_deps") or {}).items():
+                    if dep not in env:
+                        env[dep] = apply_measure(qualifying, dm, semantic)
                 try:
-                    v = feval(col["formula"], {**cells})
+                    v = feval(col["formula"], env)
                 except FormulaError as e:
                     raise ValueError(f"Column '{col.get('name', col['key'])}': {e}")
                 cells[col["key"]] = round(v, 4) if isinstance(v, float) else v
@@ -646,6 +660,9 @@ def cell_drilldown(db, definition: dict, report_date: date,
     if "formula" in col:
         base = {c["key"]: apply_measure(qualifying, c["measure"], semantic)
                 for c in columns if "measure" in c}
+        for dep, dm in (col.get("formula_deps") or {}).items():
+            if dep not in base:
+                base[dep] = apply_measure(qualifying, dm, semantic)
         value = feval(col["formula"], base)
         field = None
     else:

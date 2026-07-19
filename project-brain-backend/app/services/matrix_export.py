@@ -51,7 +51,8 @@ def build_workbook(result: dict[str, Any], report_name: str,
     hr = 4
     ws.cell(row=hr, column=1, value="Category")
     for j, c in enumerate(cols, start=2):
-        ws.cell(row=hr, column=j, value=c["name"])
+        label = c["name"] + (f"\n({c['unit']})" if c.get("unit") else "")
+        ws.cell(row=hr, column=j, value=label)
     for j in range(1, ncols + 1):
         cell = ws.cell(row=hr, column=j)
         cell.font = Font(name=FONT, size=10, bold=True)
@@ -79,7 +80,14 @@ def build_workbook(result: dict[str, Any], report_name: str,
             cell.border = BORDER
             cell.alignment = Alignment(horizontal="right")
             is_count = "count" in str((c.get("measure") or {}).get("agg", ""))
-            cell.number_format = INT_FMT if is_count else NUM_FMT
+            dec = c.get("decimals")
+            if dec == 0 or is_count:
+                cell.number_format = INT_FMT
+            elif dec is not None:
+                z = "0" * dec
+                cell.number_format = f"#,##0.{z};(#,##0.{z});\"-\""
+            else:
+                cell.number_format = NUM_FMT
             if depth == 0:
                 cell.fill = TOTAL_FILL
 
