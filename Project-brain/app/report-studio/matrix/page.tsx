@@ -32,7 +32,8 @@ const mx = (p: string) => `${API}/report-studio/matrix${p}`;
 type Field = { key: string; label: string; type: string };
 type Cond = { field?: string; op?: string; value?: any; rule?: string; conditions?: Cond[] };
 type Rule = { rule_key: string; rule_name: string; description?: string; condition: any; version: number };
-type Col = { key: string; name: string; measure: { field: string; agg: string } };
+type LibMeasure = { measure_key: string; name: string; kind: string };
+type Col = { key: string; name: string; measure?: { field: string; agg: string; weight_field?: string }; measure_key?: string };
 type Row = { id: string; name: string; rule?: string; recon?: string | null; children?: Row[] };
 type Defn = { columns: Col[]; rows: Row[] };
 type RunRow = { id: string; name: string; depth: number; rule?: string; recon?: string; scheme_count: number; cells: Record<string, number | null> };
@@ -59,7 +60,7 @@ const fmt = (v: number | null | undefined) =>
   v == null ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
 const TOKENS = ["report_date", "fy_start", "fy_end", "prev_fy_start", "prev_fy_end", "one_year_before_report"];
-const AGGS = ["sum", "count", "count_distinct", "avg", "min", "max"];
+const AGGS = ["sum", "count", "count_distinct", "avg", "min", "max", "median", "weighted_avg"];
 const RECONS = [
   { v: "", label: "No check" },
   { v: "exclusive", label: "Children mutually exclusive" },
@@ -84,17 +85,20 @@ export default function MatrixDesigner() {
   const [drill, setDrill] = useState<any | null>(null);
   const [snaps, setSnaps] = useState<any[]>([]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [libMeasures, setLibMeasures] = useState<LibMeasure[]>([]);
 
   const fieldByKey = useMemo(() => Object.fromEntries(fieldsMeta.fields.map((f) => [f.key, f])), [fieldsMeta]);
   const numFields = useMemo(() => fieldsMeta.fields.filter((f) => f.type === "number"), [fieldsMeta]);
 
   const loadAll = useCallback(async () => {
     try {
-      const [fr, rr, pr] = await Promise.all([
-        authFetch(mx("/fields")), authFetch(mx("/rules")), authFetch(mx("/reports"))]);
+      const [fr, rr, pr, mr] = await Promise.all([
+        authFetch(mx("/fields")), authFetch(mx("/rules")), authFetch(mx("/reports")),
+        authFetch(mx("/measures"))]);
       setFieldsMeta(await fr.json());
       setRules((await rr.json()).rules || []);
       setReports((await pr.json()).reports || []);
+      setLibMeasures((await mr.json()).measures || []);
     } catch { setErr("Failed to load matrix metadata"); }
   }, []);
   useEffect(() => { loadAll(); }, [loadAll]);
@@ -151,6 +155,20 @@ export default function MatrixDesigner() {
     if (!r.ok) { setErr(j.detail || "Freeze failed"); return; }
     const s = await authFetch(mx(`/snapshots?report_id=${reportId}`));
     setSnaps((await s.json()).snapshots || []);
+  };
+
+  const exportXlsx = async () => {
+    const r = await authFetch(mx("/export/xlsx"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ definition: defn, report_id: reportId ?? undefined, report_date: reportDate }),
+    });
+    if (!r.ok) { setErr((await r.json()).detail || "Export failed"); return; }
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${reportName.replace(/[^\w -]/g, "_")}_${reportDate}.xlsx`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   };
 
   /* ------------------------------------------------- row-tree mutation */
@@ -252,17 +270,29 @@ export default function MatrixDesigner() {
               <div key={c.key} style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 8, marginBottom: 6 }}>
                 <input style={{ ...inp, width: "100%", marginBottom: 5, fontWeight: 700 }} value={c.name}
                        onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i ? { ...x, name: e.target.value } : x) }))} />
+                <select style={{ ...inp, width: "100%", marginBottom: 5 }} value={c.measure_key || "__inline__"}
+                        onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i
+                          ? (e.target.value === "__inline__"
+                              ? { key: x.key, name: x.name, measure: x.measure || { field: "scheme_id", agg: "count_distinct" } }
+                              : { key: x.key, name: x.name, measure_key: e.target.value })
+                          : x) }))}>
+                  <option value="__inline__">Inline measure…</option>
+                  {libMeasures.map((m) => <option key={m.measure_key} value={m.measure_key}>{m.name} ({m.kind})</option>)}
+                </select>
+                {!c.measure_key && c.measure && (
                 <div style={{ display: "flex", gap: 5 }}>
                   <select style={{ ...inp, flex: 1 }} value={c.measure.agg}
-                          onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i ? { ...x, measure: { ...x.measure, agg: e.target.value } } : x) }))}>
+                          onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i ? { ...x, measure: { ...x.measure!, agg: e.target.value } } : x) }))}>
                     {AGGS.map((a) => <option key={a}>{a}</option>)}
                   </select>
                   <select style={{ ...inp, flex: 2 }} value={c.measure.field}
-                          onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i ? { ...x, measure: { ...x.measure, field: e.target.value } } : x) }))}>
+                          onChange={(e) => setDefn((d) => ({ ...d, columns: d.columns.map((x, j) => j === i ? { ...x, measure: { ...x.measure!, field: e.target.value } } : x) }))}>
                     {(c.measure.agg === "count" || c.measure.agg === "count_distinct" ? fieldsMeta.fields : numFields)
                       .map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
                   </select>
-                  <Trash2 size={13} style={{ cursor: "pointer", color: "var(--ink-4)", alignSelf: "center" }}
+                </div>)}
+                <div style={{ textAlign: "right", marginTop: 4 }}>
+                  <Trash2 size={13} style={{ cursor: "pointer", color: "var(--ink-4)" }}
                           onClick={() => setDefn((d) => ({ ...d, columns: d.columns.filter((_, j) => j !== i) }))} />
                 </div>
               </div>
@@ -282,6 +312,7 @@ export default function MatrixDesigner() {
             {result && <span style={{ fontSize: 11.5, color: "var(--ink-4)" }}>
               FY {result.fy} · population {result.population_count} schemes</span>}
             <div style={{ flex: 1 }} />
+            <button style={btn()} onClick={exportXlsx}><FileSpreadsheet size={13} /> Export Excel</button>
             <button style={btn()} onClick={freeze}><Lock size={13} /> Freeze snapshot</button>
           </div>
 

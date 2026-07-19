@@ -318,3 +318,191 @@ def get_snapshot(snapshot_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Snapshot not found")
     return {**dict(r), "result": _jload(r["result"]),
             "definition": _jload(r["definition"]), "rules_used": _jload(r["rules_used"])}
+
+
+# ───────────────────────────────────────────── datasets (spec §5.1–5.2)
+
+class DatasetIn(BaseModel):
+    dataset_key: str
+    name: str
+    description: Optional[str] = None
+    base_sql: str
+    id_field: str = "scheme_id"
+    name_field: str = "scheme_name"
+    fields: list[dict]
+    derived: list[dict] = []
+
+
+def _ensure_config_tables(db: Session) -> None:
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_datasets ("
+        " dataset_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,"
+        " base_sql TEXT NOT NULL, id_field TEXT NOT NULL DEFAULT 'scheme_id',"
+        " name_field TEXT NOT NULL DEFAULT 'scheme_name', fields JSONB NOT NULL,"
+        " derived JSONB NOT NULL DEFAULT '[]'::jsonb,"
+        " is_active BOOLEAN NOT NULL DEFAULT TRUE,"
+        " updated_by VARCHAR(100), updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_measures ("
+        " measure_key TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,"
+        " kind TEXT NOT NULL DEFAULT 'agg', field TEXT, agg TEXT,"
+        " weight_field TEXT, expr TEXT, unit TEXT, decimals INTEGER DEFAULT 2,"
+        " is_active BOOLEAN NOT NULL DEFAULT TRUE,"
+        " updated_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    db.commit()
+
+
+def _validate_dataset(db: Session, payload: DatasetIn, report_date: date) -> None:
+    sql = payload.base_sql.strip().rstrip(";")
+    if ";" in sql or not sql.lower().lstrip().startswith(("select", "with")):
+        raise HTTPException(400, "base_sql must be a single SELECT/WITH statement")
+    payload.base_sql = sql
+    ctx = ME.period_context(report_date)
+    try:
+        rows = db.execute(text(f"SELECT * FROM ({sql}) q LIMIT 5"),
+                          {"fy": ctx["fy"], "prev_fy": ctx["prev_fy"],
+                           "report_date": report_date}).mappings().all()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(400, f"base_sql failed: {str(e)[:300]}")
+    got = set(rows[0].keys()) if rows else None
+    for f in payload.fields:
+        if got is not None and f["key"] not in got:
+            raise HTTPException(400, f"Field '{f['key']}' not returned by base_sql")
+    # validate derived formulas against a sample record (spec §5.3)
+    from app.services.formula_engine import validate_formula
+    sample = {**ctx, **(dict(rows[0]) if rows else {f["key"]: None for f in payload.fields})}
+    for f in payload.derived:
+        err = validate_formula(f["expr"], sample)
+        if err:
+            raise HTTPException(400, f"Derived field '{f['key']}': {err}")
+        sample[f["key"]] = None
+
+
+@router.get("/datasets")
+def list_datasets(db: Session = Depends(get_db)):
+    _ensure_config_tables(db)
+    rows = db.execute(text(
+        "SELECT dataset_key, name, description, id_field, name_field, fields, "
+        "derived, updated_at FROM rs_datasets WHERE is_active ORDER BY dataset_key"
+    )).mappings().all()
+    return {"datasets": [{**dict(r), "fields": _jload(r["fields"]),
+                          "derived": _jload(r["derived"])} for r in rows]}
+
+
+@router.post("/datasets")
+def upsert_dataset(payload: DatasetIn, report_date: Optional[date] = None,
+                   db: Session = Depends(get_db)):
+    _ensure_config_tables(db)
+    _validate_dataset(db, payload, report_date or date.today())
+    db.execute(text("""
+        INSERT INTO rs_datasets (dataset_key, name, description, base_sql,
+                                 id_field, name_field, fields, derived)
+        VALUES (:k, :n, :d, :sql, :idf, :nf, CAST(:f AS jsonb), CAST(:dv AS jsonb))
+        ON CONFLICT (dataset_key) DO UPDATE SET
+          name=EXCLUDED.name, description=EXCLUDED.description,
+          base_sql=EXCLUDED.base_sql, id_field=EXCLUDED.id_field,
+          name_field=EXCLUDED.name_field, fields=EXCLUDED.fields,
+          derived=EXCLUDED.derived, is_active=TRUE, updated_at=now()
+    """), {"k": payload.dataset_key, "n": payload.name, "d": payload.description,
+           "sql": payload.base_sql, "idf": payload.id_field, "nf": payload.name_field,
+           "f": json.dumps(payload.fields), "dv": json.dumps(payload.derived)})
+    db.commit()
+    return {"dataset_key": payload.dataset_key}
+
+
+# ───────────────────────────────────────────── measures (spec §5.6)
+
+class MeasureIn(BaseModel):
+    measure_key: str
+    name: str
+    description: Optional[str] = None
+    kind: str = "agg"                      # agg | formula
+    field: Optional[str] = None
+    agg: Optional[str] = None
+    weight_field: Optional[str] = None
+    expr: Optional[str] = None
+    unit: Optional[str] = None
+    decimals: int = 2
+
+
+@router.get("/measures")
+def list_measures(db: Session = Depends(get_db)):
+    _ensure_config_tables(db)
+    rows = db.execute(text(
+        "SELECT * FROM rs_measures WHERE is_active ORDER BY measure_key")).mappings().all()
+    return {"measures": [dict(r) for r in rows]}
+
+
+@router.post("/measures")
+def upsert_measure(payload: MeasureIn, db: Session = Depends(get_db)):
+    _ensure_config_tables(db)
+    if payload.kind == "agg":
+        if not payload.field or not payload.agg:
+            raise HTTPException(400, "agg measures need field and agg")
+        if payload.agg == "weighted_avg" and not payload.weight_field:
+            raise HTTPException(400, "weighted_avg needs weight_field")
+    elif payload.kind == "formula":
+        if not payload.expr:
+            raise HTTPException(400, "formula measures need expr")
+        from app.services.formula_engine import compile_formula, FormulaError
+        try:
+            compile_formula(payload.expr)   # syntax check; identifiers bind at run
+        except FormulaError as e:
+            raise HTTPException(400, f"Formula: {e}")
+    else:
+        raise HTTPException(400, "kind must be agg or formula")
+    db.execute(text("""
+        INSERT INTO rs_measures (measure_key, name, description, kind, field, agg,
+                                 weight_field, expr, unit, decimals)
+        VALUES (:k, :n, :d, :kind, :f, :a, :w, :e, :u, :dec)
+        ON CONFLICT (measure_key) DO UPDATE SET
+          name=EXCLUDED.name, description=EXCLUDED.description, kind=EXCLUDED.kind,
+          field=EXCLUDED.field, agg=EXCLUDED.agg, weight_field=EXCLUDED.weight_field,
+          expr=EXCLUDED.expr, unit=EXCLUDED.unit, decimals=EXCLUDED.decimals,
+          is_active=TRUE, updated_at=now()
+    """), {"k": payload.measure_key, "n": payload.name, "d": payload.description,
+           "kind": payload.kind, "f": payload.field, "a": payload.agg,
+           "w": payload.weight_field, "e": payload.expr, "u": payload.unit,
+           "dec": payload.decimals})
+    db.commit()
+    return {"measure_key": payload.measure_key}
+
+
+@router.delete("/measures/{measure_key}")
+def delete_measure(measure_key: str, db: Session = Depends(get_db)):
+    _ensure_config_tables(db)
+    db.execute(text("UPDATE rs_measures SET is_active = FALSE WHERE measure_key=:k"),
+               {"k": measure_key})
+    db.commit()
+    return {"ok": True}
+
+
+# ───────────────────────────────────────────── Excel export (spec §14)
+
+@router.post("/export/xlsx")
+def export_xlsx(payload: RunIn, include_details: bool = True,
+                db: Session = Depends(get_db)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.services.matrix_export import build_workbook
+    _ensure_tables(db)
+    definition = _definition_for(db, payload)
+    name = "Matrix Report"
+    if payload.report_id:
+        name = db.execute(text("SELECT name FROM rs_matrix_reports WHERE report_id=:r"),
+                          {"r": payload.report_id}).scalar() or name
+    try:
+        result = ME.run_report(db, definition, payload.report_date)
+        pop = ME.fetch_population(db, payload.report_date,
+                                  definition.get("dataset")) if include_details else None
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    wb = build_workbook(result, name, pop)
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"{name.replace(' ', '_')}_{payload.report_date.isoformat()}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})

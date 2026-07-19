@@ -32,6 +32,9 @@ from typing import Any, Optional
 
 from sqlalchemy import text
 
+from app.services.formula_engine import (FormulaError, evaluate as feval,
+                                         median as _median, validate_formula)
+
 
 # ─────────────────────────────────────────────── reporting-period context
 
@@ -95,8 +98,78 @@ SEMANTIC_FIELDS: dict[str, dict[str, str]] = {
 }
 
 
-def fetch_population(db, report_date: date) -> list[dict[str, Any]]:
-    """One SQL: schemes + FY-sensitive CAPEX aggregates; then derived fields."""
+DEFAULT_DATASET_KEY = "schemes"
+
+
+def load_dataset(db, dataset_key: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """User-configured dataset (rs_datasets): base SQL + fields + derived-field
+    formulas. Returns None when the table/row is absent (built-in fallback)."""
+    try:
+        row = db.execute(text(
+            "SELECT dataset_key, name, base_sql, fields, derived FROM rs_datasets "
+            "WHERE dataset_key = :k AND is_active"),
+            {"k": dataset_key or DEFAULT_DATASET_KEY}).mappings().first()
+    except Exception:
+        db.rollback()
+        return None
+    if not row:
+        return None
+    out = dict(row)
+    for k in ("fields", "derived"):
+        if isinstance(out[k], str):
+            out[k] = json.loads(out[k])
+    return out
+
+
+def dataset_semantic_fields(dataset: Optional[dict]) -> dict[str, dict[str, str]]:
+    """Field registry for a configured dataset (falls back to built-in seed)."""
+    if not dataset:
+        return SEMANTIC_FIELDS
+    reg: dict[str, dict[str, str]] = {}
+    for f in dataset["fields"]:
+        reg[f["key"]] = {"label": f.get("label", f["key"]), "type": f.get("type", "text")}
+    for f in dataset.get("derived") or []:
+        reg[f["key"]] = {"label": f.get("label", f["key"]), "type": f.get("type", "number")}
+    return reg
+
+
+def fetch_population_configured(db, dataset: dict, report_date: date) -> list[dict[str, Any]]:
+    """Run the configured base SQL (:fy / :report_date params available), then
+    evaluate derived-field formulas per record in declaration order — later
+    derived fields may reference earlier ones (spec §5.3/§8, pure config)."""
+    ctx = period_context(report_date)
+    rows = db.execute(text(dataset["base_sql"]),
+                      {"fy": ctx["fy"], "prev_fy": ctx["prev_fy"],
+                       "report_date": report_date}).mappings().all()
+    fields = dataset["fields"]
+    derived = dataset.get("derived") or []
+    tok_ctx = {k: v for k, v in ctx.items()}
+    population = []
+    for r in rows:
+        rec: dict[str, Any] = dict(r)
+        for f in fields:
+            if f.get("type") == "number" and rec.get(f["key"]) is not None:
+                rec[f["key"]] = float(rec[f["key"]])
+        env = {**tok_ctx, **rec}
+        for f in derived:
+            try:
+                val = feval(f["expr"], env)
+            except FormulaError as e:
+                raise ValueError(f"Derived field '{f['key']}': {e}")
+            if f.get("type") == "number" and val is not None:
+                val = float(val)
+            rec[f["key"]] = val
+            env[f["key"]] = val
+        population.append(rec)
+    return population
+
+
+def fetch_population(db, report_date: date, dataset_key: Optional[str] = None
+                     ) -> list[dict[str, Any]]:
+    """Configured dataset when one exists; built-in scheme dataset otherwise."""
+    dataset = load_dataset(db, dataset_key)
+    if dataset:
+        return fetch_population_configured(db, dataset, report_date)
     ctx = period_context(report_date)
     rows = db.execute(text("""
         WITH be AS (
@@ -182,8 +255,9 @@ def _coerce_date(v: Any) -> Any:
 
 
 def eval_condition(rec: dict, cond: dict, ctx: dict, rules: dict[str, dict],
-                   stack: tuple = ()) -> bool:
+                   stack: tuple = (), semantic: Optional[dict] = None) -> bool:
     """Evaluate one condition node against one record."""
+    semantic = semantic or SEMANTIC_FIELDS
     # reusable rule reference
     if "rule" in cond:
         key = cond["rule"]
@@ -192,17 +266,17 @@ def eval_condition(rec: dict, cond: dict, ctx: dict, rules: dict[str, dict],
         rule = rules.get(key)
         if rule is None:
             raise ValueError(f"Unknown rule '{key}'")
-        return eval_group(rec, rule["condition"], ctx, rules, stack + (key,))
+        return eval_group(rec, rule["condition"], ctx, rules, stack + (key,), semantic)
     # nested group
     if "op" in cond and "conditions" in cond:
-        return eval_group(rec, cond, ctx, rules, stack)
+        return eval_group(rec, cond, ctx, rules, stack, semantic)
 
     field, op = cond.get("field"), cond.get("op")
-    if field not in SEMANTIC_FIELDS:
+    if field not in semantic:
         raise ValueError(f"Unknown field '{field}'")
     val = rec.get(field)
     want = resolve_value(cond.get("value"), ctx)
-    ftype = SEMANTIC_FIELDS[field]["type"]
+    ftype = semantic[field]["type"]
 
     if op == "is_null":
         return val is None or val == ""
@@ -259,30 +333,57 @@ def eval_condition(rec: dict, cond: dict, ctx: dict, rules: dict[str, dict],
 
 
 def eval_group(rec: dict, group: Optional[dict], ctx: dict, rules: dict[str, dict],
-               stack: tuple = ()) -> bool:
+               stack: tuple = (), semantic: Optional[dict] = None) -> bool:
     if not group:
         return True
     op = (group.get("op") or "AND").upper()
     conds = group.get("conditions") or []
     if op == "AND":
-        return all(eval_condition(rec, c, ctx, rules, stack) for c in conds)
+        return all(eval_condition(rec, c, ctx, rules, stack, semantic) for c in conds)
     if op == "OR":
-        return any(eval_condition(rec, c, ctx, rules, stack) for c in conds)
+        return any(eval_condition(rec, c, ctx, rules, stack, semantic) for c in conds)
     if op == "NOT":
-        return not any(eval_condition(rec, c, ctx, rules, stack) for c in conds)
+        return not any(eval_condition(rec, c, ctx, rules, stack, semantic) for c in conds)
     raise ValueError(f"Unknown group op '{op}'")
 
 
 # ─────────────────────────────────────────────── measures
 
-def apply_measure(records: list[dict], measure: dict) -> Optional[float]:
-    """measure = {field, agg} — agg: sum|count|count_distinct|avg|min|max."""
+def load_measures(db) -> dict[str, dict]:
+    """User-defined measure library (rs_measures) — spec §5.6."""
+    try:
+        rows = db.execute(text(
+            "SELECT measure_key, name, kind, field, agg, weight_field, expr "
+            "FROM rs_measures WHERE is_active")).mappings().all()
+    except Exception:
+        db.rollback()
+        return {}
+    return {r["measure_key"]: dict(r) for r in rows}
+
+
+def apply_measure(records: list[dict], measure: dict,
+                  semantic: Optional[dict[str, dict]] = None) -> Optional[float]:
+    """measure = {field, agg[, weight_field]} —
+    agg: sum|count|count_distinct|avg|min|max|median|weighted_avg."""
+    semantic = semantic or SEMANTIC_FIELDS
     agg = (measure.get("agg") or "sum").lower()
     field = measure.get("field")
     if agg == "count":
         return float(len(records))
-    if field not in SEMANTIC_FIELDS:
+    if field not in semantic:
         raise ValueError(f"Unknown measure field '{field}'")
+    if agg == "weighted_avg":
+        wf = measure.get("weight_field")
+        if wf not in semantic:
+            raise ValueError(f"weighted_avg needs a valid weight_field (got '{wf}')")
+        num = den = 0.0
+        for r in records:
+            v, w = r.get(field), r.get(wf)
+            if v is None or w is None:
+                continue
+            num += float(v) * float(w)
+            den += float(w)
+        return round(num / den, 4) if den else None
     vals = [r.get(field) for r in records if r.get(field) is not None]
     if agg == "count_distinct":
         return float(len({v for v in vals}))
@@ -297,6 +398,8 @@ def apply_measure(records: list[dict], measure: dict) -> Optional[float]:
         return min(nums)
     if agg == "max":
         return max(nums)
+    if agg == "median":
+        return _median(nums)
     raise ValueError(f"Unknown aggregation '{agg}'")
 
 
@@ -333,30 +436,108 @@ def _effective_condition(row: dict, chain: list[dict]) -> dict:
     return {"op": "AND", "conditions": conds}
 
 
+def _resolve_columns(columns: list[dict], measure_lib: dict[str, dict]) -> list[dict]:
+    """A column may inline its measure, or reference a library measure_key.
+    Library measures may be kind='agg' or kind='formula' (over other columns)."""
+    out = []
+    for col in columns:
+        c = dict(col)
+        mk = c.get("measure_key")
+        if mk:
+            m = measure_lib.get(mk)
+            if not m:
+                raise ValueError(f"Unknown measure '{mk}'")
+            if m["kind"] == "formula":
+                c["formula"] = m["expr"]
+            else:
+                c["measure"] = {"field": m["field"], "agg": m["agg"],
+                                "weight_field": m.get("weight_field")}
+            c.setdefault("name", m["name"])
+        out.append(c)
+    return out
+
+
+def _id_field(dataset: Optional[dict]) -> str:
+    return (dataset or {}).get("id_field") or "scheme_id"
+
+
 def run_report(db, definition: dict, report_date: date) -> dict[str, Any]:
     """Calculate every row × column, with per-cell traceability + reconciliation."""
     ctx = period_context(report_date)
     rules = load_rules(db)
-    population = fetch_population(db, report_date)
-    columns = definition.get("columns") or []
+    dataset = load_dataset(db, definition.get("dataset"))
+    semantic = dataset_semantic_fields(dataset)
+    population = fetch_population(db, report_date, definition.get("dataset"))
+    measure_lib = load_measures(db)
+    columns = _resolve_columns(definition.get("columns") or [], measure_lib)
+    idf = _id_field(dataset)
 
     flat = _walk_rows(definition.get("rows") or [], [])
     results: list[dict[str, Any]] = []
     ids_by_rowid: dict[str, set] = {}
+    cells_by_rowid: dict[str, dict] = {}
 
+    # pass 1 — rule rows (population + agg measures)
     for row, chain in flat:
+        if row.get("type") == "formula":
+            continue
         eff = _effective_condition(row, chain)
-        qualifying = [r for r in population if eval_group(r, eff, ctx, rules)]
-        ids = {r["scheme_id"] for r in qualifying}
+        qualifying = [r for r in population if eval_group(r, eff, ctx, rules, (), semantic)]
+        ids = {r[idf] for r in qualifying}
         ids_by_rowid[row["id"]] = ids
-        cells = {}
+        cells: dict[str, Any] = {}
         for col in columns:
-            cells[col["key"]] = apply_measure(qualifying, col["measure"])
+            if "formula" in col:
+                continue
+            cells[col["key"]] = apply_measure(qualifying, col["measure"], semantic)
+        # formula columns evaluate over this row's own agg cells (spec §4.2)
+        for col in columns:
+            if "formula" in col:
+                try:
+                    v = feval(col["formula"], {**cells})
+                except FormulaError as e:
+                    raise ValueError(f"Column '{col.get('name', col['key'])}': {e}")
+                cells[col["key"]] = round(v, 4) if isinstance(v, float) else v
+        cells_by_rowid[row["id"]] = cells
         results.append({
             "id": row["id"], "name": row["name"], "depth": len(chain),
             "rule": row.get("rule"), "recon": row.get("recon"),
             "scheme_count": len(ids), "cells": cells,
         })
+
+    # pass 2 — calculated rows (spec §4.5: cells referencing other cells)
+    def _cell(rid: str, ck: str):
+        c = cells_by_rowid.get(rid)
+        if c is None:
+            raise FormulaError(f"cell(): unknown or not-yet-computed row '{rid}'")
+        if ck not in c:
+            raise FormulaError(f"cell(): unknown column '{ck}' on row '{rid}'")
+        return c[ck]
+
+    for row, chain in flat:
+        if row.get("type") != "formula":
+            continue
+        cells = {}
+        for col in columns:
+            expr = (row.get("cells") or {}).get(col["key"])
+            if expr is None:
+                cells[col["key"]] = None
+                continue
+            try:
+                v = feval(expr, {"__cell__": _cell})
+            except FormulaError as e:
+                raise ValueError(f"Calculated row '{row['name']}' × {col['key']}: {e}")
+            cells[col["key"]] = round(v, 4) if isinstance(v, float) else v
+        cells_by_rowid[row["id"]] = cells
+        results.append({
+            "id": row["id"], "name": row["name"], "depth": len(chain),
+            "rule": None, "recon": None, "type": "formula",
+            "scheme_count": None, "cells": cells,
+        })
+
+    # restore document order (formula rows appended in pass 2)
+    order = {row["id"]: i for i, (row, _c) in enumerate(flat)}
+    results.sort(key=lambda r: order[r["id"]])
 
     # reconciliation (spec §5.10 / §6)
     checks = []
@@ -397,9 +578,36 @@ def run_report(db, definition: dict, report_date: date) -> dict[str, Any]:
             "overlaps": overlaps, "missing_scheme_ids": missing,
         })
 
+    # value reconciliation (spec §5.10: On Time + D<1 + D>1 = Total, etc.)
+    def _cellv(rid: str, ck: str):
+        c = cells_by_rowid.get(rid)
+        if c is None or ck not in c:
+            raise FormulaError(f"cell('{rid}','{ck}') not found")
+        return c[ck]
+
+    for vc in definition.get("value_checks") or []:
+        try:
+            left = feval(vc["left"], {"__cell__": _cellv})
+            right = feval(vc["right"], {"__cell__": _cellv})
+        except FormulaError as e:
+            checks.append({"parent": vc.get("name", "value check"), "type": "value",
+                           "passed": False, "detail": str(e),
+                           "parent_count": None, "children_union_count": None,
+                           "overlaps": [], "missing_scheme_ids": []})
+            continue
+        tol = float(vc.get("tolerance", 0.01))
+        diff = None if (left is None or right is None) else abs(left - right)
+        ok = diff is not None and diff <= tol
+        checks.append({"parent": vc.get("name", "value check"), "type": "value",
+                       "passed": ok,
+                       "detail": f"left {left} vs right {right}" + ("" if ok else f" (Δ {diff})"),
+                       "parent_count": left, "children_union_count": right,
+                       "overlaps": [], "missing_scheme_ids": []})
+
     return {
         "report_date": report_date.isoformat(),
         "fy": ctx["fy"],
+        "dataset": (dataset or {}).get("dataset_key", DEFAULT_DATASET_KEY),
         "population_count": len(population),
         "columns": columns,
         "rows": results,
@@ -413,27 +621,42 @@ def cell_drilldown(db, definition: dict, report_date: date,
     """Spec §5.9 — never a black box: exact contributing schemes + values."""
     ctx = period_context(report_date)
     rules = load_rules(db)
-    population = fetch_population(db, report_date)
+    dataset = load_dataset(db, definition.get("dataset"))
+    semantic = dataset_semantic_fields(dataset)
+    population = fetch_population(db, report_date, definition.get("dataset"))
+    measure_lib = load_measures(db)
+    columns = _resolve_columns(definition.get("columns") or [], measure_lib)
+    idf = _id_field(dataset)
     flat = _walk_rows(definition.get("rows") or [], [])
     target = next(((row, chain) for row, chain in flat if row["id"] == row_id), None)
     if not target:
         raise ValueError(f"Row '{row_id}' not found")
-    col = next((c for c in (definition.get("columns") or []) if c["key"] == column_key), None)
+    col = next((c for c in columns if c["key"] == column_key), None)
     if not col:
         raise ValueError(f"Column '{column_key}' not found")
     row, chain = target
+    if row.get("type") == "formula":
+        raise ValueError("Calculated rows have no record population; drill their inputs instead")
     eff = _effective_condition(row, chain)
-    qualifying = [r for r in population if eval_group(r, eff, ctx, rules)]
-    field = col["measure"].get("field")
+    qualifying = [r for r in population if eval_group(r, eff, ctx, rules, (), semantic)]
+    if "formula" in col:
+        base = {c["key"]: apply_measure(qualifying, c["measure"], semantic)
+                for c in columns if "measure" in c}
+        value = feval(col["formula"], base)
+        field = None
+    else:
+        value = apply_measure(qualifying, col["measure"], semantic)
+        field = col["measure"].get("field")
+    name_f = (dataset or {}).get("name_field") or "scheme_name"
     return {
         "row": row["name"], "column": col["name"],
         "effective_conditions": eff,
-        "value": apply_measure(qualifying, col["measure"]),
+        "value": round(value, 4) if isinstance(value, float) else value,
         "qualifying_count": len(qualifying),
         "schemes": [{
-            "scheme_id": r["scheme_id"], "scheme_name": r["scheme_name"],
+            "scheme_id": r[idf], "scheme_name": r.get(name_f),
             "contribution": (float(r[field]) if (field and r.get(field) is not None
-                                                 and SEMANTIC_FIELDS.get(field, {}).get("type") == "number")
+                                                 and semantic.get(field, {}).get("type") == "number")
                              else None),
         } for r in qualifying],
     }
