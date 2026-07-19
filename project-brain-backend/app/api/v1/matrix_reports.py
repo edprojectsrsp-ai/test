@@ -963,3 +963,89 @@ def clone_report(report_id: int, db: Session = Depends(get_db)):
     _audit(db, "report", rid, "create", None, {"cloned_from": report_id})
     db.commit()
     return {"report_id": rid, "name": f"{src['name']} (copy)"}
+
+
+# ═════════════════════════════════════════════ M4 — AI assist (spec §18)
+
+from app.services import matrix_ai as MA
+
+
+class DraftRuleIn(BaseModel):
+    prompt: str
+    report_date: date
+    dataset_key: Optional[str] = None
+
+
+@router.post("/ai/draft-rule")
+def ai_draft_rule(payload: DraftRuleIn, db: Session = Depends(get_db)):
+    """NL → draft condition. LLM (if configured) then deterministic parser;
+    either way the draft is compiled + previewed by the ENGINE before return.
+    Nothing is saved — the user reviews, previews, edits, then saves/versions."""
+    _ensure_tables(db)
+    dataset = ME.load_dataset(db, payload.dataset_key)
+    semantic = ME.dataset_semantic_fields(dataset)
+    draft = MA.maybe_llm_draft(payload.prompt, semantic)
+    if draft is None:
+        try:
+            draft = MA.draft_rule_from_text(payload.prompt, semantic)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    # deterministic gate: compile + preview exactly like a hand-written rule
+    count = _validate_condition(db, draft["condition"], payload.report_date)
+    rules = ME.load_rules(db)
+    return {**draft,
+            "matching_count": count,
+            "english": MA.explain_condition(draft["condition"], rules, semantic)}
+
+
+class ExplainCellIn(CellIn):
+    pass
+
+
+@router.post("/ai/explain-cell")
+def ai_explain_cell(payload: ExplainCellIn, db: Session = Depends(get_db)):
+    _ensure_tables(db)
+    definition = _definition_for(db, payload)
+    try:
+        drill = ME.cell_drilldown(db, definition, payload.report_date,
+                                  payload.row_id, payload.column_key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    dataset = ME.load_dataset(db, definition.get("dataset"))
+    semantic = ME.dataset_semantic_fields(dataset)
+    rules = ME.load_rules(db)
+    return {"explanation": MA.explain_cell(drill, rules, semantic), "drill": drill}
+
+
+class NarrateIn(CompareIn):
+    pass
+
+
+@router.post("/ai/why-changed")
+def ai_why_changed(payload: NarrateIn, db: Session = Depends(get_db)):
+    """M2 compare rendered as review-meeting sentences."""
+    cmp = compare_snapshots(payload, db)
+    base = db.execute(text(
+        "SELECT result FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+        {"s": payload.snapshot_id}).scalar()
+    cols = _jload(base)["columns"] if base else []
+    return {"narrative": MA.narrate_comparison(cmp, cols), "compare": cmp}
+
+
+@router.post("/ai/report-from-xlsx")
+def ai_report_from_xlsx(payload: dict, db: Session = Depends(get_db)):
+    """{path: server-side xlsx path} → draft report definition. (The web UI
+    uploads through the standard upload endpoint and passes the stored path.)"""
+    _ensure_tables(db)
+    path = payload.get("path")
+    if not path:
+        raise HTTPException(400, "path required")
+    rules = ME.load_rules(db)
+    measures = ME.load_measures(db)
+    try:
+        return MA.report_skeleton_from_xlsx(
+            path,
+            {k: v["name"] for k, v in rules.items()},
+            {k: m["name"] for k, m in measures.items()})
+    except Exception as e:
+        raise HTTPException(400, f"Parse failed: {str(e)[:300]}")

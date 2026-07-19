@@ -151,7 +151,7 @@ export default function MatrixDesigner() {
       body: JSON.stringify({ definition: defn, report_date: reportDate, row_id: rowId, column_key: colKey }),
     });
     const j = await r.json();
-    if (r.ok) setDrill(j); else setErr(j.detail || "Drill-down failed");
+    if (r.ok) setDrill({ ...j, __rowId: rowId, __colKey: colKey }); else setErr(j.detail || "Drill-down failed");
   };
 
   const freeze = async () => {
@@ -517,6 +517,21 @@ export default function MatrixDesigner() {
             <div style={{ fontSize: 11.5, color: "var(--ink-4)", marginBottom: 8 }}>
               {drill.qualifying_count} qualifying scheme{drill.qualifying_count === 1 ? "" : "s"} — every figure traceable to source records
             </div>
+            {drill.__explaining ? (
+              <div style={{ fontSize: 12, color: "var(--ink-2)", lineHeight: 1.55, marginBottom: 10, padding: "8px 10px", border: "1px dashed var(--line)", borderRadius: 8 }}>
+                {drill.__explanation || "…"}
+              </div>
+            ) : (
+              <button style={{ ...btn(), marginBottom: 10 }} onClick={async () => {
+                setDrill({ ...drill, __explaining: true });
+                const r = await authFetch(mx("/ai/explain-cell"), {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ definition: defn, report_date: reportDate, row_id: drill.__rowId, column_key: drill.__colKey }),
+                });
+                const j = await r.json();
+                setDrill((d0: any) => ({ ...d0, __explaining: true, __explanation: r.ok ? j.explanation : (j.detail || "Explain failed") }));
+              }}><Eye size={12} /> Explain in plain English</button>
+            )}
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <thead><tr>
                 {["Scheme ID", "Scheme", "Contribution"].map((h, i) => (
@@ -586,6 +601,8 @@ function RowTree({ rows, depth, rules, templates, patch, addChild, del, insertTe
   );
 }
 
+function Wand2Icon() { return <span style={{ fontSize: 13 }}>✦</span>; }
+
 /* ================================================================ rules tab */
 
 function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged, setErr }: {
@@ -596,6 +613,21 @@ function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged,
   const [editing, setEditing] = useState<Rule | null>(null);
   const [preview, setPreview] = useState<any | null>(null);
   const [q, setQ] = useState("");
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiNote, setAiNote] = useState("");
+
+  const aiDraft = async () => {
+    if (!aiPrompt.trim()) return;
+    const r = await authFetch(mx("/ai/draft-rule"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: aiPrompt, report_date: reportDate }),
+    });
+    const j = await r.json();
+    if (!r.ok) { setErr(j.detail || "Draft failed"); return; }
+    setEditing({ rule_key: "", rule_name: aiPrompt.slice(0, 60), condition: j.condition, version: 0 });
+    setAiNote(`${j.matching_count} scheme(s) match · ${j.english}`);
+    setPreview(null);
+  };
 
   const startNew = () => setEditing({
     rule_key: "", rule_name: "", condition: { op: "AND", conditions: [] }, version: 0,
@@ -652,6 +684,19 @@ function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged,
 
       {/* editor */}
       <div style={{ ...panel, padding: 14 }}>
+        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+          <input style={{ ...inp, flex: 1 }} value={aiPrompt}
+                 placeholder='Describe a population… e.g. "ongoing corporate schemes delayed by more than one year"'
+                 onChange={(e) => setAiPrompt(e.target.value)}
+                 onKeyDown={(e) => e.key === "Enter" && aiDraft()} />
+          <button style={btn(true)} onClick={aiDraft}><Wand2Icon /> Draft rule</button>
+        </div>
+        {aiNote && (
+          <div style={{ fontSize: 11.5, color: "var(--ink-3)", marginBottom: 10, padding: "6px 10px",
+                        border: "1px dashed var(--line)", borderRadius: 8 }}>
+            AI draft loaded below — review, preview, edit, then save to version it. {aiNote}
+          </div>
+        )}
         {!editing ? (
           <div style={{ color: "var(--ink-4)", fontSize: 12.5, padding: 20 }}>
             Select a rule to edit, or create a new one. Rules are reusable across every matrix report;
