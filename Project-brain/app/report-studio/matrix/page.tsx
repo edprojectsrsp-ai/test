@@ -384,11 +384,32 @@ export default function MatrixDesigner() {
                 <Lock size={13} style={{ color: "var(--steel)" }} />
                 <b style={{ fontSize: 12.5 }}>Frozen snapshots (immutable — later data changes never alter these)</b>
               </div>
-              {snaps.map((s) => (
-                <div key={s.snapshot_id} style={{ fontSize: 12, color: "var(--ink-3)", padding: "3px 0" }}>
-                  #{s.snapshot_id} · position {s.report_date} · FY {s.fy} · {s.status} · frozen {new Date(s.created_at).toLocaleString("en-IN")}
-                </div>
-              ))}
+              {snaps.map((s) => {
+                const acts: Record<string, string[]> = { draft: ["submit"], submitted: ["approve", "reject"], approved: ["lock"], locked: [] };
+                return (
+                  <div key={s.snapshot_id} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--ink-3)", padding: "4px 0" }}>
+                    <span style={{ flex: 1 }}>
+                      #{s.snapshot_id} · position {s.report_date} · FY {s.fy} ·{" "}
+                      <b style={{ color: s.status === "locked" ? "var(--steel)" : s.status === "approved" ? "#3fb950" : "var(--ink-2)" }}>{s.status}</b>
+                      {" "}· {new Date(s.created_at).toLocaleString("en-IN")}
+                    </span>
+                    {(acts[s.status] || []).map((a) => (
+                      <button key={a} style={{ ...btn(), padding: "3px 8px", fontSize: 11 }}
+                              onClick={async () => {
+                                const reason = a === "reject" ? prompt("Rejection reason (mandatory):") : undefined;
+                                if (a === "reject" && !reason) return;
+                                const r = await authFetch(mx(`/snapshots/${s.snapshot_id}/transition`), {
+                                  method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: JSON.stringify({ action: a, reason }),
+                                });
+                                if (!r.ok) { setErr((await r.json()).detail || "Transition failed"); return; }
+                                const l = await authFetch(mx(`/snapshots?report_id=${reportId}`));
+                                setSnaps((await l.json()).snapshots || []);
+                              }}>{a}</button>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
           )}
         </>

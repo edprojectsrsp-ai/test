@@ -139,9 +139,12 @@ def upsert_rule(payload: RuleIn, report_date: Optional[date] = None,
             "VALUES (:k, :n, :d, CAST(:c AS jsonb))"),
             {"k": payload.rule_key, "n": payload.rule_name,
              "d": payload.description, "c": json.dumps(payload.condition)})
-    db.commit()
     v = db.execute(text("SELECT version FROM rs_rules WHERE rule_key=:k"),
                    {"k": payload.rule_key}).scalar()
+    _ensure_gov_tables(db)
+    _audit(db, "rule", payload.rule_key, "update" if existing is not None else "create",
+           None, {"version": v, "condition": payload.condition})
+    db.commit()
     return {"rule_key": payload.rule_key, "version": v}
 
 
@@ -294,8 +297,12 @@ def freeze(payload: SnapshotIn, db: Session = Depends(get_db)):
         {"r": payload.report_id, "d": payload.report_date, "fy": result["fy"],
          "st": payload.status, "res": json.dumps(result),
          "def": json.dumps(definition), "ru": json.dumps(rules)}).scalar()
+    _ensure_gov_tables(db)
+    _audit(db, "snapshot", sid, "create", None,
+           {"report_id": payload.report_id, "report_date": str(payload.report_date),
+            "status": payload.status})
     db.commit()
-    return {"snapshot_id": sid, "fy": result["fy"]}
+    return {"snapshot_id": sid, "fy": result["fy"], "status": payload.status}
 
 
 @router.get("/snapshots")
@@ -506,3 +513,214 @@ def export_xlsx(payload: RunIn, include_details: bool = True,
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+# ═════════════════════════════════════════════ M1 — Governance
+
+_WORKFLOW = {  # legal transitions (spec §9)
+    ("draft", "submit"): "submitted",
+    ("submitted", "approve"): "approved",
+    ("submitted", "reject"): "draft",
+    ("approved", "lock"): "locked",
+}
+_MUTABLE_STATUSES = {"draft", "submitted"}   # adjustments allowed until approved
+
+
+def _ensure_gov_tables(db: Session) -> None:
+    for col, typ in (("submitted_by", "VARCHAR(100)"), ("submitted_at", "TIMESTAMPTZ"),
+                     ("approved_by", "VARCHAR(100)"), ("approved_at", "TIMESTAMPTZ"),
+                     ("locked_at", "TIMESTAMPTZ"), ("reject_reason", "TEXT")):
+        db.execute(text(f"ALTER TABLE rs_matrix_snapshots ADD COLUMN IF NOT EXISTS {col} {typ}"))
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_adjustments ("
+        " adjustment_id SERIAL PRIMARY KEY,"
+        " snapshot_id INTEGER NOT NULL REFERENCES rs_matrix_snapshots(snapshot_id) ON DELETE CASCADE,"
+        " row_id TEXT NOT NULL, column_key TEXT NOT NULL,"
+        " calculated NUMERIC, adjustment NUMERIC NOT NULL, reason TEXT NOT NULL,"
+        " attachment_ref TEXT, adjusted_by VARCHAR(100),"
+        " status TEXT NOT NULL DEFAULT 'proposed',"
+        " decided_by VARCHAR(100), decided_at TIMESTAMPTZ,"
+        " created_at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_audit_log ("
+        " audit_id BIGSERIAL PRIMARY KEY, entity TEXT NOT NULL, entity_key TEXT NOT NULL,"
+        " action TEXT NOT NULL, old_value JSONB, new_value JSONB, reason TEXT,"
+        " actor VARCHAR(100), at TIMESTAMPTZ NOT NULL DEFAULT now())"))
+    db.commit()
+
+
+def _audit(db: Session, entity: str, entity_key: str, action: str,
+           old: Any = None, new: Any = None, reason: Optional[str] = None,
+           actor: Optional[str] = None) -> None:
+    db.execute(text(
+        "INSERT INTO rs_audit_log (entity, entity_key, action, old_value, new_value, reason, actor) "
+        "VALUES (:e, :k, :a, CAST(:o AS jsonb), CAST(:n AS jsonb), :r, :ac)"),
+        {"e": entity, "k": str(entity_key), "a": action,
+         "o": json.dumps(old, default=str) if old is not None else None,
+         "n": json.dumps(new, default=str) if new is not None else None,
+         "r": reason, "ac": actor})
+
+
+class TransitionIn(BaseModel):
+    action: str                              # submit|approve|reject|lock
+    actor: Optional[str] = None
+    reason: Optional[str] = None             # required for reject
+
+
+@router.post("/snapshots/{snapshot_id}/transition")
+def transition_snapshot(snapshot_id: int, payload: TransitionIn,
+                        db: Session = Depends(get_db)):
+    _ensure_tables(db)
+    _ensure_gov_tables(db)
+    cur = db.execute(text("SELECT status FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+                     {"s": snapshot_id}).scalar()
+    if cur is None:
+        raise HTTPException(404, "Snapshot not found")
+    nxt = _WORKFLOW.get((cur, payload.action))
+    if nxt is None:
+        legal = [a for (st, a) in _WORKFLOW if st == cur]
+        raise HTTPException(400, f"Illegal transition '{payload.action}' from '{cur}'"
+                                 f" (legal: {legal or 'none — terminal state'})")
+    if payload.action == "reject" and not payload.reason:
+        raise HTTPException(400, "Rejection requires a reason")
+    stamp = {"submit": "submitted_by=:a, submitted_at=now()",
+             "approve": "approved_by=:a, approved_at=now()",
+             "reject": "reject_reason=:r",
+             "lock": "locked_at=now()"}[payload.action]
+    db.execute(text(f"UPDATE rs_matrix_snapshots SET status=:st, {stamp} WHERE snapshot_id=:s"),
+               {"st": nxt, "s": snapshot_id, "a": payload.actor, "r": payload.reason})
+    _audit(db, "snapshot", snapshot_id, payload.action, {"status": cur},
+           {"status": nxt}, payload.reason, payload.actor)
+    db.commit()
+    return {"snapshot_id": snapshot_id, "status": nxt}
+
+
+# ---- manual adjustments (§10): calculated value never overwritten ----
+
+class AdjustmentIn(BaseModel):
+    row_id: str
+    column_key: str
+    adjustment: float
+    reason: str
+    attachment_ref: Optional[str] = None
+    adjusted_by: Optional[str] = None
+
+
+class DecideIn(BaseModel):
+    decision: str                            # approve|reject|reverse
+    decided_by: Optional[str] = None
+
+
+def _snapshot_cell(snap_result: dict, row_id: str, column_key: str):
+    row = next((r for r in snap_result["rows"] if r["id"] == row_id), None)
+    if row is None or column_key not in row["cells"]:
+        raise HTTPException(400, f"Cell ('{row_id}', '{column_key}') not in snapshot")
+    return row["cells"][column_key]
+
+
+@router.post("/snapshots/{snapshot_id}/adjustments")
+def propose_adjustment(snapshot_id: int, payload: AdjustmentIn,
+                       db: Session = Depends(get_db)):
+    _ensure_tables(db)
+    _ensure_gov_tables(db)
+    snap = db.execute(text(
+        "SELECT status, result FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+        {"s": snapshot_id}).mappings().first()
+    if not snap:
+        raise HTTPException(404, "Snapshot not found")
+    if snap["status"] not in _MUTABLE_STATUSES:
+        raise HTTPException(400, f"Snapshot is '{snap['status']}' — adjustments are "
+                                 "only allowed while draft/submitted")
+    if not payload.reason.strip():
+        raise HTTPException(400, "Adjustment reason is mandatory")
+    calc = _snapshot_cell(_jload(snap["result"]), payload.row_id, payload.column_key)
+    aid = db.execute(text("""
+        INSERT INTO rs_adjustments (snapshot_id, row_id, column_key, calculated,
+                                    adjustment, reason, attachment_ref, adjusted_by)
+        VALUES (:s, :r, :c, :calc, :adj, :re, :att, :by) RETURNING adjustment_id
+    """), {"s": snapshot_id, "r": payload.row_id, "c": payload.column_key,
+           "calc": calc, "adj": payload.adjustment, "re": payload.reason,
+           "att": payload.attachment_ref, "by": payload.adjusted_by}).scalar()
+    _audit(db, "adjustment", aid, "adjust", None,
+           {"snapshot_id": snapshot_id, "cell": [payload.row_id, payload.column_key],
+            "calculated": calc, "adjustment": payload.adjustment},
+           payload.reason, payload.adjusted_by)
+    db.commit()
+    return {"adjustment_id": aid, "calculated": calc,
+            "final_if_approved": (calc or 0) + payload.adjustment}
+
+
+@router.post("/adjustments/{adjustment_id}/decide")
+def decide_adjustment(adjustment_id: int, payload: DecideIn,
+                      db: Session = Depends(get_db)):
+    _ensure_gov_tables(db)
+    row = db.execute(text("SELECT status FROM rs_adjustments WHERE adjustment_id=:a"),
+                     {"a": adjustment_id}).scalar()
+    if row is None:
+        raise HTTPException(404, "Adjustment not found")
+    legal = {"proposed": {"approve": "approved", "reject": "rejected"},
+             "approved": {"reverse": "reversed"}}
+    nxt = legal.get(row, {}).get(payload.decision)
+    if nxt is None:
+        raise HTTPException(400, f"Illegal decision '{payload.decision}' from '{row}'")
+    db.execute(text(
+        "UPDATE rs_adjustments SET status=:st, decided_by=:by, decided_at=now() "
+        "WHERE adjustment_id=:a"),
+        {"st": nxt, "by": payload.decided_by, "a": adjustment_id})
+    _audit(db, "adjustment", adjustment_id, payload.decision,
+           {"status": row}, {"status": nxt}, None, payload.decided_by)
+    db.commit()
+    return {"adjustment_id": adjustment_id, "status": nxt}
+
+
+@router.get("/snapshots/{snapshot_id}/final")
+def snapshot_final(snapshot_id: int, db: Session = Depends(get_db)):
+    """Grid with Calculated / Adjustment / Final per adjusted cell —
+    the calculated value is never overwritten (spec §10 display rule)."""
+    _ensure_tables(db)
+    _ensure_gov_tables(db)
+    snap = db.execute(text(
+        "SELECT status, result FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+        {"s": snapshot_id}).mappings().first()
+    if not snap:
+        raise HTTPException(404, "Snapshot not found")
+    result = _jload(snap["result"])
+    adjs = db.execute(text(
+        "SELECT * FROM rs_adjustments WHERE snapshot_id=:s AND status='approved'"),
+        {"s": snapshot_id}).mappings().all()
+    by_cell: dict[tuple, dict] = {}
+    for a in adjs:
+        by_cell[(a["row_id"], a["column_key"])] = dict(a)
+    out_rows = []
+    for r in result["rows"]:
+        cells = {}
+        for k, calc in r["cells"].items():
+            a = by_cell.get((r["id"], k))
+            if a:
+                adj = float(a["adjustment"])
+                cells[k] = {"calculated": calc, "adjustment": adj,
+                            "final": (calc or 0) + adj, "reason": a["reason"],
+                            "adjusted_by": a["adjusted_by"]}
+            else:
+                cells[k] = {"calculated": calc, "adjustment": None, "final": calc}
+        out_rows.append({**r, "cells": cells})
+    return {"snapshot_id": snapshot_id, "status": snap["status"],
+            "report_date": result["report_date"], "fy": result["fy"],
+            "columns": result["columns"], "rows": out_rows,
+            "adjustment_count": len(adjs)}
+
+
+@router.get("/audit")
+def audit_log(entity: Optional[str] = None, entity_key: Optional[str] = None,
+              limit: int = 100, db: Session = Depends(get_db)):
+    _ensure_gov_tables(db)
+    where, params = [], {"lim": min(limit, 500)}
+    if entity:
+        where.append("entity = :e"); params["e"] = entity
+    if entity_key:
+        where.append("entity_key = :k"); params["k"] = entity_key
+    w = ("WHERE " + " AND ".join(where)) if where else ""
+    rows = db.execute(text(
+        f"SELECT * FROM rs_audit_log {w} ORDER BY at DESC LIMIT :lim"), params).mappings().all()
+    return {"audit": [{**dict(r), "old_value": _jload(r["old_value"]),
+                       "new_value": _jload(r["new_value"])} for r in rows]}
