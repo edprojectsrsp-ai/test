@@ -1049,3 +1049,64 @@ def ai_report_from_xlsx(payload: dict, db: Session = Depends(get_db)):
             {k: m["name"] for k, m in measures.items()})
     except Exception as e:
         raise HTTPException(400, f"Parse failed: {str(e)[:300]}")
+
+
+# ═════════════════════════════════════════════ I1 — Ministry pack
+
+class PackIn(RunIn):
+    compare_snapshot_id: Optional[int] = None
+
+
+@router.post("/ministry-pack")
+def ministry_pack(payload: PackIn, db: Session = Depends(get_db)):
+    from io import BytesIO
+    from fastapi.responses import StreamingResponse
+    from app.services.ministry_pack import build_pack
+    _ensure_tables(db)
+    definition = _definition_for(db, payload)
+    name = "Matrix Report"
+    if payload.report_id:
+        name = db.execute(text("SELECT name FROM rs_matrix_reports WHERE report_id=:r"),
+                          {"r": payload.report_id}).scalar() or name
+    cmp_result = cmp_rules = None
+    if payload.compare_snapshot_id:
+        snap = db.execute(text(
+            "SELECT result, rules_used FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+            {"s": payload.compare_snapshot_id}).mappings().first()
+        if not snap:
+            raise HTTPException(404, "Comparison snapshot not found")
+        cmp_result, cmp_rules = _jload(snap["result"]), _jload(snap["rules_used"])
+    try:
+        wb, summary = build_pack(db, definition, name, payload.report_date,
+                                 cmp_result, cmp_rules)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    buf = BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    fname = f"MinistryPack_{name.replace(' ', '_')}_{payload.report_date.isoformat()}.xlsx"
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"',
+                 "X-Pack-Summary": json.dumps(summary["narrative"][:3])[:900]})
+
+
+@router.post("/ministry-pack/summary")
+def ministry_pack_summary(payload: PackIn, db: Session = Depends(get_db)):
+    """Narrative + headline JSON only (for chat/Telegram distribution)."""
+    from app.services.ministry_pack import build_pack
+    _ensure_tables(db)
+    definition = _definition_for(db, payload)
+    cmp_result = cmp_rules = None
+    if payload.compare_snapshot_id:
+        snap = db.execute(text(
+            "SELECT result, rules_used FROM rs_matrix_snapshots WHERE snapshot_id=:s"),
+            {"s": payload.compare_snapshot_id}).mappings().first()
+        if snap:
+            cmp_result, cmp_rules = _jload(snap["result"]), _jload(snap["rules_used"])
+    try:
+        _wb, summary = build_pack(db, definition, "Report", payload.report_date,
+                                  cmp_result, cmp_rules)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return summary

@@ -365,6 +365,21 @@ export default function MatrixDesigner() {
               FY {result.fy} · population {result.population_count} schemes</span>}
             <div style={{ flex: 1 }} />
             <button style={btn()} onClick={exportXlsx}><FileSpreadsheet size={13} /> Export Excel</button>
+            <button style={btn()} title="Executive summary + matrix + EVM + delay watch + DQ, one workbook"
+                    onClick={async () => {
+              const latest = snaps.find((x) => x.status === "approved" || x.status === "locked") || snaps[0];
+              const r = await authFetch(mx("/ministry-pack"), {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ definition: defn, report_id: reportId ?? undefined, report_date: reportDate,
+                                       compare_snapshot_id: latest?.snapshot_id }),
+              });
+              if (!r.ok) { setErr((await r.json()).detail || "Pack failed"); return; }
+              const blob = await r.blob();
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `MinistryPack_${reportName.replace(/[^\w -]/g, "_")}_${reportDate}.xlsx`;
+              a.click(); URL.revokeObjectURL(a.href);
+            }}><Lock size={13} /> Ministry pack</button>
             <button style={btn()} onClick={freeze}><Lock size={13} /> Freeze snapshot</button>
           </div>
 

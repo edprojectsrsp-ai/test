@@ -31,8 +31,15 @@ INT_FMT = "#,##0;(#,##0);\"-\""
 def build_workbook(result: dict[str, Any], report_name: str,
                    population: list[dict] | None = None) -> Workbook:
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Report"
+    wb.remove(wb.active)
+    add_report_sheets(wb, result, report_name, population)
+    return wb
+
+
+def add_report_sheets(wb: Workbook, result: dict[str, Any], report_name: str,
+                      population: list[dict] | None = None,
+                      sheet_title: str = "Report") -> None:
+    ws = wb.create_sheet(sheet_title)
     cols = result["columns"]
     ncols = 1 + len(cols)
 
@@ -143,5 +150,3 @@ def build_workbook(result: dict[str, Any], report_name: str,
                     v = v.isoformat()
                 ws3.cell(row=i, column=j, value=v).font = Font(name=FONT, size=9)
         ws3.freeze_panes = "A2"
-
-    return wb
