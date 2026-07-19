@@ -68,6 +68,8 @@ from app.api.v1.dpr_ingest import router as dpr_ingest_router
 from app.api.v1.bim import router as bim_router
 from app.api.v1.report_studio import router as report_studio_router
 from app.api.v1.evm import router as evm_router
+from app.api.v1.qsra import router as qsra_router
+from app.api.v1.matrix_reports import router as matrix_router
 from app.api.v1.cpm_delay import router as cpm_delay_router
 from app.api.v1.report_templates import router as report_templates_router
 from app.api.v1 import report_docs
@@ -146,6 +148,8 @@ app.include_router(dpr_ingest_router, prefix="/api/v1", tags=["DPR Ingest"])
 app.include_router(bim_router, prefix="/api/v1", tags=["4D BIM"])
 app.include_router(report_studio_router, prefix="/api/v1", tags=["Report Studio"])
 app.include_router(evm_router, prefix="/api/v1", tags=["EVM"])
+app.include_router(qsra_router, prefix="/api/v1", tags=["QSRA"])
+app.include_router(matrix_router, prefix="/api/v1", tags=["Matrix Engine"])
 app.include_router(cpm_delay_router, prefix="/api/v1", tags=["CPM Delay Analysis"])
 app.include_router(report_templates_router, prefix="/api/v1", tags=["Report Templates"])
 app.include_router(report_docs.router, prefix="/api/v1/report-docs", tags=["Report Documents"])

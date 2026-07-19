@@ -7,7 +7,7 @@
 
 import Link from "next/link";
 import {
-  ArrowRight, FileStack, LayoutDashboard, Play, Save, Table2, Wand2, Wrench,
+  ArrowRight, FileStack, LayoutDashboard, Play, Save, Scale, Table2, Wand2, Wrench,
 } from "lucide-react";
 
 const card: React.CSSProperties = {
@@ -56,6 +56,20 @@ export default function ReportStudioHub() {
           </div>
           <span style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", display: "inline-flex", alignItems: "center", gap: 4 }}>
             Open canvas <ArrowRight size={13} />
+          </span>
+        </Link>
+
+        <Link href="/report-studio/matrix" style={card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
+            <Scale size={18} /> <b style={{ fontSize: 14 }}>Matrix Engine</b>
+          </div>
+          <div style={{ fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.5, flex: 1 }}>
+            Metadata-driven MoS/PMC reports: reusable versioned rules, inherited row
+            hierarchies, period-sensitive classification, cell drill-down to source
+            schemes, reconciliation checks, frozen approved snapshots.
+          </div>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--steel)", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            Open designer <ArrowRight size={13} />
           </span>
         </Link>
 
