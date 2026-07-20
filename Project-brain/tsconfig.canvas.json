@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "ES2020", "lib": ["dom", "es2021"], "jsx": "preserve",
+    "module": "esnext", "moduleResolution": "bundler", "strict": true,
+    "skipLibCheck": true, "noEmit": true, "esModuleInterop": true,
+    "paths": { "@/*": ["./*"] }
+  },
+  "include": ["app/report-studio/DashboardCanvas.tsx", "app/report-studio/EChartsViz.tsx", "next-env.d.ts"]
+}

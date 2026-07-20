@@ -17,10 +17,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart,
-  Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from "recharts";
+import { GridStack } from "gridstack";
+import "gridstack/dist/gridstack.min.css";
+import EChartsViz from "./EChartsViz";
 import {
   AreaChart as AreaIcon, BarChart3, Calendar, CheckSquare,
   Copy, Download, Filter as FilterIcon,
@@ -178,11 +177,6 @@ const GRID_COLS = 12;
 const ROW_H = 56;
 const GAP = 10;
 
-type DragState =
-  | { kind: "move"; id: string; startX: number; startY: number; orig: Layout }
-  | { kind: "resize"; id: string; startX: number; startY: number; orig: Layout }
-  | null;
-
 /* ============================================================ component */
 
 export default function DashboardCanvas() {
@@ -211,17 +205,7 @@ export default function DashboardCanvas() {
   const [memberCache, setMemberCache] = useState<Record<string, string[]>>({});
 
   const canvasRef = useRef<HTMLDivElement>(null);
-  const [canvasW, setCanvasW] = useState(1100);
-  const drag = useRef<DragState>(null);
-  const [, setDragTick] = useState(0); // force re-render while dragging
-
-  const colW = (canvasW - GAP * (GRID_COLS - 1)) / GRID_COLS;
-  const px = (l: Layout) => ({
-    left: l.x * (colW + GAP),
-    top: l.y * (ROW_H + GAP),
-    width: l.w * colW + (l.w - 1) * GAP,
-    height: l.h * ROW_H + (l.h - 1) * GAP,
-  });
+  const gridRef = useRef<GridStack | null>(null);
 
   /* ------------------------------------------------------------ bootstrap */
 
@@ -235,14 +219,6 @@ export default function DashboardCanvas() {
     })();
   }, []);
 
-  useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setCanvasW(el.clientWidth));
-    ro.observe(el);
-    setCanvasW(el.clientWidth);
-    return () => ro.disconnect();
-  }, []);
 
   /* ------------------------------------------------------------ run page */
 
@@ -326,40 +302,51 @@ export default function DashboardCanvas() {
     patchPage((p) => ({ ...p, visuals: [...p.visuals, copy] }));
   };
 
-  /* ------------------------------------------------------------ drag/resize */
+  /* ------------------------------------------------------------ gridstack */
 
-  const beginDrag = (e: React.PointerEvent, id: string, kind: "move" | "resize", orig: Layout) => {
-    e.preventDefault(); e.stopPropagation();
-    (e.target as Element).setPointerCapture?.(e.pointerId);
-    drag.current = { kind, id, startX: e.clientX, startY: e.clientY, orig };
-  };
-  const onPointerMove = (e: React.PointerEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    const dCols = Math.round((e.clientX - d.startX) / (colW + GAP));
-    const dRows = Math.round((e.clientY - d.startY) / (ROW_H + GAP));
-    const apply = (l: Layout): Layout => {
-      if (d.kind === "move") {
-        return {
-          ...l,
-          x: Math.max(0, Math.min(GRID_COLS - l.w, d.orig.x + dCols)),
-          y: Math.max(0, d.orig.y + dRows),
-        };
+  // Init one GridStack per page mount; commit geometry changes back to state.
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const grid = GridStack.init(
+      { column: GRID_COLS, cellHeight: ROW_H, margin: GAP / 2, float: true,
+        handle: ".dc-drag", resizable: { handles: "se" }, animate: true },
+      el as HTMLDivElement,
+    );
+    gridRef.current = grid;
+    grid.on("change", (_ev: unknown, items: any[]) => {
+      if (!items?.length) return;
+      const patch: Record<string, Layout> = {};
+      for (const n of items) {
+        if (n.id) patch[String(n.id)] = { x: n.x, y: n.y, w: n.w, h: n.h };
       }
-      return {
-        ...l,
-        w: Math.max(2, Math.min(GRID_COLS - l.x, d.orig.w + dCols)),
-        h: Math.max(2, d.orig.h + dRows),
-      };
-    };
-    setPages((ps) => ps.map((p, i) => i !== pageIdx ? p : ({
-      ...p,
-      visuals: p.visuals.map((v) => (v.id === d.id ? { ...v, layout: apply(v.layout) } : v)),
-      slicers: p.slicers.map((s) => (s.id === d.id ? { ...s, layout: apply(s.layout) } : s)),
-    })));
-    setDragTick((t) => t + 1);
-  };
-  const endDrag = () => { if (drag.current) { drag.current = null; setDirty(true); } };
+      setPages((ps) => ps.map((pg, i) => i !== pageIdx ? pg : ({
+        ...pg,
+        visuals: pg.visuals.map((v) => patch[v.id] ? { ...v, layout: patch[v.id] } : v),
+        slicers: pg.slicers.map((sl) => patch[sl.id] ? { ...sl, layout: patch[sl.id] } : sl),
+      })));
+      setDirty(true);
+    });
+    return () => { grid.destroy(false); gridRef.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page.id]);
+
+  // Reconcile React-rendered items with the grid engine (adds + removals).
+  const itemIds = [...page.visuals.map((v) => v.id), ...page.slicers.map((sl) => sl.id)].join("|");
+  useEffect(() => {
+    const grid = gridRef.current;
+    const el = canvasRef.current;
+    if (!grid || !el) return;
+    grid.batchUpdate();
+    el.querySelectorAll<HTMLElement>(".grid-stack-item").forEach((node) => {
+      if (!(node as any).gridstackNode) grid.makeWidget(node);
+    });
+    for (const n of [...grid.engine.nodes]) {
+      if (n.el && !el.contains(n.el)) grid.removeWidget(n.el, false, false);
+    }
+    grid.batchUpdate(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itemIds, page.id]);
 
   /* ------------------------------------------------------------ slicer members */
 
@@ -499,15 +486,30 @@ export default function DashboardCanvas() {
 
   const canvasH = Math.max(
     560,
-    ...page.visuals.map((v) => px(v.layout).top + px(v.layout).height + 40),
-    ...page.slicers.map((s) => px(s.layout).top + px(s.layout).height + 40),
+    ...page.visuals.map((v) => (v.layout.y + v.layout.h) * (ROW_H + GAP) + 40),
+    ...page.slicers.map((s) => (s.layout.y + s.layout.h) * (ROW_H + GAP) + 40),
   );
 
-  /* ================================================================ render */
+  /* ------------------------------------------------------------ gridstack css */
+
+const GS_CSS = `
+  .grid-stack-item-content { inset: 5px; }
+  .grid-stack > .grid-stack-item > .ui-resizable-se {
+    background: none; width: 12px; height: 12px; right: 6px; bottom: 6px;
+    border-right: 2px solid var(--ink-4); border-bottom: 2px solid var(--ink-4);
+    transform: none; opacity: .55;
+  }
+  .grid-stack-placeholder > .placeholder-content {
+    background: var(--steel-soft, rgba(74,168,199,.15));
+    border: 1px dashed var(--steel); border-radius: 10px;
+  }
+`;
+
+/* ================================================================ render */
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 0, height: "calc(100vh - 130px)", minHeight: 620 }}
-         onPointerMove={onPointerMove} onPointerUp={endDrag} onPointerLeave={endDrag}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 0, height: "calc(100vh - 130px)", minHeight: 620 }}>
+      <style>{GS_CSS}</style>
 
       {/* ---------- toolbar ---------- */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderBottom: "1px solid var(--line)", flexWrap: "wrap" }}>
@@ -578,7 +580,7 @@ export default function DashboardCanvas() {
 
         {/* canvas */}
         <div style={{ flex: 1, minWidth: 0, overflow: "auto", borderRadius: 12, border: "1px solid var(--line)", background: "var(--bg)" }}>
-          <div ref={canvasRef} style={{ position: "relative", minHeight: canvasH, margin: 12 }}>
+          <div ref={canvasRef} className="grid-stack" key={page.id} style={{ minHeight: canvasH, margin: 12 }}>
             {page.visuals.length === 0 && page.slicers.length === 0 && (
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "var(--ink-4)", fontSize: 13 }}>
                 <div style={{ textAlign: "center" }}>
@@ -591,13 +593,14 @@ export default function DashboardCanvas() {
 
             {/* slicer tiles */}
             {page.slicers.map((s) => {
-              const p = px(s.layout);
               const sel = selId === s.id;
               return (
-                <div key={s.id} onClick={() => setSelId(s.id)}
-                     style={{ position: "absolute", ...p, ...panel, display: "flex", flexDirection: "column",
+                <div key={`${page.id}:${s.id}`} className="grid-stack-item" gs-id={s.id}
+                     gs-x={s.layout.x} gs-y={s.layout.y} gs-w={s.layout.w} gs-h={s.layout.h} gs-min-w={2} gs-min-h={2}>
+                <div className="grid-stack-item-content" onClick={() => setSelId(s.id)}
+                     style={{ ...panel, display: "flex", flexDirection: "column",
                               borderColor: sel ? "var(--steel)" : "var(--line)", boxShadow: sel ? "0 0 0 1px var(--steel)" : "none", overflow: "hidden" }}>
-                  <div onPointerDown={(e) => beginDrag(e, s.id, "move", s.layout)}
+                  <div className="dc-drag"
                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", cursor: "grab",
                                 borderBottom: "1px solid var(--line)", background: "var(--panel-2)", fontSize: 11.5, fontWeight: 800, color: "var(--ink-2)" }}>
                     <SlidersHorizontal size={12} style={{ color: "var(--steel)" }} />
@@ -620,26 +623,24 @@ export default function DashboardCanvas() {
                       </div>
                     )}
                   </div>
-                  <div onPointerDown={(e) => beginDrag(e, s.id, "resize", s.layout)}
-                       style={{ position: "absolute", right: 2, bottom: 2, width: 14, height: 14, cursor: "nwse-resize", color: "var(--ink-4)" }}>
-                    <Maximize2 size={11} style={{ transform: "rotate(90deg)" }} />
-                  </div>
+                </div>
                 </div>
               );
             })}
 
             {/* visual tiles */}
             {page.visuals.map((v) => {
-              const p = px(v.layout);
               const res = results[v.id];
               const sel = selId === v.id;
               const isXfSource = xf?.sourceId === v.id;
               return (
-                <div key={v.id} onClick={() => setSelId(v.id)}
-                     style={{ position: "absolute", ...p, ...panel, display: "flex", flexDirection: "column",
+                <div key={`${page.id}:${v.id}`} className="grid-stack-item" gs-id={v.id}
+                     gs-x={v.layout.x} gs-y={v.layout.y} gs-w={v.layout.w} gs-h={v.layout.h} gs-min-w={2} gs-min-h={2}>
+                <div className="grid-stack-item-content" onClick={() => setSelId(v.id)}
+                     style={{ ...panel, display: "flex", flexDirection: "column",
                               borderColor: sel ? "var(--steel)" : isXfSource ? "var(--amber, #f0883e)" : "var(--line)",
                               boxShadow: sel ? "0 0 0 1px var(--steel)" : "none", overflow: "hidden" }}>
-                  <div onPointerDown={(e) => beginDrag(e, v.id, "move", v.layout)}
+                  <div className="dc-drag"
                        style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", cursor: "grab",
                                 borderBottom: "1px solid var(--line)", background: "var(--panel-2)", fontSize: 11.5, fontWeight: 800, color: "var(--ink-2)" }}>
                     <GripVertical size={12} style={{ opacity: 0.5 }} />
@@ -662,10 +663,7 @@ export default function DashboardCanvas() {
                       <VisualBody v={v} res={res} onPoint={(row) => crossFilter(v, row)} xf={xf} />
                     )}
                   </div>
-                  <div onPointerDown={(e) => beginDrag(e, v.id, "resize", v.layout)}
-                       style={{ position: "absolute", right: 2, bottom: 2, width: 14, height: 14, cursor: "nwse-resize", color: "var(--ink-4)" }}>
-                    <Maximize2 size={11} style={{ transform: "rotate(90deg)" }} />
-                  </div>
+                </div>
                 </div>
               );
             })}
@@ -809,71 +807,13 @@ function VisualBody({ v, res, onPoint, xf }: {
   if (v.viz === "pie" || v.viz === "donut") {
     const valKey = numCols[0]?.key;
     if (!dimKey || !valKey) return <Hint text="Pie needs 1 dimension + 1 measure" />;
-    const data: Record<string, any>[] = rows.slice(0, 12).map((r) => ({ ...r, __name: String(r[dimKey] ?? "—"), __val: Number(r[valKey]) || 0 }));
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <PieChart>
-          <Pie data={data} dataKey="__val" nameKey="__name" innerRadius={v.viz === "donut" ? "55%" : 0} outerRadius="85%"
-               onClick={(d: any) => onPoint(d.payload)} style={{ cursor: "pointer" }}>
-            {data.map((d, i) => {
-              const dim = xf && xf.sourceId === v.id && d[dimKey] !== xf.value;
-              return <Cell key={i} fill={COLORS[i % COLORS.length]} opacity={dim ? 0.3 : 1} />;
-            })}
-          </Pie>
-          <Tooltip formatter={(x: any) => fmtNum(x)} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 11 }} />
-          {v.options.legend !== false && <Legend wrapperStyle={{ fontSize: 10.5 }} />}
-        </PieChart>
-      </ResponsiveContainer>
-    );
+    return <EChartsViz v={v} res={res} xf={xf} onPoint={onPoint} />;
   }
-
-  // bar / stackedbar / line / area
-  if (!dimKey || !numCols.length) return <Hint text="Add 1 dimension + at least 1 measure" />;
-  const data: Record<string, any>[] = rows.slice(0, 40).map((r) => ({ ...r, __name: String(r[dimKey] ?? "—") }));
-  const common = (
-    <>
-      <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
-      <XAxis dataKey="__name" tick={{ fontSize: 10, fill: "var(--ink-4)" }} interval="preserveStartEnd" tickLine={false} axisLine={{ stroke: "var(--line)" }} />
-      <YAxis tick={{ fontSize: 10, fill: "var(--ink-4)" }} tickFormatter={fmtNum} width={52} tickLine={false} axisLine={false} />
-      <Tooltip formatter={(x: any) => fmtNum(x)} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 11 }}
-               labelStyle={{ color: "var(--ink-2)", fontWeight: 700 }} cursor={{ fill: "var(--steel-soft)", opacity: 0.35 }} />
-      {v.options.legend !== false && numCols.length > 1 && <Legend wrapperStyle={{ fontSize: 10.5 }} />}
-    </>
-  );
-
-  if (v.viz === "line" || v.viz === "area") {
-    const Chart = v.viz === "line" ? LineChart : AreaChart;
-    return (
-      <ResponsiveContainer width="100%" height="100%">
-        <Chart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-          {common}
-          {numCols.map((c, i) => v.viz === "line"
-            ? <Line key={c.key} dataKey={c.key} name={c.label} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={{ r: 2.5 }}
-                    activeDot={{ r: 5, onClick: (_: any, e: any) => onPoint(e.payload) }} />
-            : <Area key={c.key} dataKey={c.key} name={c.label} stroke={COLORS[i % COLORS.length]} fill={COLORS[i % COLORS.length]}
-                    fillOpacity={0.22} strokeWidth={2} activeDot={{ r: 5, onClick: (_: any, e: any) => onPoint(e.payload) }} />)}
-        </Chart>
-      </ResponsiveContainer>
-    );
+  if (v.viz === "bar" || v.viz === "stackedbar" || v.viz === "line" || v.viz === "area") {
+    if (!dimKey || !numCols.length) return <Hint text="Add 1 dimension + at least 1 measure" />;
+    return <EChartsViz v={v} res={res} xf={xf} onPoint={onPoint} />;
   }
-
-  return (
-    <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
-        {common}
-        {numCols.map((c, i) => (
-          <Bar key={c.key} dataKey={c.key} name={c.label} stackId={v.viz === "stackedbar" ? "s" : undefined}
-               radius={v.viz === "stackedbar" ? 0 : [3, 3, 0, 0]}
-               onClick={(d: any) => onPoint(d.payload)} style={{ cursor: "pointer" }}>
-            {data.map((d, j) => {
-              const dim = xf && xf.sourceId === v.id && d[dimKey] !== xf.value;
-              return <Cell key={j} fill={COLORS[i % COLORS.length]} opacity={dim ? 0.3 : 1} />;
-            })}
-          </Bar>
-        ))}
-      </BarChart>
-    </ResponsiveContainer>
-  );
+  return <Hint text="Unknown visual type" />;
 }
 
 /** Multi-select member list with search — the list slicer body. */

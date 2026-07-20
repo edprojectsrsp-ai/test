@@ -50,9 +50,12 @@ forensic-delay + AI stack that none of them ship.*
   rule refs — converters unit-tested); AntV S2 custom-tree matrix grid themed
   to Furnace (classic table kept as toggle fallback); TanStack Table installed
   for secondary tables (variance, audit, drilldown) — apply in UI-V2.
-- **UI-V2**: Gridstack.js canvas drag/resize; ECharts renderers for canvas +
-  BrainChat; TanStack rollout to variance/audit/drilldown tables; optional
-  FINOS Perspective population explorer.
+- **UI-V2 (done)**: Gridstack.js canvas (drag/resize/collision via engine,
+  change-event commits layouts back to state); ECharts renderers for all six
+  chart widget types (cross-filter click + dimming preserved, ResizeObserver
+  auto-resize); TanStack sortable drill-down table. Remaining for UI-V3:
+  ECharts in BrainChat, TanStack for variance/audit views (ships with the CPM
+  baselines UI in P2), optional FINOS Perspective population explorer.
 - **Design references (study, don't embed)**: Superset — dataset/cache/
   permission/dashboard-metadata architecture for M5; Cube.js — pre-aggregation
   + semantic-model patterns for the M5 materialised population cache;

@@ -27,6 +27,10 @@ import dynamic from "next/dynamic";
 import type { RuleGroupType } from "react-querybuilder";
 import { engineToRQB, rqbToEngine } from "./ruleConvert";
 import RuleBuilderPanel from "./RuleBuilderPanel";
+import {
+  createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel,
+  SortingState, useReactTable,
+} from "@tanstack/react-table";
 
 const S2MatrixGrid = dynamic(() => import("./S2MatrixGrid"), { ssr: false });
 
@@ -564,22 +568,7 @@ export default function MatrixDesigner() {
                 setDrill((d0: any) => ({ ...d0, __explaining: true, __explanation: r.ok ? j.explanation : (j.detail || "Explain failed") }));
               }}><Eye size={12} /> Explain in plain English</button>
             )}
-            <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
-              <thead><tr>
-                {["Scheme ID", "Scheme", "Contribution"].map((h, i) => (
-                  <th key={h} style={{ textAlign: i === 2 ? "right" : "left", padding: "6px 8px", borderBottom: "1px solid var(--line)", color: "var(--ink-3)", fontWeight: 800 }}>{h}</th>
-                ))}
-              </tr></thead>
-              <tbody>
-                {drill.schemes.map((s: any) => (
-                  <tr key={s.scheme_id}>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--line)", fontFamily: mono }}>{s.scheme_id}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--line)", color: "var(--ink-2)" }}>{s.scheme_name}</td>
-                    <td style={{ padding: "5px 8px", borderBottom: "1px solid var(--line)", textAlign: "right", fontFamily: mono }}>{fmt(s.contribution)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DrillTable schemes={drill.schemes} />
           </div>
         </div>
       )}
@@ -956,5 +945,62 @@ function DataTab({ datasets, onChanged, setErr, reportDate }: {
         )}
       </div>
     </div>
+  );
+}
+
+
+/* ================================================================ drill table (TanStack) */
+
+type DrillScheme = { scheme_id: number; scheme_name: string; contribution: number | null };
+const dcol = createColumnHelper<DrillScheme>();
+const DRILL_COLS = [
+  dcol.accessor("scheme_id", { header: "Scheme ID" }),
+  dcol.accessor("scheme_name", { header: "Scheme" }),
+  dcol.accessor("contribution", { header: "Contribution",
+    cell: (info) => fmt(info.getValue()),
+    sortingFn: "basic", sortUndefined: "last" }),
+];
+
+function DrillTable({ schemes }: { schemes: DrillScheme[] }) {
+  const [sorting, setSorting] = useState<SortingState>(
+    [{ id: "contribution", desc: true }]);
+  const table = useReactTable({
+    data: schemes, columns: DRILL_COLS,
+    state: { sorting }, onSortingChange: setSorting,
+    getCoreRowModel: getCoreRowModel(), getSortedRowModel: getSortedRowModel(),
+  });
+  return (
+    <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
+      <thead>
+        {table.getHeaderGroups().map((hg) => (
+          <tr key={hg.id}>
+            {hg.headers.map((h, i) => (
+              <th key={h.id} onClick={h.column.getToggleSortingHandler()}
+                  style={{ textAlign: i === 2 ? "right" : "left", padding: "6px 8px",
+                           borderBottom: "1px solid var(--line)", color: "var(--ink-3)",
+                           fontWeight: 800, cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+                {flexRender(h.column.columnDef.header, h.getContext())}
+                {{ asc: " ▲", desc: " ▼" }[h.column.getIsSorted() as string] ?? ""}
+              </th>
+            ))}
+          </tr>
+        ))}
+      </thead>
+      <tbody>
+        {table.getRowModel().rows.map((row) => (
+          <tr key={row.id}>
+            {row.getVisibleCells().map((cell, i) => (
+              <td key={cell.id}
+                  style={{ padding: "5px 8px", borderBottom: "1px solid var(--line)",
+                           textAlign: i === 2 ? "right" : "left",
+                           fontFamily: i !== 1 ? mono : undefined,
+                           color: i === 1 ? "var(--ink-2)" : "var(--ink)" }}>
+                {flexRender(cell.column.columnDef.cell, cell.getContext())}
+              </td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
