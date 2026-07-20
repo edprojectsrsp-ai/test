@@ -8,6 +8,8 @@
 //   import, baselines. The rival's Codex-built module is an iframe island that
 //   needs a server round-trip for every recalculation; this does it in <1ms.
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+const BaselinePanel = dynamic(() => import("@/app/cpm/BaselinePanel"), { ssr: false });
 import { Gantt, Task, ViewMode } from "gantt-task-react";
 import "gantt-task-react/dist/index.css";
 import { ThemeToggle } from "@/theme/ThemeProvider";
@@ -34,6 +36,7 @@ export default function CpmStudio() {
   const [view, setView] = useState<ViewMode>(ViewMode.Week);
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+  const [showBaselines, setShowBaselines] = useState(false);
 
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
   useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
@@ -136,6 +139,7 @@ export default function CpmStudio() {
           </label>
           <Button onClick={officialRun}>Official run</Button>
           <Button onClick={exportCsv}>CSV</Button>
+          <Button onClick={() => setShowBaselines((b) => !b)} kind={showBaselines ? "accent" : "default"}>Baselines &amp; Variance</Button>
         </div>
       </Card>
 
@@ -151,6 +155,12 @@ export default function CpmStudio() {
           </div>
         ) : <div style={{ padding: 30, color: "var(--steel-dim)" }}>No schedule loaded.</div>}
       </Card>
+
+      {showBaselines && schedId != null && (
+        <Card style={{ marginTop: 14 }}>
+          <BaselinePanel scheduleId={schedId} />
+        </Card>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginTop: 14, alignItems: "start" }}>
         {/* Activity table */}
