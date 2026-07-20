@@ -23,6 +23,12 @@ import {
   Search, Shield, Trash2, X,
 } from "lucide-react";
 import { authFetch } from "@/lib/auth";
+import dynamic from "next/dynamic";
+import type { RuleGroupType } from "react-querybuilder";
+import { engineToRQB, rqbToEngine } from "./ruleConvert";
+import RuleBuilderPanel from "./RuleBuilderPanel";
+
+const S2MatrixGrid = dynamic(() => import("./S2MatrixGrid"), { ssr: false });
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 const mx = (p: string) => `${API}/report-studio/matrix${p}`;
@@ -37,7 +43,7 @@ type Col = { key: string; name: string; measure?: { field: string; agg: string; 
 type Row = { id: string; name: string; rule?: string; recon?: string | null; children?: Row[] };
 type Defn = { columns: Col[]; rows: Row[] };
 type RunRow = { id: string; name: string; depth: number; rule?: string; recon?: string; scheme_count: number; cells: Record<string, number | null> };
-type RunResult = { report_date: string; fy: string; population_count: number; rows: RunRow[]; reconciliation: any[] };
+type RunResult = { report_date: string; fy: string; population_count: number; rows: RunRow[]; reconciliation: any[]; columns: Col[] };
 
 const uid = () => Math.random().toString(36).slice(2, 8);
 
@@ -85,6 +91,7 @@ export default function MatrixDesigner() {
   const [drill, setDrill] = useState<any | null>(null);
   const [snaps, setSnaps] = useState<any[]>([]);
   const [dq, setDq] = useState<any | null>(null);
+  const [gridV2, setGridV2] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [libMeasures, setLibMeasures] = useState<LibMeasure[]>([]);
   const [templates, setTemplates] = useState<{ template_key: string; name: string }[]>([]);
@@ -364,6 +371,9 @@ export default function MatrixDesigner() {
             {result && <span style={{ fontSize: 11.5, color: "var(--ink-4)" }}>
               FY {result.fy} · population {result.population_count} schemes</span>}
             <div style={{ flex: 1 }} />
+            <button style={btn()} onClick={() => setGridV2(!gridV2)} title="Toggle S2 / classic grid">
+              <Table2Icon /> {gridV2 ? "S2 grid" : "Classic grid"}
+            </button>
             <button style={btn()} onClick={exportXlsx}><FileSpreadsheet size={13} /> Export Excel</button>
             <button style={btn()} title="Executive summary + matrix + EVM + delay watch + DQ, one workbook"
                     onClick={async () => {
@@ -383,9 +393,16 @@ export default function MatrixDesigner() {
             <button style={btn()} onClick={freeze}><Lock size={13} /> Freeze snapshot</button>
           </div>
 
+          {result && gridV2 && (
+            <div style={{ ...panel, padding: 8, marginBottom: 12 }}>
+              <S2MatrixGrid rows={result.rows as any} columns={result.columns as any}
+                            height={Math.min(560, 96 + result.rows.length * 32)}
+                            onCell={(rid, ck) => drilldown(rid, ck)} />
+            </div>
+          )}
           {result && (
             <>
-              <div style={{ ...panel, overflow: "auto", marginBottom: 12 }}>
+              {!gridV2 && <div style={{ ...panel, overflow: "auto", marginBottom: 12 }}>
                 <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
                   <thead>
                     <tr>
@@ -422,7 +439,7 @@ export default function MatrixDesigner() {
                     })}
                   </tbody>
                 </table>
-              </div>
+              </div>}
 
               {/* data-quality pre-flight (spec §11) */}
               {dq && (
@@ -616,6 +633,8 @@ function RowTree({ rows, depth, rules, templates, patch, addChild, del, insertTe
   );
 }
 
+function Table2Icon() { return <span style={{ fontSize: 12 }}>▦</span>; }
+
 function Wand2Icon() { return <span style={{ fontSize: 13 }}>✦</span>; }
 
 /* ================================================================ rules tab */
@@ -671,8 +690,9 @@ function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged,
     setPreview(j);
   };
 
-  const conds: Cond[] = editing?.condition?.conditions || [];
-  const setConds = (c: Cond[]) => editing && setEditing({ ...editing, condition: { ...editing.condition, conditions: c } });
+  const typeMap = useMemo(() => Object.fromEntries(fields.map((f) => [f.key, f.type])), [fields]);
+  const rqbQuery = useMemo(() => engineToRQB(editing?.condition) as RuleGroupType,
+                           [editing?.rule_key, editing?.version]);  // rebuilt on rule switch
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 12 }}>
@@ -725,66 +745,18 @@ function RulesTab({ rules, fields, operators, fieldByKey, reportDate, onChanged,
                      onChange={(e) => setEditing({ ...editing, rule_key: e.target.value.replace(/[^a-z0-9_]/g, "") })} />
               <input style={{ ...inp, flex: 1, minWidth: 180, fontWeight: 700 }} placeholder="Rule name" value={editing.rule_name}
                      onChange={(e) => setEditing({ ...editing, rule_name: e.target.value })} />
-              <select style={{ ...inp, width: 80 }} value={editing.condition.op || "AND"}
-                      onChange={(e) => setEditing({ ...editing, condition: { ...editing.condition, op: e.target.value } })}>
-                {["AND", "OR", "NOT"].map((o) => <option key={o}>{o}</option>)}
-              </select>
+
             </div>
 
-            {conds.map((c, i) => (
-              <div key={i} style={{ display: "flex", gap: 5, alignItems: "center", marginBottom: 5 }}>
-                {"rule" in c && c.rule !== undefined ? (
-                  <>
-                    <span style={{ fontSize: 11, color: "var(--steel)", fontWeight: 800, width: 96 }}>RULE REF</span>
-                    <select style={{ ...inp, flex: 1 }} value={c.rule}
-                            onChange={(e) => setConds(conds.map((x, j) => j === i ? { rule: e.target.value } : x))}>
-                      {rules.filter((r) => r.rule_key !== editing.rule_key)
-                            .map((r) => <option key={r.rule_key} value={r.rule_key}>{r.rule_name}</option>)}
-                    </select>
-                  </>
-                ) : (
-                  <>
-                    <select style={{ ...inp, width: 200 }} value={c.field || ""}
-                            onChange={(e) => setConds(conds.map((x, j) => j === i ? { ...x, field: e.target.value, op: "=", value: "" } : x))}>
-                      <option value="">field…</option>
-                      {fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
-                    </select>
-                    <select style={{ ...inp, width: 110 }} value={c.op || "="}
-                            onChange={(e) => setConds(conds.map((x, j) => j === i ? { ...x, op: e.target.value } : x))}>
-                      {(operators[fieldByKey[c.field || ""]?.type || "text"] || ["="]).map((o) => <option key={o}>{o}</option>)}
-                    </select>
-                    {!["is_null", "not_null"].includes(c.op || "") && (
-                      typeof c.value === "object" && c.value?.token !== undefined ? (
-                        <select style={{ ...inp, flex: 1 }} value={c.value.token}
-                                onChange={(e) => setConds(conds.map((x, j) => j === i ? { ...x, value: { token: e.target.value } } : x))}>
-                          {TOKENS.map((t) => <option key={t}>{t}</option>)}
-                        </select>
-                      ) : (
-                        <input style={{ ...inp, flex: 1 }} value={c.value ?? ""}
-                               placeholder={fieldByKey[c.field || ""]?.type === "date" ? "YYYY-MM-DD" : "value"}
-                               onChange={(e) => setConds(conds.map((x, j) => j === i ? { ...x, value: fieldByKey[c.field || ""]?.type === "number" && e.target.value !== "" && !isNaN(Number(e.target.value)) ? Number(e.target.value) : e.target.value } : x))} />
-                      )
-                    )}
-                    <button style={{ ...btn(), padding: "4px 7px", fontSize: 10.5 }}
-                            title="Toggle period token (fy_start, report_date, …)"
-                            onClick={() => setConds(conds.map((x, j) => j === i
-                              ? { ...x, value: (typeof x.value === "object" && x.value?.token) ? "" : { token: "fy_start" } } : x))}>
-                      FY
-                    </button>
-                  </>
-                )}
-                <X size={13} style={{ cursor: "pointer", color: "var(--ink-4)" }}
-                   onClick={() => setConds(conds.filter((_, j) => j !== i))} />
-              </div>
-            ))}
+            <RuleBuilderPanel
+              query={rqbQuery}
+              fields={fields}
+              libRules={rules.map((r) => ({ rule_key: r.rule_key, rule_name: r.rule_name }))}
+              excludeRuleKey={editing.rule_key}
+              onChange={(q) => setEditing((e) => e ? { ...e, condition: rqbToEngine(q as any, typeMap) } : e)}
+            />
 
             <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-              <button style={btn()} onClick={() => setConds([...conds, { field: "", op: "=", value: "" }])}>
-                <Plus size={12} /> Condition
-              </button>
-              <button style={btn()} onClick={() => setConds([...conds, { rule: rules[0]?.rule_key || "" }])}>
-                <Plus size={12} /> Rule reference
-              </button>
               <div style={{ flex: 1 }} />
               <button style={btn()} onClick={runPreview}><Eye size={12} /> Preview @ {reportDate}</button>
               <button style={btn(true)} onClick={save}><Save size={12} /> Save {editing.version > 0 ? `(→ v${editing.version + 1})` : ""}</button>

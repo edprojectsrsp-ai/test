@@ -45,6 +45,19 @@ forensic-delay + AI stack that none of them ship.*
 - **Voice DPR**: site engineer speaks progress on Telegram; AI service transcribes → structured DPR draft → engineer confirms.
 - **Alert rules**: "notify chair when any Corporate AMR slips to Delay>1" — Matrix Engine rules reused as alert predicates, pushed via the digest transport.
 
+## UI modernisation track (agreed 20 Jul)
+- **UI-V1 (done)**: react-querybuilder rules tab (nested groups, NOT, tokens,
+  rule refs — converters unit-tested); AntV S2 custom-tree matrix grid themed
+  to Furnace (classic table kept as toggle fallback); TanStack Table installed
+  for secondary tables (variance, audit, drilldown) — apply in UI-V2.
+- **UI-V2**: Gridstack.js canvas drag/resize; ECharts renderers for canvas +
+  BrainChat; TanStack rollout to variance/audit/drilldown tables; optional
+  FINOS Perspective population explorer.
+- **Design references (study, don't embed)**: Superset — dataset/cache/
+  permission/dashboard-metadata architecture for M5; Cube.js — pre-aggregation
+  + semantic-model patterns for the M5 materialised population cache;
+  TableCN/shadcn — toolbar, filter and table-state UX patterns.
+
 ## Hardening track
 Audit trail on rule/report mutations · e-sign on approvals · SSO/LDAP ·
 row-level security (department/plant scoping) · materialised population views
