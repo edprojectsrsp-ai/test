@@ -26,6 +26,7 @@ after the SQL fetch so rules can use them like stored columns.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -217,13 +218,92 @@ def apply_row_scopes(population: list[dict], scopes: Optional[dict[str, set]]
     return out
 
 
+def _dataset_fingerprint(dataset: Optional[dict]) -> str:
+    """Stable hash of the config that determines the population shape/values."""
+    if not dataset:
+        return "builtin_v1"
+    blob = json.dumps({"sql": dataset.get("base_sql"),
+                       "fields": dataset.get("fields"),
+                       "derived": dataset.get("derived")},
+                      sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:16]
+
+
+def _cache_get(db, dataset_key: str, report_date: date, fp: str):
+    try:
+        row = db.execute(text(
+            "UPDATE rs_population_cache SET hits = hits + 1 "
+            "WHERE dataset_key = :d AND report_date = :dt AND fingerprint = :fp "
+            "RETURNING population"),
+            {"d": dataset_key, "dt": report_date, "fp": fp}).scalar()
+        db.commit()
+    except Exception:
+        db.rollback()
+        return None
+    if row is None:
+        return None
+    pop = json.loads(row) if isinstance(row, str) else row
+    # revive dates (JSON stored them as ISO strings)
+    for rec in pop:
+        for k, v in rec.items():
+            if isinstance(v, str) and len(v) == 10 and v[4] == "-" and v[7] == "-":
+                try:
+                    rec[k] = date.fromisoformat(v)
+                except ValueError:
+                    pass
+    return pop
+
+
+def _cache_put(db, dataset_key: str, report_date: date, fp: str,
+               population: list[dict]) -> None:
+    try:
+        db.execute(text(
+            "INSERT INTO rs_population_cache "
+            " (dataset_key, report_date, fingerprint, population, row_count) "
+            "VALUES (:d, :dt, :fp, CAST(:p AS jsonb), :n) "
+            "ON CONFLICT (dataset_key, report_date, fingerprint) "
+            "DO UPDATE SET population = EXCLUDED.population, "
+            " row_count = EXCLUDED.row_count, built_at = now(), hits = 0"),
+            {"d": dataset_key, "dt": report_date, "fp": fp,
+             "p": json.dumps(population, default=str), "n": len(population)})
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
+def invalidate_population_cache(db, dataset_key: Optional[str] = None) -> int:
+    try:
+        if dataset_key:
+            n = db.execute(text("DELETE FROM rs_population_cache WHERE dataset_key = :d"),
+                           {"d": dataset_key}).rowcount
+        else:
+            n = db.execute(text("DELETE FROM rs_population_cache")).rowcount
+        db.commit()
+        return n or 0
+    except Exception:
+        db.rollback()
+        return 0
+
+
 def fetch_population(db, report_date: date, dataset_key: Optional[str] = None,
-                     user: Optional[dict] = None) -> list[dict[str, Any]]:
+                     user: Optional[dict] = None, use_cache: bool = True
+                     ) -> list[dict[str, Any]]:
     """Configured dataset when one exists; built-in scheme dataset otherwise."""
     dataset = load_dataset(db, dataset_key)
     scopes = load_row_scopes(db, user)
+    dkey = (dataset or {}).get("dataset_key", DEFAULT_DATASET_KEY)
+    fp = _dataset_fingerprint(dataset)
+
+    if use_cache:
+        cached = _cache_get(db, dkey, report_date, fp)
+        if cached is not None:
+            return apply_row_scopes(cached, scopes)
+
     if dataset:
-        return apply_row_scopes(fetch_population_configured(db, dataset, report_date), scopes)
+        raw = fetch_population_configured(db, dataset, report_date)
+        if use_cache:
+            _cache_put(db, dkey, report_date, fp, raw)
+        return apply_row_scopes(raw, scopes)
     ctx = period_context(report_date)
     rows = db.execute(text("""
         WITH be AS (
@@ -286,6 +366,8 @@ def fetch_population(db, report_date: date, dataset_key: Optional[str] = None,
         rec["delay_days"] = float((report_date - ac).days) if (ac and report_date > ac
                                                               and not rec["actual_completion"]) else 0.0
         population.append(rec)
+    if use_cache:
+        _cache_put(db, dkey, report_date, fp, population)
     return apply_row_scopes(population, scopes)
 
 

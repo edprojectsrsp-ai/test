@@ -415,6 +415,7 @@ def upsert_dataset(payload: DatasetIn, report_date: Optional[date] = None,
            "sql": payload.base_sql, "idf": payload.id_field, "nf": payload.name_field,
            "f": json.dumps(payload.fields), "dv": json.dumps(payload.derived)})
     db.commit()
+    ME.invalidate_population_cache(db, payload.dataset_key)
     return {"dataset_key": payload.dataset_key}
 
 
