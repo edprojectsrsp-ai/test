@@ -33,6 +33,7 @@ import {
 } from "@tanstack/react-table";
 
 const S2MatrixGrid = dynamic(() => import("./S2MatrixGrid"), { ssr: false });
+const ScratchpadGrid = dynamic(() => import("./ScratchpadGrid"), { ssr: false });
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 const mx = (p: string) => `${API}/report-studio/matrix${p}`;
@@ -96,6 +97,7 @@ export default function MatrixDesigner() {
   const [snaps, setSnaps] = useState<any[]>([]);
   const [dq, setDq] = useState<any | null>(null);
   const [gridV2, setGridV2] = useState(true);
+  const [scratch, setScratch] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [libMeasures, setLibMeasures] = useState<LibMeasure[]>([]);
   const [templates, setTemplates] = useState<{ template_key: string; name: string }[]>([]);
@@ -378,6 +380,9 @@ export default function MatrixDesigner() {
             <button style={btn()} onClick={() => setGridV2(!gridV2)} title="Toggle S2 / classic grid">
               <Table2Icon /> {gridV2 ? "S2 grid" : "Classic grid"}
             </button>
+            <button style={btn(scratch)} onClick={() => setScratch(!scratch)} title="Spreadsheet scratchpad with =A1+B1 formulas over the engine cells">
+              <span style={{ fontSize: 12 }}>Σ</span> Scratchpad
+            </button>
             <button style={btn()} onClick={exportXlsx}><FileSpreadsheet size={13} /> Export Excel</button>
             <button style={btn()} title="Executive summary + matrix + EVM + delay watch + DQ, one workbook"
                     onClick={async () => {
@@ -397,7 +402,13 @@ export default function MatrixDesigner() {
             <button style={btn()} onClick={freeze}><Lock size={13} /> Freeze snapshot</button>
           </div>
 
-          {result && gridV2 && (
+          {result && scratch && (
+            <div style={{ marginBottom: 12 }}>
+              <ScratchpadGrid rows={result.rows as any} columns={result.columns as any}
+                              onClose={() => setScratch(false)} />
+            </div>
+          )}
+          {result && gridV2 && !scratch && (
             <div style={{ ...panel, padding: 8, marginBottom: 12 }}>
               <S2MatrixGrid rows={result.rows as any} columns={result.columns as any}
                             height={Math.min(560, 96 + result.rows.length * 32)}
