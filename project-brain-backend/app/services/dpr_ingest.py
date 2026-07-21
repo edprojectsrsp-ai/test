@@ -104,7 +104,9 @@ def _parse_rsp_dpr(wb):
     mode = "activities"
     work_type = ""
     parent = None
-    for r in rows[(hi or 3) + 2:]:
+    _base = (hi or 3) + 2
+    for _ri, r in enumerate(rows[_base:]):
+        _src_row = _base + _ri + 1  # 1-based Excel row
         c0, c1, c2 = _text(r, 0), _text(r, 1), _text(r, 2)
         label = c2 or c0
         up = (c0 + " " + c2).upper()
@@ -148,6 +150,11 @@ def _parse_rsp_dpr(wb):
             "ftmPlan": _f(_cell(r, 8)),
             "dayPlan": _f(_cell(r, 11)), "dayActual": _f(_cell(r, 12)),
             "cumPlanToDate": _f(_cell(r, 15)), "cumActualToDate": _f(_cell(r, 16)),
+            "_srcRow": _src_row,
+            "_colMap": {"scope": 3, "uom": 4, "actualTillLastFy": 5,
+                        "cumPlanLastMonth": 6, "cumActualLastMonth": 7, "ftmPlan": 8,
+                        "dayPlan": 11, "dayActual": 12, "cumPlanToDate": 15,
+                        "cumActualToDate": 16},
             "remarks": "",
         }
         if not is_detail and c2:

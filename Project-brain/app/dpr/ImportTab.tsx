@@ -19,9 +19,11 @@ type ParsedRow = {
   dayActual: number | null; cumActualToDate: number | null; ftmPlan: number | null;
   remarks: string; matchedActivityId: number | null; confidence: number;
   candidates: Candidate[]; suggestedQty: number; qtyBasis: string; detailCount?: number;
+  srcRow?: number; qtyCell?: string | null; learned?: boolean;
+  provenance?: Record<string, string | null>;
 };
 type ParseResult = {
-  fileName: string; format: string; projectName: string; reportDate: string;
+  fileName: string; format: string; projectName: string; reportDate: string; schemeId?: number;
   rows: ParsedRow[];
   manpower: { category: string; trade: string; ftd: number }[];
   equipment: { name: string; count: number }[];
@@ -46,9 +48,40 @@ export default function ImportTab({ schemeId }: { schemeId: number }) {
   const [include, setInclude] = useState<Record<number, boolean>>({});
   const [err, setErr] = useState("");
   const [done, setDone] = useState<any>(null);
+  const [lastFile, setLastFile] = useState<File | null>(null);
+  const [teaching, setTeaching] = useState<number | null>(null);
+
+  const RSP_FIELDS: { field: string; label: string }[] = [
+    { field: "dayActual", label: "Day actual" },
+    { field: "cumActualToDate", label: "Cumulative actual" },
+    { field: "scope", label: "Scope" },
+    { field: "ftmPlan", label: "FTM plan" },
+    { field: "cumActualLastMonth", label: "Cum actual last month" },
+  ];
+  const colIndex = (letter: string) => {
+    let n = 0; for (const ch of letter.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+    return n - 1;
+  };
+  const teachColumn = async (field: string, cellLetter: string, perScheme: boolean) => {
+    const ci = colIndex(cellLetter.replace(/[0-9]/g, ""));
+    if (ci < 0) return;
+    await fetch(`${API}/dpr-ingest/teach/column`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dpr_format: result?.format, field, col_index: ci,
+                             scheme_id: perScheme ? schemeId : null }),
+    });
+    setTeaching(null);
+    if (lastFile) upload(lastFile);   // re-parse so provenance + values reflect the correction
+  };
+  const teachActivity = async (rowLabel: string, activityId: number) => {
+    await fetch(`${API}/dpr-ingest/teach/activity`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scheme_id: schemeId, row_label: rowLabel, activity_id: activityId }),
+    });
+  };
 
   const upload = async (file: File) => {
-    setParsing(true); setErr(""); setDone(null); setResult(null);
+    setParsing(true); setErr(""); setDone(null); setResult(null); setLastFile(file);
     try {
       const fd = new FormData();
       fd.append("file", file);
@@ -176,7 +209,10 @@ export default function ImportTab({ schemeId }: { schemeId: number }) {
                     <td className="px-2 py-1.5 text-right text-emerald-300">{num(row.dayActual)}</td>
                     <td className="px-2 py-1.5 text-right text-zinc-400">{num(row.cumActualToDate)}</td>
                     <td className="px-2 py-1.5">
-                      <select value={match[i] || ""} onChange={(e) => setMatch((c) => ({ ...c, [i]: e.target.value }))}
+                      <select value={match[i] || ""} onChange={(e) => {
+                          setMatch((c) => ({ ...c, [i]: e.target.value }));
+                          if (e.target.value) teachActivity(`${row.workType || ""} ${row.activity || ""}`.trim() || row.activity, Number(e.target.value));
+                        }}
                         className="w-full min-w-[210px] rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-zinc-200 outline-none">
                         <option value="">— unmatched —</option>
                         {row.candidates.map((c) => (
@@ -187,11 +223,33 @@ export default function ImportTab({ schemeId }: { schemeId: number }) {
                       </select>
                     </td>
                     <td className="px-2 py-1.5 text-center"><ConfBadge v={row.confidence} /></td>
-                    <td className="px-2 py-1.5 text-right">
+                    <td className="relative px-2 py-1.5 text-right">
                       <input type="number" value={qty[i] ?? ""} onChange={(e) => setQty((c) => ({ ...c, [i]: e.target.value }))}
                         className="w-24 rounded border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-right text-cyan-300 outline-none" />
                       {row.qtyBasis === "cumulative_delta" && (
                         <span className="block text-[9px] text-amber-400/80" title="Derived: file cumulative − database cumulative">Δ cum</span>
+                      )}
+                      {row.qtyCell && (
+                        <span className="block cursor-pointer text-[9px] text-cyan-500/80 hover:text-cyan-300"
+                              title="Cell this value was read from — click to correct the source column"
+                              onClick={() => setTeaching(teaching === i ? null : i)}>
+                          from {row.qtyCell}{row.learned ? " · learned" : ""} ▾
+                        </span>
+                      )}
+                      {teaching === i && (
+                        <div className="absolute z-20 mt-1 w-56 rounded-lg border border-zinc-700 bg-zinc-950 p-2 text-left shadow-xl">
+                          <p className="mb-1 text-[10px] font-bold text-zinc-400">Value taken from wrong cell? Point each field to the correct column:</p>
+                          {RSP_FIELDS.map((f) => (
+                            <div key={f.field} className="mb-1 flex items-center gap-1">
+                              <span className="w-28 text-[10px] text-zinc-400">{f.label}</span>
+                              <span className="text-[10px] text-zinc-500">{row.provenance?.[f.field] || "—"}</span>
+                              <input placeholder="→ col e.g. L" defaultValue=""
+                                     className="w-14 rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 text-[10px] text-zinc-200 outline-none"
+                                     onKeyDown={(e) => { if (e.key === "Enter") { const v = (e.target as HTMLInputElement).value.trim(); if (v) teachColumn(f.field, v, true); } }} />
+                            </div>
+                          ))}
+                          <p className="mt-1 text-[9px] text-zinc-600">Enter a column letter and press Enter. Saved for this scheme; re-parses immediately.</p>
+                        </div>
                       )}
                     </td>
                   </tr>

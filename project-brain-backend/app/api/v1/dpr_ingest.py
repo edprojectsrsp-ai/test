@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.services import dpr_ingest as DI
+from app.services import dpr_teach as DT
 from app.services import manpower as mp
 
 router = APIRouter(prefix="/dpr-ingest", tags=["DPR Ingest"])
@@ -106,6 +107,12 @@ async def parse_file(
         groups = list(by_wt.values())
 
     matches = DI.match_activities(db, scheme_id, groups, package_id)
+    # DPR-2: force matches the user has taught for this scheme
+    matches = DT.apply_activity_overrides(db, scheme_id, groups, matches)
+    # DPR-2: apply learned column overrides (per-scheme over template-global)
+    col_overrides = DT.load_column_map(db, parsed["format"], scheme_id)
+    if col_overrides:
+        DT.apply_column_overrides(groups, col_overrides)
     cum = _db_cumulative(db, [m["matchedActivityId"] for m in matches if m["matchedActivityId"]])
 
     rows = []
@@ -125,12 +132,18 @@ async def parse_file(
             "candidates": m["candidates"],
             "suggestedQty": suggested if suggested and suggested > 0 else (day_qty or 0),
             "qtyBasis": basis,
+            "srcRow": g.get("_srcRow"),
+            "provenance": DT.provenance(g),
+            "qtyCell": (DT.provenance(g) or {}).get("dayActual")
+                       if basis == "day_actual" else (DT.provenance(g) or {}).get("cumActualToDate"),
+            "learned": m.get("learned", False),
         })
 
     detected = _date_from_filename(name)
     return {
         "fileName": name,
         "format": parsed["format"],
+        "schemeId": scheme_id,
         "projectName": parsed["projectName"],
         "reportDate": (report_date or parsed.get("reportDate")
                        or (detected.isoformat() if detected else date.today().isoformat())),
@@ -225,3 +238,49 @@ def commit(payload: CommitIn, db: Session = Depends(get_db)):
     db.commit()
     return {"ok": True, "reportDate": report_date.isoformat(),
             "actualsSaved": saved, "manpowerSaved": manpower_saved}
+
+
+# ─────────────────────────── DPR-2 teach endpoints ──────────────────────────
+
+class TeachColumnIn(BaseModel):
+    dpr_format: str
+    field: str
+    col_index: int
+    scheme_id: Optional[int] = None   # None = template-global default
+    updated_by: Optional[str] = None
+
+
+class TeachActivityIn(BaseModel):
+    scheme_id: int
+    row_label: str
+    activity_id: int
+    updated_by: Optional[str] = None
+
+
+@router.post("/teach/column")
+def teach_column(payload: TeachColumnIn, db: Session = Depends(get_db)):
+    """Correct which source column a field is read from. Saved per format
+    (global) or per scheme (override). Reused on every future parse."""
+    DT.save_column_map(db, payload.dpr_format, payload.scheme_id,
+                       payload.field, payload.col_index, payload.updated_by)
+    return {"ok": True, "cell_column": DT._col_letter(payload.col_index),
+            "scope": "scheme" if payload.scheme_id else "template"}
+
+
+@router.post("/teach/activity")
+def teach_activity(payload: TeachActivityIn, db: Session = Depends(get_db)):
+    """Correct which activity a DPR row maps to (per scheme). Reused next upload."""
+    DT.save_activity_map(db, payload.scheme_id, payload.row_label,
+                         payload.activity_id, payload.updated_by)
+    return {"ok": True}
+
+
+@router.get("/teach/maps/{scheme_id}")
+def teach_maps(scheme_id: int, dpr_format: Optional[str] = None,
+               db: Session = Depends(get_db)):
+    """What has been taught for this scheme (+ optional format)."""
+    acts = DT.load_activity_map(db, scheme_id)
+    cols = DT.load_column_map(db, dpr_format, scheme_id) if dpr_format else {}
+    return {"activity_maps": acts,
+            "column_overrides": {f: {"col_index": ci, "cell_column": DT._col_letter(ci)}
+                                 for f, ci in cols.items()}}
