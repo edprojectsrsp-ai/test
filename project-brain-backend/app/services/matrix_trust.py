@@ -31,13 +31,14 @@ def load_dq_checks(db, dataset_key: str = "schemes") -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def run_dq(db, report_date: date, dataset_key: Optional[str] = None) -> dict[str, Any]:
+def run_dq(db, report_date: date, dataset_key: Optional[str] = None,
+           user: Optional[dict] = None) -> dict[str, Any]:
     """Evaluate every active check over the live population — drillable."""
     dataset = ME.load_dataset(db, dataset_key)
     dkey = (dataset or {}).get("dataset_key", ME.DEFAULT_DATASET_KEY)
     idf = (dataset or {}).get("id_field", "scheme_id")
     nf = (dataset or {}).get("name_field", "scheme_name")
-    population = ME.fetch_population(db, report_date, dataset_key)
+    population = ME.fetch_population(db, report_date, dataset_key, user=user)
     ctx = ME.period_context(report_date)
     results = []
     for chk in load_dq_checks(db, dkey):

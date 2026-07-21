@@ -254,22 +254,22 @@ def delete_report(report_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/run")
-def run(payload: RunIn, db: Session = Depends(get_db)):
+def run(payload: RunIn, db: Session = Depends(get_db), user: dict = Depends(require_user)):
     _ensure_tables(db)
     definition = _definition_for(db, payload)
     try:
-        return ME.run_report(db, definition, payload.report_date)
+        return ME.run_report(db, definition, payload.report_date, user=user)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 @router.post("/cell")
-def cell(payload: CellIn, db: Session = Depends(get_db)):
+def cell(payload: CellIn, db: Session = Depends(get_db), user: dict = Depends(require_user)):
     _ensure_tables(db)
     definition = _definition_for(db, payload)
     try:
         return ME.cell_drilldown(db, definition, payload.report_date,
-                                 payload.row_id, payload.column_key)
+                                 payload.row_id, payload.column_key, user=user)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -733,11 +733,11 @@ from app.services import matrix_trust as MT
 
 @router.get("/dq")
 def data_quality(report_date: date, dataset_key: Optional[str] = None,
-                 db: Session = Depends(get_db)):
+                 db: Session = Depends(get_db), user: dict = Depends(require_user)):
     """Spec §11 pre-flight: every active check with drillable violations."""
     _ensure_tables(db)
     try:
-        return MT.run_dq(db, report_date, dataset_key)
+        return MT.run_dq(db, report_date, dataset_key, user=user)
     except ValueError as e:
         raise HTTPException(400, str(e))
 
@@ -790,13 +790,13 @@ class SnapshotIn2(SnapshotIn):
 
 
 @router.post("/snapshots/gated")
-def freeze_gated(payload: SnapshotIn2, db: Session = Depends(get_db)):
+def freeze_gated(payload: SnapshotIn2, db: Session = Depends(get_db), user: dict = Depends(require_user)):
     """DQ-gated freeze: error violations block unless explicitly (and
     auditably) overridden. Snapshots store per-row scheme_ids for compare."""
     _ensure_tables(db)
     _ensure_gov_tables(db)
     definition = _definition_for(db, payload)
-    dq = MT.run_dq(db, payload.report_date, definition.get("dataset"))
+    dq = MT.run_dq(db, payload.report_date, definition.get("dataset"), user=user)
     if not dq["freeze_allowed"] and not payload.override_dq:
         raise HTTPException(409, f"{dq['error_violations']} error-severity data-quality "
                                  "violation(s) — fix them or freeze with override_dq=true "
@@ -804,7 +804,7 @@ def freeze_gated(payload: SnapshotIn2, db: Session = Depends(get_db)):
     if not dq["freeze_allowed"] and payload.override_dq and not payload.override_reason:
         raise HTTPException(400, "override_reason is mandatory when overriding DQ errors")
     try:
-        result = ME.run_report(db, definition, payload.report_date, include_ids=True)
+        result = ME.run_report(db, definition, payload.report_date, include_ids=True, user=user)
     except ValueError as e:
         raise HTTPException(400, str(e))
     rules = ME.load_rules(db)
@@ -1110,3 +1110,62 @@ def ministry_pack_summary(payload: PackIn, db: Session = Depends(get_db)):
     except ValueError as e:
         raise HTTPException(400, str(e))
     return summary
+
+
+# ═════════════════════════════════════════════ M5-RLS — row scopes (spec §12)
+
+class RowScopeIn(BaseModel):
+    role: Optional[str] = None
+    user_id: Optional[int] = None
+    dimension: str          # scheme_type | department | plant | scheme_id
+    value: str
+    created_by: Optional[str] = None
+
+
+@router.get("/row-scopes")
+def list_row_scopes(db: Session = Depends(get_db),
+                    user: dict = Depends(require_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins manage row scopes")
+    db.execute(text(
+        "CREATE TABLE IF NOT EXISTS rs_row_scopes ("
+        " id SERIAL PRIMARY KEY, role TEXT, user_id INTEGER,"
+        " dimension TEXT NOT NULL, value TEXT NOT NULL, created_by VARCHAR(100),"
+        " created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        " CHECK (role IS NOT NULL OR user_id IS NOT NULL))"))
+    db.commit()
+    rows = db.execute(text(
+        "SELECT id, role, user_id, dimension, value, created_at "
+        "FROM rs_row_scopes ORDER BY role, user_id, dimension")).mappings().all()
+    return {"scopes": [dict(r) for r in rows]}
+
+
+@router.post("/row-scopes")
+def add_row_scope(payload: RowScopeIn, db: Session = Depends(get_db),
+                  user: dict = Depends(require_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins manage row scopes")
+    if payload.dimension not in ("scheme_type", "department", "plant", "scheme_id"):
+        raise HTTPException(400, "dimension must be scheme_type|department|plant|scheme_id")
+    if not payload.role and payload.user_id is None:
+        raise HTTPException(400, "Provide role or user_id")
+    sid = db.execute(text(
+        "INSERT INTO rs_row_scopes (role, user_id, dimension, value, created_by) "
+        "VALUES (:r, :u, :d, :v, :by) RETURNING id"),
+        {"r": payload.role, "u": payload.user_id, "d": payload.dimension,
+         "v": payload.value, "by": payload.created_by or user.get("username")}).scalar()
+    _ensure_gov_tables(db)
+    _audit(db, "row_scope", sid, "create", None, payload.model_dump(),
+           None, user.get("username"))
+    db.commit()
+    return {"id": sid}
+
+
+@router.delete("/row-scopes/{scope_id}")
+def delete_row_scope(scope_id: int, db: Session = Depends(get_db),
+                     user: dict = Depends(require_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins manage row scopes")
+    db.execute(text("DELETE FROM rs_row_scopes WHERE id = :i"), {"i": scope_id})
+    db.commit()
+    return {"ok": True}

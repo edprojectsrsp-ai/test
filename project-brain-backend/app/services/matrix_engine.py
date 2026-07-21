@@ -165,12 +165,65 @@ def fetch_population_configured(db, dataset: dict, report_date: date) -> list[di
     return population
 
 
-def fetch_population(db, report_date: date, dataset_key: Optional[str] = None
-                     ) -> list[dict[str, Any]]:
+def load_row_scopes(db, user: Optional[dict]) -> Optional[dict[str, set]]:
+    """Effective allow-lists for a user: {dimension -> {values}}. None = no
+    restriction (unrestricted). admin always unrestricted. A principal with no
+    scope rows is unrestricted (back-compat)."""
+    if not user or user.get("role") == "admin":
+        return None
+    try:
+        rows = db.execute(text(
+            "SELECT dimension, value FROM rs_row_scopes "
+            "WHERE role = :role OR user_id = :uid"),
+            {"role": user.get("role"), "uid": user.get("user_id")}).mappings().all()
+    except Exception:
+        db.rollback()
+        return None
+    if not rows:
+        return None
+    scopes: dict[str, set] = {}
+    for r in rows:
+        scopes.setdefault(r["dimension"], set()).add(r["value"])
+    return scopes
+
+
+# dimension -> record field used to test membership
+_SCOPE_FIELD = {"scheme_type": "scheme_type", "department": "department",
+                "plant": "plant", "scheme_id": "scheme_id"}
+
+
+def apply_row_scopes(population: list[dict], scopes: Optional[dict[str, set]]
+                     ) -> list[dict]:
+    """Keep only records permitted by EVERY restricted dimension (AND across
+    dimensions, OR within a dimension's values)."""
+    if not scopes:
+        return population
+    out = []
+    for rec in population:
+        ok = True
+        for dim, allowed in scopes.items():
+            field = _SCOPE_FIELD.get(dim, dim)
+            val = rec.get(field)
+            if val is None:
+                ok = False
+                break
+            # normalise numeric ids (104.0 -> "104") so text scope values match
+            sval = str(int(val)) if isinstance(val, float) and val.is_integer() else str(val)
+            if sval not in allowed:
+                ok = False
+                break
+        if ok:
+            out.append(rec)
+    return out
+
+
+def fetch_population(db, report_date: date, dataset_key: Optional[str] = None,
+                     user: Optional[dict] = None) -> list[dict[str, Any]]:
     """Configured dataset when one exists; built-in scheme dataset otherwise."""
     dataset = load_dataset(db, dataset_key)
+    scopes = load_row_scopes(db, user)
     if dataset:
-        return fetch_population_configured(db, dataset, report_date)
+        return apply_row_scopes(fetch_population_configured(db, dataset, report_date), scopes)
     ctx = period_context(report_date)
     rows = db.execute(text("""
         WITH be AS (
@@ -233,7 +286,7 @@ def fetch_population(db, report_date: date, dataset_key: Optional[str] = None
         rec["delay_days"] = float((report_date - ac).days) if (ac and report_date > ac
                                                               and not rec["actual_completion"]) else 0.0
         population.append(rec)
-    return population
+    return apply_row_scopes(population, scopes)
 
 
 # ─────────────────────────────────────────────── rule evaluation
@@ -472,13 +525,13 @@ def _id_field(dataset: Optional[dict]) -> str:
 
 
 def run_report(db, definition: dict, report_date: date,
-               include_ids: bool = False) -> dict[str, Any]:
+               include_ids: bool = False, user: Optional[dict] = None) -> dict[str, Any]:
     """Calculate every row × column, with per-cell traceability + reconciliation."""
     ctx = period_context(report_date)
     rules = load_rules(db)
     dataset = load_dataset(db, definition.get("dataset"))
     semantic = dataset_semantic_fields(dataset)
-    population = fetch_population(db, report_date, definition.get("dataset"))
+    population = fetch_population(db, report_date, definition.get("dataset"), user=user)
     measure_lib = load_measures(db)
     columns = _resolve_columns(definition.get("columns") or [], measure_lib)
     idf = _id_field(dataset)
@@ -635,13 +688,13 @@ def run_report(db, definition: dict, report_date: date,
 
 
 def cell_drilldown(db, definition: dict, report_date: date,
-                   row_id: str, column_key: str) -> dict[str, Any]:
+                   row_id: str, column_key: str, user: Optional[dict] = None) -> dict[str, Any]:
     """Spec §5.9 — never a black box: exact contributing schemes + values."""
     ctx = period_context(report_date)
     rules = load_rules(db)
     dataset = load_dataset(db, definition.get("dataset"))
     semantic = dataset_semantic_fields(dataset)
-    population = fetch_population(db, report_date, definition.get("dataset"))
+    population = fetch_population(db, report_date, definition.get("dataset"), user=user)
     measure_lib = load_measures(db)
     columns = _resolve_columns(definition.get("columns") or [], measure_lib)
     idf = _id_field(dataset)
