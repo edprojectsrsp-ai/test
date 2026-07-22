@@ -84,6 +84,25 @@ CREATE TABLE IF NOT EXISTS rb_edits (
     kind text,                            -- phrasing | fact | structure
     created_at timestamptz DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS rb_reference_reports (
+    id            bigserial PRIMARY KEY,
+    family        text NOT NULL,
+    project       text NOT NULL,
+    month         text NOT NULL,
+    title         text DEFAULT '',
+    source_kind   text NOT NULL DEFAULT 'approved',  -- approved | uploaded
+    status        text NOT NULL DEFAULT 'approved',  -- approved | superseded
+    resolved      jsonb,
+    reference_text text DEFAULT '',
+    file_name     text DEFAULT '',
+    file_path     text DEFAULT '',
+    notes         text DEFAULT '',
+    created_at    timestamptz DEFAULT now(),
+    updated_at    timestamptz DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS rb_reference_reports_lookup
+    ON rb_reference_reports(family, project, month, status, created_at DESC);
 """
 
 
@@ -99,7 +118,8 @@ def get_conn():
 def ensure_schema(conn=None):
     c = conn or get_conn()
     with c.cursor() as cur:
-        cur.execute(DDL)
+        for stmt in [part.strip() for part in DDL.split(";") if part.strip()]:
+            cur.execute(stmt)
     if conn is None:
         c.close()
 

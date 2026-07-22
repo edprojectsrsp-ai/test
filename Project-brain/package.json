@@ -23,6 +23,7 @@
     "@capacitor/toast": "^6.0.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/three": "^0.185.1",
+    "@xyflow/react": "^12.11.2",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "docx-preview": "^0.3.7",

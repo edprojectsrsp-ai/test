@@ -51,6 +51,18 @@ export default function MosCapexPage() {
   const [reportMonth, setReportMonth] = useState(() => new Date().toISOString().slice(0, 7));
   const [exporting, setExporting] = useState(false);
 
+  useEffect(() => {
+    const syncViewFromUrl = () => {
+      const section = new URLSearchParams(window.location.search).get("section");
+      if (section === "formats" || section === "capex-pack") setView("pack");
+      if (section === "physical-financial") setView("pf");
+      if (section === "detail") setView("detail");
+    };
+    syncViewFromUrl();
+    window.addEventListener("popstate", syncViewFromUrl);
+    return () => window.removeEventListener("popstate", syncViewFromUrl);
+  }, []);
+
   const runExport = async (format: "xlsx" | "pdf" | "docx" | "pptx") => {
     setExporting(true);
     try {

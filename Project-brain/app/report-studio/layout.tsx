@@ -1,23 +1,22 @@
 "use client";
 
 /**
- * Report Studio shell — isolated from CAPEX / DPR / dashboard modules.
- * Heavy designer code only loads on builder/tools routes; hub + templates stay light.
+ * Report Studio shell.
+ * The product is grouped into fewer, clearer surfaces while legacy routes remain available.
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  FileStack, FlaskConical, LayoutDashboard, LayoutTemplate, Scale, Table2, Wrench,
+  FileStack, FlaskConical, LayoutTemplate, Scale, Table2, Wrench,
 } from "lucide-react";
 
 const NAV = [
-  { href: "/report-studio", label: "Hub", icon: FlaskConical, exact: true },
-  { href: "/report-studio/builder", label: "Matrix Builder", icon: Table2 },
-  { href: "/report-studio/canvas", label: "Dashboard Canvas", icon: LayoutDashboard },
-  { href: "/report-studio/matrix", label: "Matrix Engine", icon: Scale },
-  { href: "/report-studio/templates", label: "Templates", icon: FileStack },
-  { href: "/report-studio/tools", label: "Tools", icon: Wrench },
+  { href: "/report-studio", label: "Overview", icon: FlaskConical, exact: true },
+  { href: "/report-studio/builder", label: "Builder", icon: Table2 },
+  { href: "/report-studio/templates", label: "Reports", icon: FileStack },
+  { href: "/report-studio/matrix", label: "Engine", icon: Scale },
+  { href: "/report-studio/tools", label: "Scenarios", icon: Wrench },
 ];
 
 export default function ReportStudioLayout({ children }: { children: React.ReactNode }) {
@@ -40,7 +39,7 @@ export default function ReportStudioLayout({ children }: { children: React.React
             <div>
               <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>Report Studio</div>
               <div style={{ fontSize: 11, color: "var(--ink-4)" }}>
-                Isolated designer · save templates · regenerate anytime with live CAPEX figures
+                Builder, reports, engine, and scenarios in one cleaner workspace
               </div>
             </div>
           </div>

@@ -13,7 +13,7 @@
  *     Reports → MoS CAPEX page.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   ArrowDown, ArrowUp, ChevronDown, ChevronRight, Download, Eye, FileSpreadsheet,
   FileText, Loader2, RefreshCw, Sparkles, Trash2,
@@ -42,6 +42,30 @@ const fmtVal = (v: any, type: string) => {
 // ───────────────────────────── section table ─────────────────────────────
 
 export function RsSectionTable({ sec }: { sec: RsSectionResult }) {
+  const visibleColumns = sec.columns.filter((c) => !c.key.startsWith("__"));
+  const [openKey, setOpenKey] = useState<string>("");
+  const [drilldowns, setDrilldowns] = useState<Record<string, RsSectionResult>>({});
+  const [loadingKey, setLoadingKey] = useState<string>("");
+
+  const toggleDrilldown = async (key: string) => {
+    if (openKey === key) {
+      setOpenKey("");
+      return;
+    }
+    setOpenKey(key);
+    if (drilldowns[key]) return;
+    setLoadingKey(key);
+    try {
+      const r = await authFetch(rs(`/reports/mos-capex-summary/drilldown/${encodeURIComponent(key)}`));
+      const j = await r.json();
+      if (r.ok) {
+        setDrilldowns((prev) => ({ ...prev, [key]: { title: "Breakup", columns: j.columns || [], rows: j.rows || [] } }));
+      }
+    } finally {
+      setLoadingKey("");
+    }
+  };
+
   const th: React.CSSProperties = {
     border: "1px solid var(--line)", background: "var(--panel-3)", padding: "6px 9px",
     fontSize: 10, fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.4,
@@ -54,7 +78,7 @@ export function RsSectionTable({ sec }: { sec: RsSectionResult }) {
       <div style={{ overflowX: "auto", border: "1px solid var(--line)", borderRadius: 8 }}>
         <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
           <thead>
-            <tr>{sec.columns.map((c) => (
+            <tr>{visibleColumns.map((c) => (
               <th key={c.key} style={{ ...th, textAlign: NUMERIC.includes(c.type) ? "right" : "left" }}>{c.label}</th>
             ))}</tr>
           </thead>
@@ -62,21 +86,44 @@ export function RsSectionTable({ sec }: { sec: RsSectionResult }) {
             {sec.rows.map((r, i) => {
               const total = !!r.__total__;
               return (
-                <tr key={i} style={total ? { background: "var(--steel-soft)", fontWeight: 800 } : undefined}>
-                  {sec.columns.map((c) => (
+                <Fragment key={i}>
+                <tr style={total ? { background: "var(--steel-soft)", fontWeight: 800 } : undefined}>
+                  {visibleColumns.map((c) => (
                     <td key={c.key} style={{
                       border: "1px solid var(--line)", padding: "5px 9px", whiteSpace: "nowrap",
                       textAlign: NUMERIC.includes(c.type) ? "right" : "left",
                       color: "var(--ink-2)", fontWeight: total ? 800 : undefined,
                     }}>
                       {fmtVal(r[c.key], c.type)}
+                      {c.key === "category" && r.__drilldown_key && (
+                        <button type="button" onClick={() => toggleDrilldown(String(r.__drilldown_key))}
+                          style={{ marginLeft: 8, border: "1px solid var(--line)", borderRadius: 999, padding: "2px 7px", background: "var(--panel-2)", color: "var(--steel)", fontSize: 10, fontWeight: 800, cursor: "pointer" }}>
+                          {openKey === r.__drilldown_key ? "Hide" : "Breakup"}
+                        </button>
+                      )}
                     </td>
                   ))}
                 </tr>
+                {openKey === r.__drilldown_key && (
+                  <tr>
+                    <td colSpan={visibleColumns.length || 1} style={{ border: "1px solid var(--line)", background: "var(--panel-2)", padding: 10 }}>
+                      {loadingKey === r.__drilldown_key ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-3)", fontSize: 12 }}>
+                          <Loader2 size={13} className="spin" /> Loading breakup...
+                        </div>
+                      ) : drilldowns[String(r.__drilldown_key)] ? (
+                        <RsSectionTable sec={drilldowns[String(r.__drilldown_key)]} />
+                      ) : (
+                        <div style={{ color: "var(--ink-4)", fontSize: 12 }}>No breakup available.</div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
             {sec.rows.length === 0 && (
-              <tr><td colSpan={sec.columns.length || 1} style={{ padding: 16, textAlign: "center", color: "var(--ink-4)", fontSize: 12 }}>No rows.</td></tr>
+              <tr><td colSpan={visibleColumns.length || 1} style={{ padding: 16, textAlign: "center", color: "var(--ink-4)", fontSize: 12 }}>No rows.</td></tr>
             )}
           </tbody>
         </table>
@@ -181,6 +228,7 @@ export function RsReportCard({ meta, onDeleted, defaultOpen = false }: {
 
 export function CapexPackPanel() {
   const [reports, setReports] = useState<RsReportMeta[]>([]);
+  const [recon, setRecon] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
   const [seeding, setSeeding] = useState(false);
   const [err, setErr] = useState("");
@@ -196,12 +244,22 @@ export function CapexPackPanel() {
         r = await authFetch(rs("/reports?category=capex-pack"));
         j = await r.json();
       }
-      setReports(j.reports || []);
+      setReports((j.reports || []).sort((a: RsReportMeta, b: RsReportMeta) => {
+        const rank = (m: RsReportMeta) => m.name.startsWith("Physical & Financial") ? 0 : 1;
+        return rank(a) - rank(b) || a.name.localeCompare(b.name);
+      }));
     } catch (e: any) { setErr(String(e.message || e)); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    authFetch(rs("/reports/mos-capex-summary/reconcile?month=2026-07"))
+      .then((r) => r.json())
+      .then(setRecon)
+      .catch(() => setRecon(null));
+  }, []);
 
   const reseed = async () => {
     setSeeding(true); setErr("");
@@ -225,6 +283,7 @@ export function CapexPackPanel() {
         </button>
       </div>
       {err && <div style={{ color: "var(--slag, #e5534b)", fontSize: 12, marginBottom: 8 }}>{err}</div>}
+      {recon && <MosReconPanel data={recon} />}
       {loading ? (
         <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-3)", fontSize: 12, padding: 22 }}>
           <Loader2 size={14} className="spin" /> Loading CAPEX report pack…
@@ -232,7 +291,54 @@ export function CapexPackPanel() {
       ) : reports.length === 0 ? (
         <div style={{ color: "var(--ink-4)", fontSize: 12, padding: 18 }}>No reports in the pack yet.</div>
       ) : (
-        reports.map((m) => <RsReportCard key={m.report_id} meta={m} />)
+        reports.map((m, i) => <RsReportCard key={m.report_id} meta={m} defaultOpen={i === 0} />)
+      )}
+    </div>
+  );
+}
+
+function MosReconPanel({ data }: { data: any }) {
+  const [open, setOpen] = useState(false);
+  const mismatches = (data.rows || []).filter((r: any) => !r.matches);
+  const fmt = (v: any) => v == null ? "-" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: 10, background: "var(--panel)", margin: "0 0 12px", overflow: "hidden" }}>
+      <button onClick={() => setOpen(!open)}
+        style={{ width: "100%", border: "none", background: "var(--panel-2)", padding: "10px 14px", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: "var(--ink)", fontWeight: 800, textAlign: "left" }}>
+        {open ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        DB Reconciliation: {mismatches.length} row(s) differ from matched old report
+        <span style={{ marginLeft: "auto", color: "var(--ink-4)", fontSize: 11 }}>current DB month {data.month}</span>
+      </button>
+      {open && (
+        <div style={{ padding: 12, overflowX: "auto" }}>
+          <div style={{ fontSize: 11, color: "var(--ink-4)", marginBottom: 8 }}>{data.note}</div>
+          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 11 }}>
+            <thead>
+              <tr>
+                {["Row", "Metric", "Target", "Current DB", "Variance"].map((h) => (
+                  <th key={h} style={{ border: "1px solid var(--line)", background: "var(--panel-3)", padding: "5px 7px", textAlign: h === "Row" ? "left" : "right" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {(data.rows || []).flatMap((row: any) =>
+                (data.fields || []).map((field: any) => {
+                  const variance = row.variance?.[field.key];
+                  const bad = variance != null && Math.abs(Number(variance)) >= 0.01;
+                  return (
+                    <tr key={`${row.row_key}-${field.key}`} style={bad ? { background: "#fff6ed" } : undefined}>
+                      <td style={{ border: "1px solid var(--line)", padding: "4px 7px", textAlign: "left", fontWeight: 700 }}>{row.row_key} {row.label}</td>
+                      <td style={{ border: "1px solid var(--line)", padding: "4px 7px", textAlign: "right" }}>{field.label}</td>
+                      <td style={{ border: "1px solid var(--line)", padding: "4px 7px", textAlign: "right" }}>{fmt(row.target?.[field.key])}</td>
+                      <td style={{ border: "1px solid var(--line)", padding: "4px 7px", textAlign: "right" }}>{fmt(row.current?.[field.key])}</td>
+                      <td style={{ border: "1px solid var(--line)", padding: "4px 7px", textAlign: "right", color: bad ? "var(--slag, #b42318)" : "var(--ink-4)", fontWeight: bad ? 800 : 400 }}>{fmt(variance)}</td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -753,3 +753,48 @@ button {
   color: var(--steel) !important;
 }
 
+/* Ministry mode: force readable black text everywhere, including colored tiles/buttons. */
+:root[data-fz-preset="ministry"] .text-white,
+:root[data-fz-preset="ministry"] button,
+:root[data-fz-preset="ministry"] a,
+:root[data-fz-preset="ministry"] span,
+:root[data-fz-preset="ministry"] p,
+:root[data-fz-preset="ministry"] label,
+:root[data-fz-preset="ministry"] li,
+:root[data-fz-preset="ministry"] td,
+:root[data-fz-preset="ministry"] th,
+:root[data-fz-preset="ministry"] h1,
+:root[data-fz-preset="ministry"] h2,
+:root[data-fz-preset="ministry"] h3,
+:root[data-fz-preset="ministry"] h4,
+:root[data-fz-preset="ministry"] h5,
+:root[data-fz-preset="ministry"] h6,
+:root[data-fz-preset="ministry"] [class*="bg-cyan-"],
+:root[data-fz-preset="ministry"] [class*="bg-cyan-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-emerald-"],
+:root[data-fz-preset="ministry"] [class*="bg-emerald-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-blue-"],
+:root[data-fz-preset="ministry"] [class*="bg-blue-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-indigo-"],
+:root[data-fz-preset="ministry"] [class*="bg-indigo-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-violet-"],
+:root[data-fz-preset="ministry"] [class*="bg-violet-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-pink-"],
+:root[data-fz-preset="ministry"] [class*="bg-pink-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-red-"],
+:root[data-fz-preset="ministry"] [class*="bg-red-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-amber-"],
+:root[data-fz-preset="ministry"] [class*="bg-amber-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-orange-"],
+:root[data-fz-preset="ministry"] [class*="bg-orange-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-teal-"],
+:root[data-fz-preset="ministry"] [class*="bg-teal-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-sky-"],
+:root[data-fz-preset="ministry"] [class*="bg-sky-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-rose-"],
+:root[data-fz-preset="ministry"] [class*="bg-rose-"] *,
+:root[data-fz-preset="ministry"] [class*="bg-[#0b3d91]"],
+:root[data-fz-preset="ministry"] [class*="bg-[#0b3d91]"] * {
+  color: #0a0a0a !important;
+}
+

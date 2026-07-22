@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, Fraunces, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import "../theme/tokens.css";
 import "../theme/presets.css";
@@ -63,7 +64,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${dmSans.variable} ${fraunces.variable} ${jetbrains.variable}`}
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: MINISTRY_BOOT }} />
+        <Script id="ministry-boot" strategy="beforeInteractive">
+          {MINISTRY_BOOT}
+        </Script>
       </head>
       <body className={`${dmSans.className} overflow-hidden ministry-shell`} style={{ background: "#ffffff", color: "#0a0a0a" }}>
         <ThemeProvider defaultTheme="light">

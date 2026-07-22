@@ -83,7 +83,7 @@ def resolve_document(family: str, project: str, month: str, store,
                                "rows": [[r] + [""] * (len(blk["columns"]) - 1) for r in blk["rows"]],
                                "source": "blank", "note": blk.get("note", ""), "editable_cells": True})
         elif t == "manpower":
-            mp = composed[project]["manpower"]
+            mp = ctx.get("manpower") or composed[project]["manpower"]
             out_blocks.append({"kind": "table", "title": blk["title"],
                                "columns": ["Agency / Category", "Average Engaged", "Reporting Days"],
                                "rows": [[m["category"], int(m["average"]), m["days"]] for m in mp],

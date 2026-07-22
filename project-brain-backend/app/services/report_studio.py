@@ -68,6 +68,120 @@ def _fy_year(col: str) -> str:
             f"ELSE EXTRACT(YEAR FROM {col})::int - 1 END")
 
 DATASETS: dict[str, dict[str, Any]] = {
+    "mos_capex_summary_reference": {
+        "label": "MoS CAPEX Summary Reference",
+        "base": ("FROM (VALUES "
+                 "(1,'1a','Being implemented from last FY',28::numeric,5628.55::numeric,1078.77::numeric,1483.00::numeric,630.01::numeric,1708.78::numeric,'i. Ontime-37\\nii. Delay<1-11\\niii. Delay>1-4'), "
+                 "(2,'1b','Implementation started during FY24-25',24::numeric,183.80::numeric,0.00::numeric,33.30::numeric,0.01::numeric,0.01::numeric,''), "
+                 "(3,'1','Total Ongoing projects (1a+1b)',52::numeric,5812.35::numeric,1078.77::numeric,1516.30::numeric,630.02::numeric,1708.79::numeric,''), "
+                 "(4,'2','Milestone payments in completed projects',NULL::numeric,NULL::numeric,NULL::numeric,288.51::numeric,172.31::numeric,172.31::numeric,''), "
+                 "(5,'3a','New Projects under tendering/ final approval and contract award',15::numeric,440.13::numeric,0.74::numeric,10.40::numeric,0.00::numeric,0.74::numeric,''), "
+                 "(6,'3b','New Projects under Stage-I approval',4::numeric,249.87::numeric,0.00::numeric,0.00::numeric,0.00::numeric,0.00::numeric,''), "
+                 "(7,'3','Total New projects under consideration (3a+3b)',19.00::numeric,690.00::numeric,0.74::numeric,10.40::numeric,0.00::numeric,0.74::numeric,''), "
+                 "(8,'4','Spares & Capital Repairs',NULL::numeric,NULL::numeric,NULL::numeric,334.80::numeric,2.20::numeric,2.20::numeric,''), "
+                 "(9,'5','Other schemes/ JVs',NULL::numeric,NULL::numeric,NULL::numeric,NULL::numeric,NULL::numeric,NULL::numeric,''), "
+                 "(10,'','Total',71.00::numeric,6502.35::numeric,1079.51::numeric,2150.01::numeric,804.53::numeric,1884.04::numeric,'') "
+                 ") AS mf(row_order, sn, category, project_count, total_cost, exp_upto_last_fy, capex_re, exp_current_fy, total_exp, delay_profile) "
+                 "WHERE TRUE"),
+        "dimensions": {
+            "__row_order": {"label": "", "sql": "mf.row_order", "type": "int"},
+            "sn": {"label": "S. N.", "sql": "mf.sn", "type": "text"},
+            "category": {"label": "Category", "sql": "mf.category", "type": "text"},
+            "project_count": {"label": "Total no. of Projects", "sql": "mf.project_count", "type": "number"},
+            "total_cost": {"label": "Total cost of Projects (Rs cr.)", "sql": "mf.total_cost", "type": "money"},
+            "exp_upto_last_fy": {"label": "Expenditure incurred up to FY24-25 (Rs cr.)", "sql": "mf.exp_upto_last_fy", "type": "money"},
+            "capex_re": {"label": "CAPEX for FY 25-26 (RE) (Rs cr.)", "sql": "mf.capex_re", "type": "money"},
+            "exp_current_fy": {"label": "Expenditure in FY25-26 till Mar'26 (Rs cr.)", "sql": "mf.exp_current_fy", "type": "money"},
+            "total_exp": {"label": "Total Expenditure (Rs cr.)", "sql": "mf.total_exp", "type": "money"},
+            "delay_profile": {"label": "No. of projects: i. On time ii. Delayed up to 01 year iii. Delayed more than 01 year", "sql": "mf.delay_profile", "type": "text"},
+        },
+        "measures": {},
+    },
+    "mos_capex_summary_calculated": {
+        "label": "MoS CAPEX Summary Calculated",
+        "base": ("FROM (WITH rollup(row_order, drilldown_key, sn, category, leaf_key, blank_cost_cols) AS (VALUES "
+                 "(1,'1a','1a','Being implemented from last FY','r6',false),"
+                 "(1,'1a','1a','Being implemented from last FY','r7',false),"
+                 "(1,'1a','1a','Being implemented from last FY','r8',false),"
+                 "(1,'1a','1a','Being implemented from last FY','r10',false),"
+                 "(1,'1a','1a','Being implemented from last FY','r11',false),"
+                 "(1,'1a','1a','Being implemented from last FY','r12',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r15',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r16',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r17',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r19',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r20',false),"
+                 "(2,'1b','1b','Implementation started during FY24-25','r21',false),"
+                 "(3,'1','1','Total Ongoing projects (1a+1b)','r23',false),"
+                 "(3,'1','1','Total Ongoing projects (1a+1b)','r24',false),"
+                 "(3,'1','1','Total Ongoing projects (1a+1b)','r25',false),"
+                 "(4,'2','2','Milestone payments in completed projects','r26',true),"
+                 "(5,'3a','3a','New Projects under tendering/ final approval and contract award','r39',false),"
+                 "(5,'3a','3a','New Projects under tendering/ final approval and contract award','r40',false),"
+                 "(5,'3a','3a','New Projects under tendering/ final approval and contract award','r41',false),"
+                 "(6,'3b','3b','New Projects under Stage-I approval','r43',false),"
+                 "(6,'3b','3b','New Projects under Stage-I approval','r44',false),"
+                 "(6,'3b','3b','New Projects under Stage-I approval','r45',false),"
+                 "(6,'3b','3b','New Projects under Stage-I approval','r46',false),"
+                 "(6,'3b','3b','New Projects under Stage-I approval','r47',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r39',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r40',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r41',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r43',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r44',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r45',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r46',false),"
+                 "(7,'3','3','Total New projects under consideration (3a+3b)','r47',false),"
+                 "(8,'4','4','Spares & Capital Repairs','r49',true),"
+                 "(9,'5','5','Other schemes/ JVs','r50',true),"
+                 "(10,'total','','Total','r23',false),"
+                 "(10,'total','','Total','r24',false),"
+                 "(10,'total','','Total','r25',false),"
+                 "(10,'total','','Total','r26',false),"
+                 "(10,'total','','Total','r39',false),"
+                 "(10,'total','','Total','r40',false),"
+                 "(10,'total','','Total','r41',false),"
+                 "(10,'total','','Total','r43',false),"
+                 "(10,'total','','Total','r44',false),"
+                 "(10,'total','','Total','r45',false),"
+                 "(10,'total','','Total','r46',false),"
+                 "(10,'total','','Total','r47',false),"
+                 "(10,'total','','Total','r49',false)"
+                 "), grouped AS ("
+                 " SELECT r.row_order, r.drilldown_key, r.sn, r.category, bool_or(r.blank_cost_cols) AS blank_cost_cols,"
+                 "        SUM(s.project_count) AS project_count, SUM(s.total_cost) AS total_cost,"
+                 "        SUM(s.exp_upto_last_fy) AS exp_upto_last_fy, SUM(s.capex_re) AS capex_re,"
+                 "        SUM(s.exp_current_fy) AS exp_current_fy, SUM(s.total_exp) AS total_exp"
+                 " FROM rollup r JOIN mos_capex_source_rows s ON s.row_key = r.leaf_key"
+                 " WHERE s.report_key = 'fy25_26_mos_capex'"
+                 " GROUP BY r.row_order, r.drilldown_key, r.sn, r.category"
+                 "), delay AS ("
+                 " SELECT 'i. Ontime-' || COALESCE(MAX(project_count) FILTER (WHERE row_key='r23'),0)::text || E'\\n' ||"
+                 "        'ii. Delay<1-' || COALESCE(MAX(project_count) FILTER (WHERE row_key='r24'),0)::text || E'\\n' ||"
+                 "        'iii. Delay>1-' || COALESCE(MAX(project_count) FILTER (WHERE row_key='r25'),0)::text AS txt"
+                 " FROM mos_capex_source_rows WHERE report_key = 'fy25_26_mos_capex'"
+                 ") SELECT row_order, drilldown_key, sn, category,"
+                 "        project_count,"
+                 "        CASE WHEN blank_cost_cols THEN NULL ELSE total_cost END AS total_cost,"
+                 "        CASE WHEN blank_cost_cols THEN NULL ELSE exp_upto_last_fy END AS exp_upto_last_fy,"
+                 "        capex_re, exp_current_fy, total_exp,"
+                 "        CASE WHEN row_order = 1 THEN (SELECT txt FROM delay) ELSE '' END AS delay_profile"
+                 " FROM grouped) mf WHERE TRUE"),
+        "dimensions": {
+            "__row_order": {"label": "", "sql": "mf.row_order", "type": "int"},
+            "__drilldown_key": {"label": "", "sql": "mf.drilldown_key", "type": "text"},
+            "sn": {"label": "S. N.", "sql": "mf.sn", "type": "text"},
+            "category": {"label": "Category", "sql": "mf.category", "type": "text"},
+            "project_count": {"label": "Total no. of Projects", "sql": "mf.project_count", "type": "number"},
+            "total_cost": {"label": "Total cost of Projects (Rs cr.)", "sql": "mf.total_cost", "type": "money"},
+            "exp_upto_last_fy": {"label": "Expenditure incurred up to FY24-25 (Rs cr.)", "sql": "mf.exp_upto_last_fy", "type": "money"},
+            "capex_re": {"label": "CAPEX for FY 25-26 (RE) (Rs cr.)", "sql": "mf.capex_re", "type": "money"},
+            "exp_current_fy": {"label": "Expenditure in FY25-26 till Mar'26 (Rs cr.)", "sql": "mf.exp_current_fy", "type": "money"},
+            "total_exp": {"label": "Total Expenditure (Rs cr.)", "sql": "mf.total_exp", "type": "money"},
+            "delay_profile": {"label": "No. of projects: i. On time ii. Delayed up to 01 year iii. Delayed more than 01 year", "sql": "mf.delay_profile", "type": "text"},
+        },
+        "measures": {},
+    },
     "schemes": {
         "label": "Schemes",
         "base": "FROM scheme_master s WHERE NOT COALESCE(s.is_deleted, FALSE)",

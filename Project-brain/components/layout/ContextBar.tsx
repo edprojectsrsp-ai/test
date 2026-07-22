@@ -21,12 +21,21 @@ function currentMonth(): string {
 export default function ContextBar() {
   const pathname = usePathname();
   const router = useRouter();
+  const [mounted, setMounted] = useState(false);
   const [user, setUser] = useState<BrainUser | null>(null);
+  const [loggedIn, setLoggedIn] = useState(false);
   const [schemeLabel, setSchemeLabel] = useState("Portfolio");
   const [brandTitle, setBrandTitle] = useState("");
+  const [fyLabel, setFyLabel] = useState("FY");
+  const [monthLabel, setMonthLabel] = useState("");
 
   useEffect(() => {
+    setMounted(true);
     setUser(getStoredUser());
+    setLoggedIn(Boolean(getToken()));
+    setFyLabel(`FY ${currentFY()}`);
+    setMonthLabel(currentMonth());
+
     try {
       const sid = localStorage.getItem("pb_context_scheme");
       const sname = localStorage.getItem("pb_context_scheme_name");
@@ -35,13 +44,17 @@ export default function ContextBar() {
     } catch {
       /* ignore */
     }
-    // Sprint 2 — load public branding for shell
+
     fetch(`${API}/admin/branding`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (d?.header_title) setBrandTitle(d.header_title);
         if (d?.org_name && typeof document !== "undefined") {
-          try { localStorage.setItem("pb_brand_org", d.org_name); } catch { /* ignore */ }
+          try {
+            localStorage.setItem("pb_brand_org", d.org_name);
+          } catch {
+            /* ignore */
+          }
         }
       })
       .catch(() => {});
@@ -54,13 +67,10 @@ export default function ContextBar() {
     router.push("/login");
   };
 
-  const loggedIn = Boolean(getToken());
-
   return (
     <div
       className="sticky top-0 z-30 flex flex-wrap items-center gap-3 border-b px-4 py-2.5 text-xs"
       style={{
-        /* Solid light-blue header — no backdrop-blur (kept UI looking foggy) */
         background: "#dbeafe",
         borderColor: "#93c5fd",
         color: "#0a0a0a",
@@ -84,6 +94,7 @@ export default function ContextBar() {
           {brandTitle}
         </span>
       )}
+
       <span
         className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
         style={{ color: "#0a0a0a", background: "#ffffff", border: "1px solid #93c5fd" }}
@@ -91,17 +102,20 @@ export default function ContextBar() {
         <Building2 size={13} />
         {schemeLabel}
       </span>
+
       <span
         className="flex items-center gap-1.5 rounded-full px-2.5 py-1"
         style={{ color: "#0a0a0a", background: "#ffffff", border: "1px solid #93c5fd" }}
       >
         <Calendar size={12} />
-        FY {currentFY()} · {currentMonth()}
+        {fyLabel}{monthLabel ? ` · ${monthLabel}` : ""}
       </span>
+
       <span className="hidden h-3 w-px sm:inline-block" style={{ background: "#93c5fd" }} />
+
       <span className="flex items-center gap-1.5" style={{ color: "#0a0a0a" }}>
         <User size={12} style={{ color: "#0a0a0a" }} />
-        {user?.full_name || user?.username || (loggedIn ? "Signed in" : "Guest")}
+        {user?.full_name || user?.username || (mounted && loggedIn ? "Signed in" : "Guest")}
         {user?.role && (
           <span
             className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide"
@@ -115,9 +129,10 @@ export default function ContextBar() {
           </span>
         )}
       </span>
+
       <div className="ml-auto flex items-center gap-2">
         <ThemeToggle />
-        {loggedIn ? (
+        {mounted && loggedIn ? (
           <button
             type="button"
             onClick={logout}
