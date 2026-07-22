@@ -21,6 +21,16 @@ import {
 } from "@/lib/furnace/cpmEngine";
 import { runDcma14 } from "@/lib/furnace/dcma";
 const ScheduleChecker = dynamic(() => import("@/components/furnace/ScheduleChecker"), { ssr: false });
+const MultiBaselinePanel = dynamic(() => import("@/components/furnace/MultiBaselinePanel"), { ssr: false });
+
+// Schedule export formats. .mpp is intentionally absent: it is a proprietary
+// binary with no reliable writer — export XML and use MS Project's Save As.
+const SCHED_API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/scheduling").replace(/\/$/, "");
+const EXPORT_FORMATS: { fmt: string; label: string }[] = [
+  { fmt: "xer", label: "Primavera P6 (.xer)" },
+  { fmt: "xml", label: "MS Project (.xml)" },
+  { fmt: "csv", label: "Excel / CSV" },
+];
 
 const mono: React.CSSProperties = { fontFamily: "var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace)", fontVariantNumeric: "tabular-nums" };
 const label: React.CSSProperties = { fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--steel-dim)" };
@@ -40,6 +50,8 @@ export default function CpmStudio() {
   const [selected, setSelected] = useState<string | null>(null);
   const [showBaselines, setShowBaselines] = useState(false);
   const [showChecker, setShowChecker] = useState(false);
+  const [showMultiBl, setShowMultiBl] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
   useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
@@ -145,9 +157,31 @@ export default function CpmStudio() {
             <Button onClick={() => { }} style={{ pointerEvents: "none" }}>Import XER / MSP</Button>
           </label>
           <Button onClick={officialRun}>Official run</Button>
-          <Button onClick={exportCsv}>CSV</Button>
           <Button onClick={() => setShowBaselines((b) => !b)} kind={showBaselines ? "accent" : "default"}>Baselines &amp; Variance</Button>
           <Button onClick={() => setShowChecker((c) => !c)} kind={showChecker ? "accent" : "default"}>Schedule Checker</Button>
+          <Button onClick={() => setShowMultiBl((b) => !b)} kind={showMultiBl ? "accent" : "default"}>Compare Baselines</Button>
+          <span style={{ position: "relative", display: "inline-block" }}>
+            <Button onClick={() => setExportOpen((o) => !o)}>Export \u25be</Button>
+            {exportOpen && (
+              <span style={{ position: "absolute", right: 0, top: "calc(100% + 5px)", zIndex: 40,
+                background: "var(--panel)", border: "1px solid var(--line)", borderRadius: "var(--r)",
+                boxShadow: "var(--shadow)", minWidth: 200, display: "block", padding: 4 }}>
+                {EXPORT_FORMATS.map((f) => (
+                  <a key={f.fmt} href={`${SCHED_API}/projects/${schedId}/export?fmt=${f.fmt}`}
+                    onClick={() => setExportOpen(false)}
+                    style={{ display: "block", padding: "7px 11px", fontSize: 12.5,
+                      color: "var(--ink)", textDecoration: "none", borderRadius: 6 }}>
+                    {f.label}
+                  </a>
+                ))}
+                <span onClick={() => { exportCsv(); setExportOpen(false); }}
+                  style={{ display: "block", padding: "7px 11px", fontSize: 12.5,
+                    color: "var(--steel-dim)", cursor: "pointer", borderTop: "1px solid var(--grid-line)" }}>
+                  CPM table (client-side CSV)
+                </span>
+              </span>
+            )}
+          </span>
           <a href="/cpm" style={{ textDecoration: "none" }}><Button>Advanced / Projects</Button></a>
         </div>
       </Card>
@@ -169,6 +203,12 @@ export default function CpmStudio() {
         <Card style={{ marginTop: 14 }}>
           <BaselinePanel scheduleId={schedId} />
         </Card>
+      )}
+
+      {showMultiBl && schedId != null && (
+        <div style={{ marginTop: 14 }}>
+          <MultiBaselinePanel projectId={schedId} />
+        </div>
       )}
 
       {showChecker && net && result && (

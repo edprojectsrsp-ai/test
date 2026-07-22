@@ -21,7 +21,10 @@ _NS = {"ms": "http://schemas.microsoft.com/project"}
 # MSP relationship Type codes: 0=FF 1=FS 2=SF 3=SS
 _MSP_REL = {"0": "FF", "1": "FS", "2": "SF", "3": "SS"}
 # MSP ConstraintType: 0 ASAP,1 ALAP,2 MSO,3 MFO,4 SNET,5 SNLT,6 FNET,7 FNLT
-_MSP_CONSTRAINT = {"0": "ASAP", "1": "ALAP", "2": "SNET", "3": "SNLT",
+# NB: codes 2 and 3 are the mandatory constraints. They were previously mapped
+# to SNET/SNLT, which silently downgraded a Must-Start-On to a soft "no earlier
+# than" and let the scheduler move work P6/MSP would have pinned.
+_MSP_CONSTRAINT = {"0": "ASAP", "1": "ALAP", "2": "MSO", "3": "MFO",
                    "4": "SNET", "5": "SNLT", "6": "FNET", "7": "FNLT"}
 
 
@@ -119,14 +122,21 @@ def parse_msp_xml(text: str) -> ImportedSchedule:
     return sched
 
 
+# 1 working day = 8h = 480 min = 4800 tenths of a minute
+_TENTHS_PER_DAY = 8 * 60 * 10
+
+
 def _msp_lag_to_days(raw: float, fmt: str) -> int:
-    # 7 = days, 5 = hours, 3 = minutes (common MSP DurationFormat codes)
-    if fmt in ("7", "19"):       # days / elapsed days
-        return int(round(raw))
-    if fmt in ("5", "17"):       # hours
-        return int(round(raw / 8.0))
-    # default: tenths of minutes
-    return int(round(raw / 10.0 / 60.0 / 8.0))
+    """Convert an MSPDI LinkLag value to whole working days.
+
+    In the MSPDI schema LinkLag is *always* expressed in tenths of a minute;
+    LagFormat only controls how MS Project displays it. Treating LagFormat=7
+    ("days") as meaning the value itself was in days turned a real 5-day lag
+    (LinkLag=24000) into a 24,000-day lag, which pushed successors ~65 years
+    out and quietly destroyed the critical path on any imported MSP file that
+    used lag at all.
+    """
+    return int(round(raw / _TENTHS_PER_DAY))
 
 
 # ---------------------------------------------------------------------------

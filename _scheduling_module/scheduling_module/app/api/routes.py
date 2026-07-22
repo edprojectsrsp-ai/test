@@ -18,7 +18,12 @@ from ..importers.xer_importer import parse_xer
 from ..importers.msp_importer import parse_msp_xml, parse_mpp, MPPImportError
 from ..core.cpm import CPMEngine
 from ..core.alerts import generate_alerts
-from fastapi.responses import FileResponse
+from ..core.multi_baseline import (BaselineActivityRow, BaselineRef,
+                                   CurrentActivityRow, compare_baselines)
+from ..exporters import FORMATS as EXPORT_FORMATS
+from ..importers.base import (ImpActivity, ImpRelationship, ImportedSchedule,
+                              ImpWBS)
+from fastapi.responses import FileResponse, Response
 import tempfile, os
 
 router = APIRouter(prefix="/api/scheduling", tags=["scheduling"])
@@ -310,6 +315,161 @@ async def save_baseline(project_id: str, name: str,
     """), {"bid": bid, "pid": pid})
     await s.commit()
     return {"baseline_id": str(bid), "project_finish": res.project_finish.isoformat()}
+
+
+@router.get("/projects/{project_id}/baselines")
+async def list_baselines(project_id: str, s: AsyncSession = Depends(get_session)):
+    """Every baseline captured for the project, newest first."""
+    rows = (await s.execute(sql_text("""
+        SELECT b.id, b.name, b.project_finish, b.created_at,
+               (SELECT COUNT(*) FROM baseline_activities ba
+                 WHERE ba.baseline_id = b.id) AS activity_count
+        FROM baselines b WHERE b.project_id = :pid
+        ORDER BY b.created_at DESC, b.id DESC
+    """), {"pid": int(project_id)})).mappings().all()
+    return [{
+        "baseline_id": r["id"], "name": r["name"],
+        "project_finish": r["project_finish"].isoformat() if r["project_finish"] else None,
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "activity_count": r["activity_count"],
+    } for r in rows]
+
+
+@router.delete("/baselines/{baseline_id}")
+async def delete_baseline(baseline_id: str, s: AsyncSession = Depends(get_session)):
+    bid = int(baseline_id)
+    await s.execute(sql_text("DELETE FROM baseline_activities WHERE baseline_id=:b"),
+                    {"b": bid})
+    await s.execute(sql_text("DELETE FROM baselines WHERE id=:b"), {"b": bid})
+    await s.commit()
+    return {"deleted": bid}
+
+
+@router.get("/projects/{project_id}/baselines/compare")
+async def compare_multiple_baselines(
+    project_id: str,
+    baseline_ids: str,
+    slip_tolerance_days: int = 0,
+    s: AsyncSession = Depends(get_session),
+):
+    """Compare the live schedule against several baselines at once.
+
+    baseline_ids is a comma-separated list. P6/SYNCHRO-style: a review needs to
+    see that work has slipped against the original while still holding the
+    rebaseline the client approved.
+    """
+    pid = int(project_id)
+    try:
+        ids = [int(x) for x in baseline_ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(400, "baseline_ids must be comma-separated integers")
+    if not ids:
+        raise HTTPException(400, "No baseline_ids supplied")
+    if len(ids) > 6:
+        raise HTTPException(400, "At most 6 baselines can be compared at once")
+
+    bl_meta = (await s.execute(sql_text("""
+        SELECT id, name, project_finish, created_at FROM baselines
+        WHERE project_id = :pid AND id = ANY(:ids)
+    """), {"pid": pid, "ids": ids})).mappings().all()
+    if not bl_meta:
+        raise HTTPException(404, "No matching baselines for this project")
+
+    bl_rows = (await s.execute(sql_text("""
+        SELECT ba.baseline_id, a.code, ba.bl_start, ba.bl_finish, ba.bl_duration,
+               COALESCE(ba.bl_total_float, 1) <= 0 AS bl_critical
+        FROM baseline_activities ba JOIN activities a ON a.id = ba.activity_id
+        WHERE ba.baseline_id = ANY(:ids)
+    """), {"ids": ids})).mappings().all()
+
+    cur_rows = (await s.execute(sql_text("""
+        SELECT code, name, early_start, early_finish, duration,
+               COALESCE(total_float, 1) <= 0 AS is_critical,
+               COALESCE(percent_complete, 0) AS pct
+        FROM activities WHERE project_id = :pid ORDER BY code
+    """), {"pid": pid})).mappings().all()
+
+    result = compare_baselines(
+        current=[CurrentActivityRow(
+            code=r["code"], name=r["name"], start=r["early_start"],
+            finish=r["early_finish"], duration=r["duration"],
+            critical=bool(r["is_critical"]), percent_complete=float(r["pct"]))
+            for r in cur_rows],
+        baselines=[BaselineRef(
+            baseline_id=b["id"], name=b["name"],
+            project_finish=b["project_finish"],
+            captured_at=b["created_at"].date() if b["created_at"] else None)
+            for b in bl_meta],
+        baseline_rows=[BaselineActivityRow(
+            baseline_id=r["baseline_id"], code=r["code"], bl_start=r["bl_start"],
+            bl_finish=r["bl_finish"], bl_duration=r["bl_duration"],
+            bl_critical=bool(r["bl_critical"])) for r in bl_rows],
+        slip_tolerance_days=slip_tolerance_days,
+    )
+    return result.to_dict()
+
+
+# ---- schedule export (round-trip of the importers) -------------------------
+@router.get("/projects/{project_id}/export")
+async def export_schedule(project_id: str, fmt: str = "xer",
+                          s: AsyncSession = Depends(get_session)):
+    """Export the live schedule as .xer (Primavera), .xml (MS Project) or .csv.
+
+    .mpp is deliberately absent: it is a proprietary binary with no reliable
+    writer. Export XML and use MS Project's Save As, which is the same route
+    the .mpp importer's MPXJ bridge takes in reverse.
+    """
+    fmt = fmt.lower()
+    if fmt not in EXPORT_FORMATS:
+        raise HTTPException(415, f"Unsupported format. Use one of: "
+                                 f"{', '.join(sorted(EXPORT_FORMATS))}")
+    pid = int(project_id)
+
+    proj = (await s.execute(sql_text(
+        "SELECT name, data_date FROM projects WHERE id=:pid"),
+        {"pid": pid})).mappings().first()
+    if not proj:
+        raise HTTPException(404, "Project not found")
+
+    wbs_rows = (await s.execute(sql_text("""
+        SELECT id, parent_id, code, name FROM wbs WHERE project_id=:pid ORDER BY id
+    """), {"pid": pid})).mappings().all()
+    act_rows = (await s.execute(sql_text("""
+        SELECT id, code, name, duration, is_milestone, wbs_id,
+               COALESCE(percent_complete,0) AS pct, actual_start, actual_finish,
+               COALESCE(constraint_type,'NONE') AS ctype, constraint_date
+        FROM activities WHERE project_id=:pid ORDER BY code
+    """), {"pid": pid})).mappings().all()
+    rel_rows = (await s.execute(sql_text("""
+        SELECT r.pred_id, r.succ_id, r.rel_type, COALESCE(r.lag,0) AS lag
+        FROM relationships r JOIN activities a ON a.id = r.succ_id
+        WHERE a.project_id = :pid
+    """), {"pid": pid})).mappings().all()
+
+    sched = ImportedSchedule(
+        project_name=proj["name"], data_date=proj["data_date"],
+        source_format="projectbrain",
+        wbs=[ImpWBS(src_id=str(w["id"]),
+                    parent_src_id=str(w["parent_id"]) if w["parent_id"] else None,
+                    code=w["code"], name=w["name"]) for w in wbs_rows],
+        activities=[ImpActivity(
+            src_id=str(a["id"]), code=a["code"], name=a["name"],
+            duration=a["duration"] or 0, is_milestone=bool(a["is_milestone"]),
+            wbs_src_id=str(a["wbs_id"]) if a["wbs_id"] else None,
+            percent_complete=float(a["pct"]), actual_start=a["actual_start"],
+            actual_finish=a["actual_finish"], constraint_type=a["ctype"],
+            constraint_date=a["constraint_date"]) for a in act_rows],
+        relationships=[ImpRelationship(
+            pred_src_id=str(r["pred_id"]), succ_src_id=str(r["succ_id"]),
+            rel_type=r["rel_type"] or "FS", lag=int(r["lag"] or 0))
+            for r in rel_rows],
+    )
+
+    media, suffix, writer = EXPORT_FORMATS[fmt]
+    body = writer(sched)
+    filename = f"{(proj['name'] or 'schedule').replace(' ', '_')}{suffix}"
+    return Response(content=body, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 # ---- delay analysis --------------------------------------------------------
