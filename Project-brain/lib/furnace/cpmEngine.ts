@@ -1,18 +1,27 @@
 "use client";
 // cpmEngine.ts — client-side CPM + DCMA-lite, written clean-room (no license debt).
-// Forward/backward pass with FS/SS/FF/SF links + lag (days), total/free float,
-// critical path, and 9 live DCMA-style health checks. The backend
+// Forward/backward pass with FS/SS/FF/SF links + lag (days), all eight P6/MSP
+// constraint types, total/free float, critical path, and live DCMA checks. The backend
 // _scheduling_module remains the authority for official runs; this engine gives
 // instant in-browser recompute while dragging bars — something the rival's
 // iframe module cannot do without a server round-trip.
 import { API_BASE, MOCK } from "@/lib/furnace/gridApi";
 
 export type LinkType = "FS" | "SS" | "FF" | "SF";
+export type ConstraintType =
+  | "SNET"   // Start No Earlier Than  — soft, pushes ES forward
+  | "SNLT"   // Start No Later Than    — deadline on start, can force negative float
+  | "FNET"   // Finish No Earlier Than — pushes EF forward
+  | "FNLT"   // Finish No Later Than   — deadline on finish
+  | "MSO"    // Must Start On          — hard, pins both directions
+  | "MFO"    // Must Finish On         — hard, pins both directions
+  | "ASAP" | "ALAP";
 export interface CpmLink { pred: string; succ: string; type: LinkType; lag: number; }
 export interface CpmActivity {
   id: string; code: string; name: string; duration: number;      // working days
   progress: number;                                              // 0..100
-  constraint?: "SNET" | "FNLT" | "MSO" | null; constraintDate?: string | null;
+  // All eight P6/MSP constraint types, matching the backend engine.
+  constraint?: ConstraintType | null; constraintDate?: string | null;
   wbs?: string;
 }
 export interface CpmResult {
@@ -22,7 +31,24 @@ export interface CpmResult {
   critical: Set<string>; projectDuration: number; order: string[];
 }
 
-export function runCpm(acts: CpmActivity[], links: CpmLink[]): CpmResult {
+/**
+ * Map a constraint date to a day offset from the data date. Returns null when
+ * either date is missing or unparseable, in which case the constraint is
+ * ignored rather than silently applied at day 0.
+ */
+function constraintOffset(iso: string | null | undefined, dataDate?: string): number | null {
+  if (!iso || !dataDate) return null;
+  const c = Date.parse(iso), d = Date.parse(dataDate);
+  if (Number.isNaN(c) || Number.isNaN(d)) return null;
+  return Math.round((c - d) / 86400000);
+}
+
+export function runCpm(
+  acts: CpmActivity[],
+  links: CpmLink[],
+  opts: { dataDate?: string } = {},
+): CpmResult {
+  const dataDate = opts.dataDate;
   const ids = acts.map((a) => a.id);
   const byId = new Map(acts.map((a) => [a.id, a]));
   const preds = new Map<string, CpmLink[]>(); const succs = new Map<string, CpmLink[]>();
@@ -52,7 +78,18 @@ export function runCpm(acts: CpmActivity[], links: CpmLink[]): CpmResult {
         : /* SF */          pes + l.lag - a.duration;
       start = Math.max(start, req);
     });
-    if (a.constraint === "SNET" && a.constraintDate) start = Math.max(start, 0); // date-mapped upstream
+    // Constraints. Previously a no-op, which meant the browser Gantt and the
+    // DCMA checker showed a different schedule from the official backend run
+    // on any network that used constraints at all.
+    const c = constraintOffset(a.constraintDate, dataDate);
+    if (c !== null) {
+      if (a.constraint === "SNET" || a.constraint === "MSO") start = Math.max(start, c);
+      if (a.constraint === "MSO") start = c;                       // hard pin
+      if (a.constraint === "FNET" || a.constraint === "MFO") {
+        start = Math.max(start, c - a.duration);
+      }
+      if (a.constraint === "MFO") start = c - a.duration;          // hard pin
+    }
     es[id] = start; ef[id] = start + a.duration;
   });
   const projectDuration = Math.max(0, ...order.map((id) => ef[id] ?? 0));
@@ -71,6 +108,17 @@ export function runCpm(acts: CpmActivity[], links: CpmLink[]): CpmResult {
         : /* SF */          slf - l.lag + a.duration;
       finish = Math.min(finish, req);
     });
+    // Deadline constraints pull LF down, producing negative float when the
+    // forward pass has already run past them — exactly what DCMA #7 looks for.
+    const c = constraintOffset(a.constraintDate, dataDate);
+    if (c !== null) {
+      if (a.constraint === "FNLT" || a.constraint === "MFO") finish = Math.min(finish, c);
+      if (a.constraint === "MFO") finish = c;                      // hard pin
+      if (a.constraint === "SNLT" || a.constraint === "MSO") {
+        finish = Math.min(finish, c + a.duration);
+      }
+      if (a.constraint === "MSO") finish = c + a.duration;         // hard pin
+    }
     lf[id] = finish; ls[id] = finish - a.duration;
   });
 
@@ -98,7 +146,8 @@ export function dcmaLite(acts: CpmActivity[], links: CpmLink[], r: CpmResult): D
   const highFloat = acts.filter((a) => (r.tf[a.id] ?? 0) > 44);
   const negFloat = acts.filter((a) => (r.tf[a.id] ?? 0) < 0);
   const longDur = acts.filter((a) => a.duration > 44);
-  const hard = acts.filter((a) => a.constraint === "MSO" || a.constraint === "FNLT");
+  const hard = acts.filter((a) => a.constraint === "MSO" || a.constraint === "MFO"
+    || a.constraint === "FNLT" || a.constraint === "SNLT");
   const mk = (id: string, name: string, offenders: CpmActivity[] | CpmLink[], limitPct: number | null, threshold: string, totalOverride?: number): DcmaCheck => {
     const count = offenders.length; const total = totalOverride ?? n;
     const pass = limitPct == null ? count === 0 : (count / (total || 1)) * 100 <= limitPct;

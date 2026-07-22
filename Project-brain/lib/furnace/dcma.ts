@@ -105,13 +105,15 @@ function indexPoint(
  * of it, logic is broken somewhere downstream.
  */
 export function criticalPathTest(
-  acts: DcmaActivity[], links: CpmLink[], base: CpmResult,
+  acts: DcmaActivity[], links: CpmLink[], base: CpmResult, dataDate?: string,
 ): { ok: boolean; expected: number; observed: number; probe: string | null } {
   const probe = acts.find((a) => base.critical.has(a.id) && (a.progress ?? 0) < 100);
   if (!probe) return { ok: false, expected: 0, observed: 0, probe: null };
   const mutated = acts.map((a) =>
     a.id === probe.id ? { ...a, duration: a.duration + CRITICAL_TEST_INJECT_D } : a);
-  const after = runCpm(mutated, links);
+  // dataDate must be carried through or the probe run silently drops every
+  // constraint and reports a broken network as healthy.
+  const after = runCpm(mutated, links, { dataDate });
   const observed = after.projectDuration - base.projectDuration;
   // allow 1 day of rounding slack
   return {
@@ -230,7 +232,7 @@ export function runDcma14(
     : { ...point(11, "missedtasks", "Missed tasks vs baseline", "\u22645%", 0, 0, 5, [], "No baseline finish dates to compare against."), status: "na" as CheckStatus };
 
   // ---- 12 Critical path test ----------------------------------------------
-  const cpt = criticalPathTest(scope, links, result);
+  const cpt = criticalPathTest(scope, links, result, opts.dataDate);
   const p12: DcmaPoint = {
     id: "criticalpath", point: 12, name: "Critical path test", threshold: "delay must propagate",
     status: cpt.probe === null ? "na" : cpt.ok ? "pass" : "fail",

@@ -52,11 +52,15 @@ export default function CpmStudio() {
   const [showChecker, setShowChecker] = useState(false);
   const [showMultiBl, setShowMultiBl] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [groupByWbs, setGroupByWbs] = useState(true);
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
   useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
 
-  const result = useMemo(() => (net ? runCpm(net.activities, net.links) : null), [net]);
+  const result = useMemo(
+    () => (net ? runCpm(net.activities, net.links, { dataDate: net.dataDate }) : null),
+    [net]);
   const checks = useMemo(() => (net && result ? dcmaLite(net.activities, net.links, result) : []), [net, result]);
   const failing = checks.filter((c) => !c.pass);
   const dcma = useMemo(
@@ -70,7 +74,8 @@ export default function CpmStudio() {
     const start0 = net.dataDate;
     const predsBySucc = new Map<string, string[]>();
     net.links.forEach((l) => predsBySucc.set(l.succ, [...(predsBySucc.get(l.succ) ?? []), l.pred]));
-    const list = net.activities
+
+    const leaves = net.activities
       .filter((a) => !criticalOnly || result.critical.has(a.id))
       .map((a): Task => {
         const critical = result.critical.has(a.id);
@@ -79,18 +84,63 @@ export default function CpmStudio() {
           start: addDays(start0, result.es[a.id] ?? 0),
           end: addDays(start0, result.ef[a.id] ?? a.duration),
           progress: Math.round(a.progress),
+          project: groupByWbs && a.wbs ? `wbs:${a.wbs}` : undefined,
           dependencies: (predsBySucc.get(a.id) ?? []).filter((p) => !criticalOnly || result.critical.has(p)),
           styles: critical
             ? { backgroundColor: "#e2502a", backgroundSelectedColor: "#c5380d", progressColor: "#8f2c0e", progressSelectedColor: "#7a250b" }
-            : { backgroundColor: "#4d7ea8", backgroundSelectedColor: "#3c6690", progressColor: "#2c4f74", progressSelectedColor: "#25436364" },
+            : { backgroundColor: "#4d7ea8", backgroundSelectedColor: "#3c6690", progressColor: "#2c4f74", progressSelectedColor: "#254363" },
         };
       });
-    return list;
-  }, [net, result, criticalOnly]);
+
+    if (!groupByWbs) return leaves;
+
+    // MS-Project-style outline: one summary bar per WBS spanning its children,
+    // rolled-up % complete weighted by duration so the summary means something.
+    const byWbs = new Map<string, CpmActivity[]>();
+    net.activities.forEach((a) => {
+      if (!a.wbs) return;
+      byWbs.set(a.wbs, [...(byWbs.get(a.wbs) ?? []), a]);
+    });
+
+    const out: Task[] = [];
+    [...byWbs.keys()].sort().forEach((wbs) => {
+      const kids = byWbs.get(wbs)!;
+      const visibleKids = leaves.filter((t) => t.project === `wbs:${wbs}`);
+      if (!visibleKids.length) return;
+      const es = Math.min(...kids.map((k) => result.es[k.id] ?? 0));
+      const ef = Math.max(...kids.map((k) => result.ef[k.id] ?? 0));
+      const totalDur = kids.reduce((n, k) => n + (k.duration || 0), 0) || 1;
+      const earned = kids.reduce((n, k) => n + (k.duration || 0) * (k.progress || 0), 0);
+      const anyCritical = kids.some((k) => result.critical.has(k.id));
+      out.push({
+        id: `wbs:${wbs}`, name: wbs, type: "project",
+        start: addDays(start0, es), end: addDays(start0, ef),
+        progress: Math.round(earned / totalDur),
+        hideChildren: collapsed.has(wbs),
+        styles: anyCritical
+          ? { backgroundColor: "#8f2c0e", backgroundSelectedColor: "#7a250b", progressColor: "#5c1c07", progressSelectedColor: "#4a1605" }
+          : { backgroundColor: "#2c4f74", backgroundSelectedColor: "#254363", progressColor: "#1b3b57", progressSelectedColor: "#16304f" },
+      });
+      if (!collapsed.has(wbs)) out.push(...visibleKids);
+    });
+    // activities with no WBS still need to appear
+    out.push(...leaves.filter((t) => !t.project));
+    return out;
+  }, [net, result, criticalOnly, groupByWbs, collapsed]);
+
+  const onExpanderClick = useCallback((task: Task) => {
+    if (!task.id.startsWith("wbs:")) return;
+    const key = task.id.slice(4);
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }, []);
 
   // Drag a bar → adjust duration/offset and recompute CPM instantly
   const onDateChange = useCallback((task: Task) => {
-    if (!net) return;
+    if (!net || task.id.startsWith("wbs:")) return;   // summary bars are derived
     const days = Math.max(1, Math.round((task.end.getTime() - task.start.getTime()) / DAY));
     setNet((n) => n && ({ ...n, activities: n.activities.map((a) => (a.id === task.id ? { ...a, duration: days } : a)) }));
     toast(`${task.id} duration → ${days}d · critical path recomputed`);
@@ -151,6 +201,13 @@ export default function CpmStudio() {
           <Segmented value={String(view)} onChange={(v) => setView(v as ViewMode)}
             options={[{ value: String(ViewMode.Day), label: "Day" }, { value: String(ViewMode.Week), label: "Week" }, { value: String(ViewMode.Month), label: "Month" }]} />
           <Button onClick={() => setCriticalOnly((c) => !c)} kind={criticalOnly ? "accent" : "default"}>Critical only</Button>
+          <Button onClick={() => setGroupByWbs((g) => !g)} kind={groupByWbs ? "accent" : "default"}>WBS outline</Button>
+          {groupByWbs && (
+            <Button onClick={() => setCollapsed((c) => (c.size ? new Set() : new Set(
+              net ? net.activities.map((a) => a.wbs).filter(Boolean) as string[] : [])))}>
+              {collapsed.size ? "Expand all" : "Collapse all"}
+            </Button>
+          )}
           <label style={{ display: "inline-flex" }}>
             <input type="file" accept=".xer,.xml,.mpp" style={{ display: "none" }}
               onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.currentTarget.value = ""; }} />
@@ -192,7 +249,8 @@ export default function CpmStudio() {
           <div style={{ background: "var(--panel)" }} className="fz-gantt">
             <Gantt tasks={tasks} viewMode={view}
               onDateChange={onDateChange}
-              onSelect={(t, isSel) => setSelected(isSel ? t.id : null)}
+              onSelect={(t, isSel) => setSelected(isSel && !t.id.startsWith("wbs:") ? t.id : null)}
+              onExpanderClick={onExpanderClick}
               listCellWidth="230px" columnWidth={view === ViewMode.Day ? 44 : view === ViewMode.Week ? 90 : 160}
               barCornerRadius={3} fontSize="11.5px" rowHeight={36} />
           </div>
