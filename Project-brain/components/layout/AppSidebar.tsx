@@ -57,7 +57,6 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "CAPEX", icon: DollarSign, path: "/capex" },
       { name: "S-Curve Studio", icon: TrendingUp, path: "/s-curve" },
       { name: "Billing Schedule", icon: Receipt, path: "/billing" },
-      { name: "CPM Engine", icon: Network, path: "/cpm" },
       { name: "CPM Studio", icon: Network, path: "/furnace/cpm" },
     ],
   },
@@ -136,7 +135,9 @@ function passiveSurfaceStyle(): CSSProperties {
 function isActivePath(pathname: string, path: string): boolean {
   if (path === "/reports") return pathname === "/reports" || pathname.startsWith("/reports/");
   if (path === "/admin") return pathname === "/admin" || pathname.startsWith("/admin/") || pathname.startsWith("/furnace/admin");
-  if (path === "/furnace/cpm") return pathname.startsWith("/furnace/cpm");
+  // CPM Engine and CPM Studio merged into one entry: /cpm (advanced/projects view)
+  // is reachable from inside the Studio, so both routes light up the same item.
+  if (path === "/furnace/cpm") return pathname.startsWith("/furnace/cpm") || pathname === "/cpm" || pathname.startsWith("/cpm/");
   if (path === "/s-curve") return pathname === "/s-curve" || pathname.startsWith("/s-curve/") || pathname.startsWith("/furnace/s-curve");
   if (path === "/ai") return pathname === "/ai" || (pathname.startsWith("/ai/") && !pathname.startsWith("/ai/settings"));
   if (path === "/view") return pathname === "/view" || pathname.startsWith("/view/");

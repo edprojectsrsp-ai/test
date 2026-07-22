@@ -19,6 +19,8 @@ import {
   CpmActivity, CpmLink, CpmScheduleFull, CpmScheduleRef,
   runCpm, dcmaLite, getSchedules, getScheduleFull, runBackendCpm, importUrl,
 } from "@/lib/furnace/cpmEngine";
+import { runDcma14 } from "@/lib/furnace/dcma";
+const ScheduleChecker = dynamic(() => import("@/components/furnace/ScheduleChecker"), { ssr: false });
 
 const mono: React.CSSProperties = { fontFamily: "var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace)", fontVariantNumeric: "tabular-nums" };
 const label: React.CSSProperties = { fontSize: 11, letterSpacing: 0.5, textTransform: "uppercase", color: "var(--steel-dim)" };
@@ -37,6 +39,7 @@ export default function CpmStudio() {
   const [criticalOnly, setCriticalOnly] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [showBaselines, setShowBaselines] = useState(false);
+  const [showChecker, setShowChecker] = useState(false);
 
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
   useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
@@ -44,6 +47,10 @@ export default function CpmStudio() {
   const result = useMemo(() => (net ? runCpm(net.activities, net.links) : null), [net]);
   const checks = useMemo(() => (net && result ? dcmaLite(net.activities, net.links, result) : []), [net, result]);
   const failing = checks.filter((c) => !c.pass);
+  const dcma = useMemo(
+    () => (net && result ? runDcma14(net.activities, net.links, result, { dataDate: net.dataDate }) : null),
+    [net, result],
+  );
 
   // ---- map CPM network to gantt-task-react tasks ------------------------------
   const tasks: Task[] = useMemo(() => {
@@ -110,7 +117,7 @@ export default function CpmStudio() {
 
   return (
     <div className="fz fz-app" style={{ padding: "22px 26px 70px" }}>
-      <PageHeader title="CPM Studio" subtitle="Live critical path · drag bars to re-flow · DCMA health · XER/MSP import"
+      <PageHeader title="CPM Studio" subtitle="Live critical path · drag bars to re-flow · DCMA 14-point checker · baselines · XER/MSP import"
         right={<>
           <Field label="Schedule">
             <Select value={String(schedId ?? "")} onChange={(v) => setSchedId(Number(v))}
@@ -126,7 +133,7 @@ export default function CpmStudio() {
             <Chip tone="steel" dot>{net.activities.length} activities</Chip>
             <Chip tone="critical" dot>{critCount} critical</Chip>
             <Chip tone="neutral">project {result.projectDuration}d</Chip>
-            <Chip tone={failing.length ? "moderate" : "ok"} dot>DCMA {checks.length - failing.length}/{checks.length}</Chip>
+            <Chip tone={dcma && dcma.failed ? "moderate" : "ok"} dot>DCMA {dcma ? `${dcma.passed}/${dcma.passed + dcma.failed} · ${dcma.grade}` : "—"}</Chip>
           </> : null}
           <span style={{ flex: 1 }} />
           <Segmented value={String(view)} onChange={(v) => setView(v as ViewMode)}
@@ -140,6 +147,8 @@ export default function CpmStudio() {
           <Button onClick={officialRun}>Official run</Button>
           <Button onClick={exportCsv}>CSV</Button>
           <Button onClick={() => setShowBaselines((b) => !b)} kind={showBaselines ? "accent" : "default"}>Baselines &amp; Variance</Button>
+          <Button onClick={() => setShowChecker((c) => !c)} kind={showChecker ? "accent" : "default"}>Schedule Checker</Button>
+          <a href="/cpm" style={{ textDecoration: "none" }}><Button>Advanced / Projects</Button></a>
         </div>
       </Card>
 
@@ -160,6 +169,12 @@ export default function CpmStudio() {
         <Card style={{ marginTop: 14 }}>
           <BaselinePanel scheduleId={schedId} />
         </Card>
+      )}
+
+      {showChecker && net && result && (
+        <div style={{ marginTop: 14 }}>
+          <ScheduleChecker activities={net.activities} links={net.links} result={result} dataDate={net.dataDate} />
+        </div>
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 14, marginTop: 14, alignItems: "start" }}>
@@ -204,7 +219,7 @@ export default function CpmStudio() {
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 8, fontSize: 11, color: "var(--steel-dim)" }}>Full 14-point audit with PDF: backend DCMA module (official run).</div>
+            <div style={{ marginTop: 8, fontSize: 11, color: "var(--steel-dim)" }}>Open <strong>Schedule Checker</strong> for the full DCMA 14-point assessment incl. CPLI, BEI and the critical-path test.</div>
           </Card>
           {sel && result ? (
             <Card>
