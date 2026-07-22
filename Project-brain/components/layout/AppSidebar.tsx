@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   FlaskConical,
   Gauge,
+  TrendingUp,
 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { ThemeToggle } from "../../theme/ThemeProvider";
@@ -54,6 +55,7 @@ const NAV_GROUPS: NavGroup[] = [
       { name: "Plan Engine", icon: ClipboardList, path: "/progress/plan-engine" },
       { name: "Appendix-2", icon: FileText, path: "/appendix-2" },
       { name: "CAPEX", icon: DollarSign, path: "/capex" },
+      { name: "S-Curve Studio", icon: TrendingUp, path: "/s-curve" },
       { name: "Billing Schedule", icon: Receipt, path: "/billing" },
       { name: "CPM Engine", icon: Network, path: "/cpm" },
       { name: "CPM Studio", icon: Network, path: "/furnace/cpm" },
@@ -135,6 +137,7 @@ function isActivePath(pathname: string, path: string): boolean {
   if (path === "/reports") return pathname === "/reports" || pathname.startsWith("/reports/");
   if (path === "/admin") return pathname === "/admin" || pathname.startsWith("/admin/") || pathname.startsWith("/furnace/admin");
   if (path === "/furnace/cpm") return pathname.startsWith("/furnace/cpm");
+  if (path === "/s-curve") return pathname === "/s-curve" || pathname.startsWith("/s-curve/") || pathname.startsWith("/furnace/s-curve");
   if (path === "/ai") return pathname === "/ai" || (pathname.startsWith("/ai/") && !pathname.startsWith("/ai/settings"));
   if (path === "/view") return pathname === "/view" || pathname.startsWith("/view/");
   return pathname === path || pathname.startsWith(path + "/");

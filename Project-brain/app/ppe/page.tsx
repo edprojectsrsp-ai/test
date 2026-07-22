@@ -5,10 +5,11 @@ import PPEReviewDashboard from "../../components/ppe/PPEReviewDashboard";
 import ViolationsGallery from "../../components/ppe/ViolationsGallery";
 import PPEAnalytics from "../../components/ppe/PPEAnalytics";
 import PPEReports from "../../components/ppe/PPEReports";
+import PPEAlertSettings from "../../components/ppe/PPEAlertSettings";
 
 const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
 
-type Tab = "live" | "alerts" | "reports" | "analytics" | "review";
+type Tab = "live" | "alerts" | "reports" | "analytics" | "review" | "settings";
 
 type Health = "connecting" | "online" | "offline";
 
@@ -18,6 +19,7 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "reports", label: "Reports", hint: "Audit log · trends · CSV export" },
   { id: "analytics", label: "Analytics", hint: "KPIs · model PPE coverage" },
   { id: "review", label: "Review", hint: "Label frames to improve the model" },
+  { id: "settings", label: "Settings", hint: "Telegram alerts \u00b7 cooldown \u00b7 channels" },
 ];
 
 export default function PPEPage() {
@@ -333,6 +335,8 @@ export default function PPEPage() {
           <PPEReports embedded />
         ) : tab === "analytics" ? (
           <PPEAnalytics embedded />
+        ) : tab === "settings" ? (
+          <PPEAlertSettings />
         ) : (
           <PPEReviewDashboard embedded />
         )}

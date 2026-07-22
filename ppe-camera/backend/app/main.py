@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from app.core.db import init_db
-from app.routers import analytics, cameras, models, review, stream, violations
+from app.routers import alerts, analytics, cameras, models, review, stream, violations
 
 
 @asynccontextmanager
@@ -59,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(models.router)
     app.include_router(analytics.router)
     app.include_router(violations.router)
+    app.include_router(alerts.router)
 
     @app.get("/health")
     async def health() -> dict:

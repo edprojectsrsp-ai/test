@@ -8,6 +8,8 @@ daemon worker thread behind a bounded queue (drop-oldest under pressure) so a
 dead SMTP server can never stall the detection loop. Channels are optional and
 env-configured:
 
+  Telegram                   configured from the UI (Settings tab) and stored in
+                             alert_config.json; falls back to PPE_TELEGRAM_* env
   PPE_ALERT_WEBHOOK          any JSON receiver (n8n / Telegram bridge / Brain)
   WHATSAPP_TOKEN + WHATSAPP_PHONE_ID + PPE_ALERT_WHATSAPP_TO (comma list)
   PPE_SMTP_HOST/PORT/USER/PASSWORD + PPE_ALERT_EMAIL_TO (comma list)
@@ -28,13 +30,22 @@ from app.core.config import get_settings
 
 class AlertService:
     def __init__(self, start_worker: bool = True) -> None:
-        self.cooldown_s = float(get_settings().ALERT_COOLDOWN_S)
+        self._cooldown_default = float(get_settings().ALERT_COOLDOWN_S)
         self._last: dict[tuple[str, str], float] = {}
         self._q: "queue.Queue[dict]" = queue.Queue(maxsize=200)
         self._worker: threading.Thread | None = None
         if start_worker:
             self._worker = threading.Thread(target=self._run, name="ppe-alerts", daemon=True)
             self._worker.start()
+
+    @property
+    def cooldown_s(self) -> float:
+        """Live-read so changing it in the UI takes effect without a restart."""
+        try:
+            from app.services import alert_config
+            return float(alert_config.get("cooldown_s") or self._cooldown_default)
+        except Exception:
+            return self._cooldown_default
 
     # ---- public ------------------------------------------------------------
     def fire(self, camera_id: str, gear: str, snapshot_path: str | None = None,
@@ -75,11 +86,108 @@ class AlertService:
     def _run(self) -> None:
         while True:
             payload = self._q.get()
-            for send in (self._webhook, self._whatsapp, self._email):
+            for send in (self._telegram, self._webhook, self._whatsapp, self._email):
                 try:
                     send(payload)
                 except Exception:
                     pass  # one broken channel must never kill the worker
+
+    # ---- telegram ------------------------------------------------------------
+    @staticmethod
+    def format_message(payload: dict) -> str:
+        """Human-readable alert text, shared by live alerts and the test button."""
+        meta = payload.get("meta") or {}
+        lines = [
+            f"\u26a0\ufe0f *PPE VIOLATION* \u2014 {payload.get('violation', 'UNKNOWN')}",
+            f"Camera: {payload.get('camera', '-')}",
+            f"Time: {payload.get('at', '-')}",
+        ]
+        if meta.get("location"):
+            lines.append(f"Location: {meta['location']}")
+        if meta.get("confidence") is not None:
+            try:
+                lines.append(f"Confidence: {float(meta['confidence']):.0%}")
+            except (TypeError, ValueError):
+                pass
+        if meta.get("track_id") is not None:
+            lines.append(f"Track: {meta['track_id']}")
+        return "\n".join(lines)
+
+    def _telegram(self, payload: dict) -> None:
+        """Send to Telegram. Photo evidence when we have a snapshot on disk."""
+        from app.services import alert_config
+
+        if not alert_config.telegram_ready():
+            return
+        gear_filter = alert_config.get("telegram_gear_filter") or []
+        if gear_filter and payload.get("violation") not in gear_filter:
+            return
+
+        token = str(alert_config.get("telegram_bot_token"))
+        text = self.format_message(payload)
+        snapshot = payload.get("snapshot")
+        want_photo = bool(alert_config.get("telegram_send_photo"))
+        has_photo = bool(snapshot and os.path.exists(snapshot)) and want_photo
+
+        for chat_id in alert_config.chat_ids():
+            try:
+                if has_photo:
+                    self._telegram_photo(token, chat_id, text, snapshot)
+                else:
+                    self._telegram_text(token, chat_id, text)
+            except Exception:
+                # one bad chat id must not stop the others
+                continue
+
+    @staticmethod
+    def _telegram_text(token: str, chat_id: str, text: str) -> dict:
+        import urllib.request
+
+        body = json.dumps({
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        }).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=body, headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode() or "{}")
+
+    @staticmethod
+    def _telegram_photo(token: str, chat_id: str, caption: str, path: str) -> dict:
+        """multipart/form-data upload -- stdlib only, no requests dependency."""
+        import mimetypes
+        import urllib.request
+        import uuid
+
+        boundary = uuid.uuid4().hex
+        with open(path, "rb") as fh:
+            image = fh.read()
+        filename = os.path.basename(path)
+        mime = mimetypes.guess_type(filename)[0] or "image/jpeg"
+
+        parts: list[bytes] = []
+        for field, value in (("chat_id", chat_id), ("caption", caption[:1024]),
+                             ("parse_mode", "Markdown")):
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n"
+                f"{value}\r\n".encode())
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: {mime}\r\n\r\n".encode())
+        parts.append(image)
+        parts.append(f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(parts)
+
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendPhoto",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return json.loads(resp.read().decode() or "{}")
 
     def _webhook(self, payload: dict) -> None:
         url = os.getenv("PPE_ALERT_WEBHOOK")
