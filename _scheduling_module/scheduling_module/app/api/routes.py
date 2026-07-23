@@ -382,6 +382,9 @@ async def compare_multiple_baselines(
         WHERE ba.baseline_id = ANY(:ids)
     """), {"ids": ids})).mappings().all()
 
+    data_date = (await s.execute(sql_text(
+        "SELECT data_date FROM projects WHERE id=:pid"), {"pid": pid})).scalar()
+
     cur_rows = (await s.execute(sql_text("""
         SELECT code, name, early_start, early_finish, duration,
                COALESCE(total_float, 1) <= 0 AS is_critical,
@@ -405,6 +408,7 @@ async def compare_multiple_baselines(
             bl_finish=r["bl_finish"], bl_duration=r["bl_duration"],
             bl_critical=bool(r["bl_critical"])) for r in bl_rows],
         slip_tolerance_days=slip_tolerance_days,
+        data_date=data_date,
     )
     return result.to_dict()
 

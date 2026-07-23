@@ -144,7 +144,7 @@ def test_serialisable(scenario):
     cur, bls, rows = scenario
     payload = compare_baselines(cur, bls, rows).to_dict()
     json.dumps(payload)                              # must not raise
-    assert set(payload) == {"baselines", "activities"}
+    assert set(payload) == {"baselines", "activities", "data_date"}
     assert payload["activities"][0]["cells"]["1"]["status"] == "slipped"
 
 
@@ -154,3 +154,24 @@ def test_no_baselines_returns_activities_without_cells(scenario):
     assert result.baselines == []
     assert len(result.activities) == 4
     assert all(a.cells == {} for a in result.activities)
+
+
+def test_data_date_is_returned_for_the_chart(scenario):
+    """The Gantt draws a data-date line, so the comparison must carry it."""
+    cur, bls, rows = scenario
+    result = compare_baselines(cur, bls, rows, data_date=D(2026, 7, 22))
+    assert result.data_date == D(2026, 7, 22)
+    assert result.to_dict()["data_date"] == "2026-07-22"
+
+
+def test_data_date_optional(scenario):
+    cur, bls, rows = scenario
+    assert compare_baselines(cur, bls, rows).to_dict()["data_date"] is None
+
+
+def test_current_start_present_for_bar_drawing(scenario):
+    """Bars need a start as well as a finish."""
+    cur, bls, rows = scenario
+    payload = compare_baselines(cur, bls, rows).to_dict()
+    assert payload["activities"][0]["current_start"] is not None
+    assert payload["activities"][0]["cells"]["1"]["bl_start"] is not None

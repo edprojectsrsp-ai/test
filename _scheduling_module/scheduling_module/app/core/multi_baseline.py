@@ -91,11 +91,13 @@ class BaselineSummary:
 class MultiBaselineComparison:
     baselines: list[BaselineSummary]
     activities: list[ActivityComparison]
+    data_date: Optional[date] = None
 
     def to_dict(self) -> dict:
         def d(v: Optional[date]) -> Optional[str]:
             return v.isoformat() if v else None
         return {
+            "data_date": d(self.data_date),
             "baselines": [{
                 "baseline_id": b.baseline_id, "name": b.name,
                 "project_finish": d(b.project_finish),
@@ -137,6 +139,7 @@ def compare_baselines(
     baseline_rows: Iterable[BaselineActivityRow],
     current_project_finish: Optional[date] = None,
     slip_tolerance_days: int = 0,
+    data_date: Optional[date] = None,
 ) -> MultiBaselineComparison:
     """Compare the live schedule against every supplied baseline at once."""
     current_list = list(current)
@@ -219,4 +222,5 @@ def compare_baselines(
 
     # worst slip first: a review wants the damage at the top
     comparisons.sort(key=lambda a: (-a.worst_slip_days, a.code))
-    return MultiBaselineComparison(baselines=summaries, activities=comparisons)
+    return MultiBaselineComparison(baselines=summaries, activities=comparisons,
+                                   data_date=data_date)

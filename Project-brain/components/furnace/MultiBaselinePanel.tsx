@@ -9,7 +9,11 @@
  * per baseline, worst slip at the top, so the damage is visible immediately.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { Button, Card, Chip } from "@/ui";
+
+// Chart view shares this panel's fetch — opening both costs one request.
+const BaselineGantt = dynamic(() => import("@/components/furnace/BaselineGantt"), { ssr: false });
 
 const API = (process.env.NEXT_PUBLIC_API_BASE
   || process.env.NEXT_PUBLIC_API_BASE_URL
@@ -39,7 +43,8 @@ type Cell = {
   status: "on_track" | "slipped" | "ahead" | "added";
 };
 type Row = {
-  code: string; name: string; current_finish: string | null;
+  code: string; name: string;
+  current_start: string | null; current_finish: string | null;
   current_critical: boolean; percent_complete: number;
   worst_slip_days: number; cells: Record<string, Cell>;
 };
@@ -69,6 +74,8 @@ export default function MultiBaselinePanel({ projectId }: { projectId: number | 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [slippedOnly, setSlippedOnly] = useState(false);
+  const [mode, setMode] = useState<"chart" | "table">("chart");
+  const [dataDate, setDataDate] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API}/projects/${projectId}/baselines`, { cache: "no-store" })
@@ -95,6 +102,7 @@ export default function MultiBaselinePanel({ projectId }: { projectId: number | 
       const data = await r.json();
       setRows(data.activities || []);
       setSummaries(data.baselines || []);
+      setDataDate(data.data_date ?? null);
     } catch (e: any) {
       setError(e.message);
     } finally { setLoading(false); }
@@ -156,8 +164,12 @@ export default function MultiBaselinePanel({ projectId }: { projectId: number | 
               color: "var(--ink)", fontSize: 12 }} />
           d
         </label>
-        <Button onClick={() => setSlippedOnly((v) => !v)}
-          kind={slippedOnly ? "accent" : "default"}>Slipped only</Button>
+        <Button onClick={() => setMode("chart")} kind={mode === "chart" ? "accent" : "default"}>Chart</Button>
+        <Button onClick={() => setMode("table")} kind={mode === "table" ? "accent" : "default"}>Table</Button>
+        {mode === "table" && (
+          <Button onClick={() => setSlippedOnly((v) => !v)}
+            kind={slippedOnly ? "accent" : "default"}>Slipped only</Button>
+        )}
         <Button onClick={exportCsv}>CSV</Button>
       </div>
 
@@ -234,8 +246,15 @@ export default function MultiBaselinePanel({ projectId }: { projectId: number | 
         <div style={{ padding: "14px", fontSize: 12, color: "var(--steel-dim)" }}>Comparing…</div>
       )}
 
+      {!loading && mode === "chart" && rows.length > 0 && (
+        <div style={{ padding: "0 14px 14px" }}>
+          <BaselineGantt rows={rows as any} baselines={summaries} dataDate={dataDate}
+            title="Current schedule vs baselines" />
+        </div>
+      )}
+
       {/* matrix */}
-      {!loading && visible.length > 0 && (
+      {!loading && mode === "table" && visible.length > 0 && (
         <div style={{ overflow: "auto", maxHeight: 460 }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
@@ -302,7 +321,7 @@ export default function MultiBaselinePanel({ projectId }: { projectId: number | 
         </div>
       )}
 
-      {!loading && rows.length > 0 && visible.length === 0 && (
+      {!loading && mode === "table" && rows.length > 0 && visible.length === 0 && (
         <div style={{ padding: 16, fontSize: 12, color: "var(--verdigris)" }}>
           Nothing has slipped against the selected baselines.
         </div>
