@@ -72,5 +72,33 @@ r=runCpm(acts,links,{dataDate:DD});
 const rep=runDcma14(acts,links,r,{dataDate:DD});
 ok("DCMA #7 now fails as it should", rep.points[6].status==="fail", JSON.stringify(rep.points[6].count));
 
-console.log(`\n${pass} passed, ${fail} failed`);
+
+
+// ---- constraints under a working calendar ----------------------------------
+{
+  const { WorkCalendar } = await import("./workCalendar.js");
+  let p2=0,f2=0;
+  const ok2=(n,c,x="")=>{c?(p2++,console.log("  PASS",n)):(f2++,console.log("  FAIL",n,x));};
+  console.log("\n== constraints resolve in WORKING days, not calendar days ==");
+  const cal=WorkCalendar.standard5Day();
+  const DD2="2026-01-05"; // Monday
+  const acts=[A("A",5),A("B",5,{constraint:"SNET",constraintDate:"2026-02-02"})];
+  const links=[{pred:"A",succ:"B",type:"FS",lag:0}];
+  // 2026-02-02 is a Monday, 20 working days after 2026-01-05
+  const withCal=runCpm(acts,links,{dataDate:DD2,calendar:cal});
+  const withoutCal=runCpm(acts,links,{dataDate:DD2});
+  ok2("with calendar: unit 20", withCal.es.B===20, withCal.es.B);
+  ok2("without calendar: unit 28 (wrong, calendar days)", withoutCal.es.B===28, withoutCal.es.B);
+  ok2("the two differ — this was the bug", withCal.es.B!==withoutCal.es.B);
+
+  console.log("== FNLT deadline in working days ==");
+  const acts2=[A("A",10),A("B",10,{constraint:"FNLT",constraintDate:"2026-01-30"})];
+  const r2=runCpm(acts2,links,{dataDate:DD2,calendar:cal});
+  ok2("negative float against working-day deadline", r2.tf.B<0, r2.tf.B);
+
+  console.log(`\n${p2} passed, ${f2} failed`);
+  if(f2) process.exit(1);
+}
+
+console.log(`\nTOTAL ${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

@@ -20,6 +20,7 @@ import {
   runCpm, dcmaLite, getSchedules, getScheduleFull, runBackendCpm, importUrl,
 } from "@/lib/furnace/cpmEngine";
 import { runDcma14 } from "@/lib/furnace/dcma";
+import { WorkCalendar, calendarFromSchedule } from "@/lib/furnace/workCalendar";
 const ScheduleChecker = dynamic(() => import("@/components/furnace/ScheduleChecker"), { ssr: false });
 const MultiBaselinePanel = dynamic(() => import("@/components/furnace/MultiBaselinePanel"), { ssr: false });
 
@@ -39,7 +40,11 @@ const td: React.CSSProperties = { padding: "5px 10px", borderBottom: "1px solid 
 const num: React.CSSProperties = { ...mono, textAlign: "right", whiteSpace: "nowrap" };
 
 const DAY = 86400000;
-const addDays = (iso: string, d: number) => new Date(Date.parse(iso) + d * DAY);
+// Units are working days, so unit -> date must go through the calendar.
+// Plain day addition drew every bar straight through weekends and holidays,
+// which on a five-day calendar showed a 100-unit activity finishing two months
+// earlier than the backend's official run.
+const unitDate = (cal: WorkCalendar, unit: number) => cal.dateForUnit(unit);
 
 export default function CpmStudio() {
   const [refs, setRefs] = useState<CpmScheduleRef[]>([]);
@@ -58,9 +63,16 @@ export default function CpmStudio() {
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
   useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
 
+  const calendar = useMemo(() => {
+    const cal = calendarFromSchedule(net as any);
+    if (net?.dataDate) cal.setAnchor(net.dataDate);
+    return cal;
+  }, [net]);
+
   const result = useMemo(
-    () => (net ? runCpm(net.activities, net.links, { dataDate: net.dataDate }) : null),
-    [net]);
+    () => (net ? runCpm(net.activities, net.links,
+      { dataDate: net.dataDate, calendar }) : null),
+    [net, calendar]);
   const checks = useMemo(() => (net && result ? dcmaLite(net.activities, net.links, result) : []), [net, result]);
   const failing = checks.filter((c) => !c.pass);
   const dcma = useMemo(
@@ -71,7 +83,6 @@ export default function CpmStudio() {
   // ---- map CPM network to gantt-task-react tasks ------------------------------
   const tasks: Task[] = useMemo(() => {
     if (!net || !result) return [];
-    const start0 = net.dataDate;
     const predsBySucc = new Map<string, string[]>();
     net.links.forEach((l) => predsBySucc.set(l.succ, [...(predsBySucc.get(l.succ) ?? []), l.pred]));
 
@@ -81,8 +92,10 @@ export default function CpmStudio() {
         const critical = result.critical.has(a.id);
         return {
           id: a.id, name: `${a.code} · ${a.name}`, type: "task",
-          start: addDays(start0, result.es[a.id] ?? 0),
-          end: addDays(start0, result.ef[a.id] ?? a.duration),
+          start: unitDate(calendar, result.es[a.id] ?? 0),
+          // exclusive-end: the day after the last worked day, so a Friday
+          // finish stops at Saturday instead of running through to Monday
+          end: calendar.barEndForUnit(result.ef[a.id] ?? a.duration),
           progress: Math.round(a.progress),
           project: groupByWbs && a.wbs ? `wbs:${a.wbs}` : undefined,
           dependencies: (predsBySucc.get(a.id) ?? []).filter((p) => !criticalOnly || result.critical.has(p)),
@@ -114,7 +127,7 @@ export default function CpmStudio() {
       const anyCritical = kids.some((k) => result.critical.has(k.id));
       out.push({
         id: `wbs:${wbs}`, name: wbs, type: "project",
-        start: addDays(start0, es), end: addDays(start0, ef),
+        start: unitDate(calendar, es), end: calendar.barEndForUnit(ef),
         progress: Math.round(earned / totalDur),
         hideChildren: collapsed.has(wbs),
         styles: anyCritical
@@ -126,7 +139,7 @@ export default function CpmStudio() {
     // activities with no WBS still need to appear
     out.push(...leaves.filter((t) => !t.project));
     return out;
-  }, [net, result, criticalOnly, groupByWbs, collapsed]);
+  }, [net, result, criticalOnly, groupByWbs, collapsed, calendar]);
 
   const onExpanderClick = useCallback((task: Task) => {
     if (!task.id.startsWith("wbs:")) return;
@@ -195,7 +208,8 @@ export default function CpmStudio() {
             <Chip tone="steel" dot>{net.activities.length} activities</Chip>
             <Chip tone="critical" dot>{critCount} critical</Chip>
             <Chip tone="neutral">project {result.projectDuration}d</Chip>
-            <Chip tone={dcma && dcma.failed ? "moderate" : "ok"} dot>DCMA {dcma ? `${dcma.passed}/${dcma.passed + dcma.failed} · ${dcma.grade}` : "—"}</Chip>
+            <Chip tone="neutral">{calendar.name}</Chip>
+          <Chip tone={dcma && dcma.failed ? "moderate" : "ok"} dot>DCMA {dcma ? `${dcma.passed}/${dcma.passed + dcma.failed} · ${dcma.grade}` : "—"}</Chip>
           </> : null}
           <span style={{ flex: 1 }} />
           <Segmented value={String(view)} onChange={(v) => setView(v as ViewMode)}

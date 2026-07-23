@@ -1,11 +1,17 @@
 "use client";
 // cpmEngine.ts — client-side CPM + DCMA-lite, written clean-room (no license debt).
-// Forward/backward pass with FS/SS/FF/SF links + lag (days), all eight P6/MSP
-// constraint types, total/free float, critical path, and live DCMA checks. The backend
+// Forward/backward pass with FS/SS/FF/SF links + lag, all eight P6/MSP
+// constraint types, total/free float, critical path, and live DCMA checks.
+//
+// All maths is in integer WORKING-DAY UNITS, matching the backend engine.
+// Durations, lags and float are unit counts; conversion to calendar dates goes
+// through WorkCalendar at the display boundary, never by plain day addition. The backend
 // _scheduling_module remains the authority for official runs; this engine gives
 // instant in-browser recompute while dragging bars — something the rival's
 // iframe module cannot do without a server round-trip.
 import { API_BASE, MOCK } from "@/lib/furnace/gridApi";
+
+import { WorkCalendar } from "@/lib/furnace/workCalendar";
 
 export type LinkType = "FS" | "SS" | "FF" | "SF";
 export type ConstraintType =
@@ -32,23 +38,39 @@ export interface CpmResult {
 }
 
 /**
- * Map a constraint date to a day offset from the data date. Returns null when
- * either date is missing or unparseable, in which case the constraint is
- * ignored rather than silently applied at day 0.
+ * Map a constraint date to a working-day unit index.
+ *
+ * The engine runs in working-day units, so a constraint date must be converted
+ * through the calendar. Using calendar days here (as this did initially) put a
+ * constraint on a five-day calendar 40% further out than intended — a
+ * "start no earlier than" 100 days away landed at unit 100, which is 140
+ * calendar days.
+ *
+ * Returns null when either date is missing or unparseable, in which case the
+ * constraint is ignored rather than silently applied at unit 0.
  */
-function constraintOffset(iso: string | null | undefined, dataDate?: string): number | null {
+function constraintOffset(
+  iso: string | null | undefined,
+  dataDate?: string,
+  cal?: WorkCalendar,
+): number | null {
   if (!iso || !dataDate) return null;
   const c = Date.parse(iso), d = Date.parse(dataDate);
   if (Number.isNaN(c) || Number.isNaN(d)) return null;
+  if (cal) {
+    cal.setAnchor(dataDate);
+    return cal.unitForDate(iso);
+  }
   return Math.round((c - d) / 86400000);
 }
 
 export function runCpm(
   acts: CpmActivity[],
   links: CpmLink[],
-  opts: { dataDate?: string } = {},
+  opts: { dataDate?: string; calendar?: WorkCalendar } = {},
 ): CpmResult {
   const dataDate = opts.dataDate;
+  const cal = opts.calendar;
   const ids = acts.map((a) => a.id);
   const byId = new Map(acts.map((a) => [a.id, a]));
   const preds = new Map<string, CpmLink[]>(); const succs = new Map<string, CpmLink[]>();
@@ -81,7 +103,7 @@ export function runCpm(
     // Constraints. Previously a no-op, which meant the browser Gantt and the
     // DCMA checker showed a different schedule from the official backend run
     // on any network that used constraints at all.
-    const c = constraintOffset(a.constraintDate, dataDate);
+    const c = constraintOffset(a.constraintDate, dataDate, cal);
     if (c !== null) {
       if (a.constraint === "SNET" || a.constraint === "MSO") start = Math.max(start, c);
       if (a.constraint === "MSO") start = c;                       // hard pin
@@ -110,7 +132,7 @@ export function runCpm(
     });
     // Deadline constraints pull LF down, producing negative float when the
     // forward pass has already run past them — exactly what DCMA #7 looks for.
-    const c = constraintOffset(a.constraintDate, dataDate);
+    const c = constraintOffset(a.constraintDate, dataDate, cal);
     if (c !== null) {
       if (a.constraint === "FNLT" || a.constraint === "MFO") finish = Math.min(finish, c);
       if (a.constraint === "MFO") finish = c;                      // hard pin
