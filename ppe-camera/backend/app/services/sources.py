@@ -50,10 +50,19 @@ class RTSPSource(FrameSource):
     cv2.VideoCapture, which matters for flaky industrial WiFi links.
     """
     url: str
+    transport: str = ""          # "tcp" | "udp" | "" (auto). TCP is steadier on flaky links.
     _stream: object | None = None
 
     def open(self) -> None:
+        import os
+
         from vidgear.gears import CamGear  # lazy: only when a real feed opens
+
+        # Force RTSP-over-TCP when asked. CamGear's FFmpeg/OpenCV backend honours
+        # this env var; TCP avoids the packet loss that garbles UDP on WiFi/eSIM.
+        t = (self.transport or "").lower()
+        if t in ("tcp", "udp"):
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = f"rtsp_transport;{t}"
 
         self._stream = CamGear(source=self.url, logging=False).start()
 
@@ -322,7 +331,7 @@ def build_source(kind: str, **kwargs) -> FrameSource:
     """Factory used by the camera manager to instantiate from config."""
     kind = kind.lower()
     if kind == "rtsp":
-        return RTSPSource(url=kwargs["url"])
+        return RTSPSource(url=kwargs["url"], transport=kwargs.get("transport", ""))
     if kind == "webcam":
         return WebcamSource(index=kwargs.get("index", 0))
     if kind == "screen":

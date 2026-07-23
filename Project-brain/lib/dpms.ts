@@ -112,5 +112,32 @@ export const dpmsApi = {
     });
     return jsonFetch<LinkSample>(`/api/link-sample?${q}`);
   },
+  projectMasterPlan: (maxTables = 20, maxFileMb = 400) =>
+    jsonFetch<{
+      hub: string;
+      core_columns: string[];
+      plan: Array<Record<string, unknown>>;
+      included: number;
+      available: number;
+    }>(`/api/project-master/plan?max_tables=${maxTables}&max_file_mb=${maxFileMb}`),
+  projectMasterBuild: (body?: {
+    tables?: string[];
+    max_tables?: number;
+    max_file_mb?: number;
+    sample_rows?: number;
+  }) =>
+    jsonFetch<Record<string, unknown>>("/api/project-master/build", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    }),
+  projectMaster: (page = 0, size = 50, q = "") => {
+    const params = new URLSearchParams({
+      page: String(page),
+      size: String(size),
+      q,
+    });
+    return jsonFetch<Record<string, unknown>>(`/api/project-master?${params}`);
+  },
   relId,
 };

@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { Database, ExternalLink, GitBranch, List, RefreshCw, Table2 } from "lucide-react";
+import { Database, ExternalLink, GitBranch, Layers, List, RefreshCw, Table2 } from "lucide-react";
 
 const DPMS_URL = process.env.NEXT_PUBLIC_DPMS_VIEWER_URL || "http://localhost:8010";
 
@@ -33,7 +33,16 @@ const DpmsTableData = dynamic(() => import("@/components/dpms/DpmsTableData"), {
   ),
 });
 
-type Tab = "board" | "data" | "saved" | "classic";
+const DpmsProjectMaster = dynamic(() => import("@/components/dpms/DpmsProjectMaster"), {
+  ssr: false,
+  loading: () => (
+    <div style={{ padding: 28, fontSize: 13, color: "var(--ink-4)" }}>
+      Loading project master…
+    </div>
+  ),
+});
+
+type Tab = "board" | "master" | "data" | "saved" | "classic";
 
 export default function DpmsViewerPage() {
   const [tab, setTab] = useState<Tab>("board");
@@ -76,6 +85,9 @@ export default function DpmsViewerPage() {
           <TabBtn active={tab === "board"} onClick={() => setTab("board")} icon={<GitBranch size={13} />}>
             Join board
           </TabBtn>
+          <TabBtn active={tab === "master"} onClick={() => setTab("master")} icon={<Layers size={13} />}>
+            Project master
+          </TabBtn>
           <TabBtn active={tab === "data"} onClick={() => setTab("data")} icon={<Table2 size={13} />}>
             Table data
           </TabBtn>
@@ -89,6 +101,7 @@ export default function DpmsViewerPage() {
       </header>
 
       {tab === "board" ? <DpmsErdStudio /> : null}
+      {tab === "master" ? <DpmsProjectMaster /> : null}
       {tab === "data" ? <DpmsTableData /> : null}
       {tab === "saved" ? <DpmsSavedLinks /> : null}
 

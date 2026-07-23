@@ -51,8 +51,10 @@ const MODES = [
 ];
 
 const SOURCE_HELP = {
+  ip: "IP/CCTV by brand — enter IP, login & channel; the RTSP URL is built for you (Hikvision, Dahua, CP Plus, Uniview, Axis…).",
+  onvif: "Auto-resolve the stream over ONVIF, or Discover cameras on the LAN.",
   webcam: "Use the laptop/USB camera for a quick local test.",
-  rtsp: "IP CCTV or DVR stream URL (rtsp://…).",
+  rtsp: "Paste a full RTSP/DVR stream URL (rtsp://user:pass@ip:554/…).",
   screen: "Capture a region of the desktop (e.g. DVR viewer window).",
   video: "Upload a clip — full pipeline runs without a physical camera.",
   fake: "Synthetic frames for wiring checks only.",
@@ -526,7 +528,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
     if (onOpenChange) onOpenChange(next);
     else setOpenLocal(next);
   };
-  const [kind, setKind] = useState("webcam");
+  const [kind, setKind] = useState("ip");
   const [id, setId] = useState("");
   const [url, setUrl] = useState("");
   const [index, setIndex] = useState("0");
@@ -534,22 +536,105 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
   const [loop, setLoop] = useState(true);
   const [speed, setSpeed] = useState("normal");
   const [ppe, setPpe] = useState(defaultPpe || ["helmet", "vest"]);
+  // IP camera (brand) builder
+  const [brands, setBrands] = useState([]);
+  const [brand, setBrand] = useState("hikvision");
+  const [host, setHost] = useState("");
+  const [user, setUser] = useState("admin");
+  const [pass, setPass] = useState("");
+  const [port, setPort] = useState("");
+  const [channel, setChannel] = useState("1");
+  const [stream, setStream] = useState("main");
+  const [path, setPath] = useState("");
+  const [transport, setTransport] = useState("tcp");
+  // test + discovery
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [discovering, setDiscovering] = useState(false);
+  const [found, setFound] = useState([]);
   const videoRef = useRef(null);
 
   useEffect(() => {
     if (defaultPpe?.length) setPpe(defaultPpe);
   }, [defaultPpe]);
 
-  const submit = () => {
+  useEffect(() => {
+    api("/api/cameras/meta/brands").then((d) => setBrands(d.brands || [])).catch(() => {});
+  }, []);
+
+  const brandMeta = brands.find((b) => b.id === brand);
+
+  // resolve the source_kind + source_kwargs for whatever is selected
+  const buildConfig = async () => {
+    if (kind === "ip") {
+      const r = await api("/api/cameras/rtsp-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          brand, host: host.trim(), username: user, password: pass,
+          port: port ? Number(port) : null, channel: Number(channel) || 1,
+          stream, path,
+        }),
+      });
+      return { source_kind: "rtsp", source_kwargs: { url: r.url, transport }, display: r.masked };
+    }
+    if (kind === "onvif") {
+      return {
+        source_kind: "onvif",
+        source_kwargs: { host: host.trim(), port: port ? Number(port) : 80, username: user, password: pass },
+        display: `onvif://${host.trim()}:${port || 80}`,
+      };
+    }
+    if (kind === "webcam") return { source_kind: "webcam", source_kwargs: { index: Number(index) || 0 } };
+    if (kind === "rtsp") return { source_kind: "rtsp", source_kwargs: { url: url.trim(), transport } };
+    if (kind === "screen") {
+      const [l, t, w, h] = region.split(",").map((n) => Number(n) || 0);
+      return { source_kind: "screen", source_kwargs: { left: l, top: t, width: w, height: h } };
+    }
+    return { source_kind: "fake", source_kwargs: { frames: 300 } };
+  };
+
+  const runTest = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const cfg = await buildConfig();
+      const r = await api("/api/cameras/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source_kind: cfg.source_kind, source_kwargs: cfg.source_kwargs, timeout: 8 }),
+      });
+      setTestResult({ ...r, display: cfg.display });
+    } catch (e) {
+      setTestResult({ ok: false, error: e.message || String(e) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const runDiscover = async () => {
+    setDiscovering(true); setFound([]); setTestResult(null);
+    try {
+      const r = await api("/api/cameras/discover?timeout=4");
+      setFound(r.devices || []);
+      if (!r.available) setTestResult({ ok: false, error: r.error || "ONVIF discovery unavailable" });
+      else if (!(r.devices || []).length) setTestResult({ ok: false, error: "No ONVIF cameras answered on this LAN." });
+    } catch (e) {
+      setTestResult({ ok: false, error: e.message || String(e) });
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const submit = async () => {
     if (kind === "video") { videoRef.current?.click(); return; }
     const camera_id = id.trim() || `${kind}-${Date.now() % 10000}`;
-    const kwargs = kind === "webcam" ? { index: Number(index) || 0 }
-      : kind === "rtsp" ? { url: url.trim() }
-      : kind === "screen" ? (() => { const [l, t, w, h] = region.split(",").map((n) => Number(n) || 0); return { left: l, top: t, width: w, height: h }; })()
-      : { frames: 300 };
-    if (kind === "rtsp" && !url.trim()) return;
-    onAdd({ camera_id, source_kind: kind, source_kwargs: kwargs, required_ppe: ppe });
-    setId("");
+    try {
+      const cfg = await buildConfig();
+      onAdd({ camera_id, source_kind: cfg.source_kind, source_kwargs: cfg.source_kwargs, required_ppe: ppe });
+      setId(""); setTestResult(null);
+    } catch (e) {
+      setTestResult({ ok: false, error: e.message || String(e) });
+    }
   };
   const onVideo = (e) => {
     const f = e.target.files?.[0];
@@ -559,9 +644,19 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
   };
 
   const inp = { background: C.panel, border: `1px solid ${C.line}`, color: C.ink, borderRadius: 8, padding: "8px 10px", fontSize: 12.5 };
+  const lbl = { fontSize: 10.5, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 4, display: "block" };
+  const field = (label, node) => (<label style={{ display: "block" }}><span style={lbl}>{label}</span>{node}</label>);
+  const missingReq =
+    (kind === "ip" && !host.trim()) ||
+    (kind === "onvif" && !host.trim()) ||
+    (kind === "rtsp" && !url.trim());
+  const canTest = kind !== "video" && kind !== "fake" && !missingReq;
+
   const kinds = [
+    { id: "ip", label: "IP Camera", icon: "📡" },
+    { id: "onvif", label: "ONVIF", icon: "🔎" },
     { id: "webcam", label: "Webcam", icon: "📷" },
-    { id: "rtsp", label: "RTSP / CCTV", icon: "📡" },
+    { id: "rtsp", label: "RTSP URL", icon: "🔗" },
     { id: "video", label: "Upload video", icon: "🎬" },
     { id: "screen", label: "Screen", icon: "🖥" },
     { id: "fake", label: "Fake", icon: "🧪" },
@@ -578,7 +673,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
         }}
       >
         <span style={{ fontSize: 11, letterSpacing: 0.8, color: C.sub, fontWeight: 800, textTransform: "uppercase" }}>Add source</span>
-        <span style={{ color: C.sub, fontSize: 12.5 }}>webcam · RTSP · video demo · screen</span>
+        <span style={{ color: C.sub, fontSize: 12.5 }}>IP/CCTV by brand · ONVIF · webcam · RTSP · video · screen</span>
         <span style={{ flex: 1 }} />
         <span style={{
           background: C.brand, color: "#fff", borderRadius: 8, padding: "6px 12px",
@@ -595,7 +690,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
               <button
                 key={k.id}
                 type="button"
-                onClick={() => setKind(k.id)}
+                onClick={() => { setKind(k.id); setTestResult(null); }}
                 title={SOURCE_HELP[k.id]}
                 style={{
                   border: `1.5px solid ${kind === k.id ? C.brand : C.line}`,
@@ -610,6 +705,70 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
             ))}
           </div>
           <p style={{ margin: 0, fontSize: 12.5, color: C.sub }}>{SOURCE_HELP[kind]}</p>
+
+          {/* IP camera (brand) builder */}
+          {kind === "ip" ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+                {field("Brand", (
+                  <select value={brand} onChange={(e) => setBrand(e.target.value)} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+                    {(brands.length ? brands : [{ id: "hikvision", label: "Hikvision" }]).map((b) => (
+                      <option key={b.id} value={b.id}>{b.label}</option>
+                    ))}
+                  </select>
+                ))}
+                {field("IP / host", <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.64" style={{ ...inp, width: "100%", ...mono }} />)}
+                {field("Port", <input value={port} onChange={(e) => setPort(e.target.value)} placeholder={String(brandMeta?.default_port || 554)} style={{ ...inp, width: "100%" }} />)}
+                {field("Username", <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="admin" style={{ ...inp, width: "100%" }} />)}
+                {field("Password", <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••" style={{ ...inp, width: "100%" }} />)}
+                {field("Channel", <input value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="1" style={{ ...inp, width: "100%" }} />)}
+                {field("Stream", (
+                  <select value={stream} onChange={(e) => setStream(e.target.value)} style={{ ...inp, width: "100%", cursor: "pointer" }}>
+                    <option value="main">Main (high-res)</option>
+                    <option value="sub">Sub (lighter)</option>
+                  </select>
+                ))}
+                {field("Transport", (
+                  <select value={transport} onChange={(e) => setTransport(e.target.value)} title="TCP is steadier on WiFi/eSIM" style={{ ...inp, width: "100%", cursor: "pointer" }}>
+                    <option value="tcp">TCP (reliable)</option>
+                    <option value="udp">UDP (low-latency)</option>
+                    <option value="">Auto</option>
+                  </select>
+                ))}
+              </div>
+              {brand === "generic" ? field("RTSP path", <input value={path} onChange={(e) => setPath(e.target.value)} placeholder="/live/ch01_0" style={{ ...inp, width: "100%", ...mono }} />) : null}
+              {brandMeta?.note ? <div style={{ fontSize: 11, color: "#8595a5" }}>{brandMeta.note}</div> : null}
+            </div>
+          ) : null}
+
+          {/* ONVIF */}
+          {kind === "onvif" ? (
+            <div style={{ display: "grid", gap: 10 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+                {field("IP / host", <input value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.64" style={{ ...inp, width: "100%", ...mono }} />)}
+                {field("ONVIF port", <input value={port} onChange={(e) => setPort(e.target.value)} placeholder="80" style={{ ...inp, width: "100%" }} />)}
+                {field("Username", <input value={user} onChange={(e) => setUser(e.target.value)} placeholder="admin" style={{ ...inp, width: "100%" }} />)}
+                {field("Password", <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••" style={{ ...inp, width: "100%" }} />)}
+              </div>
+              <div>
+                <button type="button" onClick={runDiscover} disabled={discovering}
+                  style={{ border: `1px solid ${C.line}`, background: C.panel2, color: C.ink, borderRadius: 8, padding: "8px 14px", fontSize: 12.5, fontWeight: 700, cursor: discovering ? "wait" : "pointer" }}>
+                  {discovering ? "Scanning LAN…" : "🔎 Discover cameras on LAN"}
+                </button>
+              </div>
+              {found.length ? (
+                <div style={{ display: "grid", gap: 4 }}>
+                  {found.map((d, i) => (
+                    <button key={i} type="button" onClick={() => setHost(d.host || "")}
+                      style={{ textAlign: "left", border: `1px solid ${C.line}`, background: C.panel, borderRadius: 8, padding: "6px 10px", fontSize: 12, cursor: "pointer", ...mono }}>
+                      {d.host || "(unknown host)"} <span style={{ color: C.sub }}>{(d.xaddrs || [])[0] || ""}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <div>
             <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
               Required PPE on this camera
@@ -621,6 +780,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
               note="* = not in stock Snehil/VoxDroid weights — needs fine-tuned model. Live HUD shows Found / Not found chips like industrial demos."
             />
           </div>
+
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
             <input
               placeholder={kind === "video" ? "camera id (default: demo)" : "camera id (optional)"}
@@ -629,12 +789,19 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
               style={{ ...inp, width: 180 }}
             />
             {kind === "rtsp" ? (
-              <input
-                placeholder="rtsp://user:pass@ip:554/…"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                style={{ ...inp, flex: 1, minWidth: 240, ...mono }}
-              />
+              <>
+                <input
+                  placeholder="rtsp://user:pass@ip:554/…"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  style={{ ...inp, flex: 1, minWidth: 240, ...mono }}
+                />
+                <select value={transport} onChange={(e) => setTransport(e.target.value)} title="RTSP transport" style={{ ...inp, cursor: "pointer" }}>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                  <option value="">Auto</option>
+                </select>
+              </>
             ) : null}
             {kind === "webcam" ? (
               <label style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}>
@@ -662,24 +829,51 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
                 </label>
               </>
             ) : null}
+            {canTest ? (
+              <button
+                type="button"
+                onClick={runTest}
+                disabled={testing}
+                title="Open the source and grab one frame to confirm it works"
+                style={{ border: `1px solid ${C.line}`, background: C.panel, color: C.brand, borderRadius: 9, padding: "9px 16px", fontSize: 12.5, fontWeight: 800, cursor: testing ? "wait" : "pointer" }}
+              >
+                {testing ? "Testing…" : "🔌 Test connection"}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={submit}
-              disabled={kind === "rtsp" && !url.trim()}
+              disabled={missingReq}
               style={{
                 border: "none",
-                background: kind === "rtsp" && !url.trim() ? "#9bb6e8" : C.brand,
+                background: missingReq ? "#9bb6e8" : C.brand,
                 color: "#fff",
                 borderRadius: 9,
                 padding: "9px 18px",
                 fontSize: 12.5,
                 fontWeight: 800,
-                cursor: kind === "rtsp" && !url.trim() ? "not-allowed" : "pointer",
+                cursor: missingReq ? "not-allowed" : "pointer",
               }}
             >
               {kind === "video" ? "Choose & run" : "Add & start"}
             </button>
           </div>
+
+          {testResult ? (
+            <div style={{
+              fontSize: 12.5, borderRadius: 9, padding: "9px 12px",
+              background: testResult.ok ? C.okSoft : C.dangerSoft,
+              color: testResult.ok ? C.ok : C.danger,
+              border: `1px solid ${testResult.ok ? "#b8e6d0" : "#f5c2c8"}`,
+            }}>
+              {testResult.ok ? (
+                <span>✓ Connected — {testResult.width}×{testResult.height}, first frame in {testResult.latency_ms} ms.{testResult.display ? <span style={{ ...mono, color: C.sub }}> {testResult.display}</span> : null}</span>
+              ) : (
+                <span>✕ {testResult.error || "Could not connect"}</span>
+              )}
+            </div>
+          ) : null}
+
           <input ref={videoRef} type="file" accept="video/*" onChange={onVideo} style={{ display: "none" }} />
         </div>
       ) : null}

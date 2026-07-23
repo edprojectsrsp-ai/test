@@ -60,6 +60,75 @@ async def ppe_catalog() -> dict:
     }
 
 
+@router.get("/meta/brands")
+async def camera_brands() -> dict:
+    """CCTV brand list + RTSP defaults for the comprehensive connect UI."""
+    from app.services.camera_connect import brand_catalog
+    return {
+        "brands": brand_catalog(),
+        "source_kinds": ["rtsp", "onvif", "webcam", "screen", "video", "fake"],
+        "streams": [
+            {"id": "main", "label": "Main (high-res)"},
+            {"id": "sub", "label": "Sub (low-res, lighter on CPU)"},
+        ],
+    }
+
+
+class RtspUrlIn(BaseModel):
+    brand: str = "generic"
+    host: str
+    username: str = ""
+    password: str = ""
+    port: int | None = None
+    channel: int = 1
+    stream: str = "main"          # main | sub
+    path: str = ""                # only for brand=generic
+
+
+@router.post("/rtsp-url")
+async def rtsp_url(payload: RtspUrlIn) -> dict:
+    """Compose the correct RTSP URL for a brand from host/credentials/channel."""
+    from app.services.camera_connect import build_rtsp_url
+    try:
+        return build_rtsp_url(
+            brand=payload.brand, host=payload.host,
+            username=payload.username, password=payload.password,
+            port=payload.port, channel=payload.channel,
+            stream=payload.stream, path=payload.path,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+class ProbeIn(BaseModel):
+    source_kind: str = Field(..., pattern=r"^(rtsp|webcam|screen|video|onvif|fake)$")
+    source_kwargs: dict = Field(default_factory=dict)
+    timeout: float = 8.0
+
+
+@router.post("/test")
+async def test_source(payload: ProbeIn) -> dict:
+    """Open a source, grab one frame, report resolution + latency (test-before-add)."""
+    import anyio
+
+    from app.services.camera_connect import probe_source
+    timeout = max(1.0, min(20.0, float(payload.timeout or 8.0)))
+    # run the blocking probe off the event loop so the API stays responsive
+    return await anyio.to_thread.run_sync(
+        lambda: probe_source(payload.source_kind, payload.source_kwargs, timeout=timeout)
+    )
+
+
+@router.get("/discover")
+async def discover(timeout: float = 4.0) -> dict:
+    """WS-Discovery sweep for ONVIF cameras on the LAN."""
+    import anyio
+
+    from app.services.camera_connect import discover_onvif
+    t = max(1.0, min(10.0, float(timeout or 4.0)))
+    return await anyio.to_thread.run_sync(lambda: discover_onvif(timeout=t))
+
+
 @router.post("")
 async def add_camera(payload: CameraIn) -> dict:
     cfg = CameraConfig(
