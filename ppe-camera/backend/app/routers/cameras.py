@@ -43,6 +43,17 @@ def _manager():
     return get_manager()
 
 
+@router.get("/sources")
+async def list_source_kinds() -> dict:
+    """Every camera type the system can ingest, with the fields each needs.
+
+    Returned to the frontend so the add-camera form builds itself and stays in
+    step with the backend instead of hardcoding a stale list.
+    """
+    from app.services.sources import SOURCE_KINDS
+    return {"kinds": SOURCE_KINDS}
+
+
 @router.get("/meta/ppe-catalog")
 async def ppe_catalog() -> dict:
     """Full PPE dataset catalog for the config UI (register before /{id})."""

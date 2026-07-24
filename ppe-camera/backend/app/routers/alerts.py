@@ -31,6 +31,15 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
 class AlertConfigPatch(BaseModel):
+    key_mode: str | None = None
+    person_cooldown_s: int | None = None
+    escalate_after_s: int | None = None
+    max_escalations: int | None = None
+    incident_reset_s: int | None = None
+    max_per_minute: int | None = None
+    digest_window_s: int | None = None
+    quiet_from: int | None = None
+    quiet_to: int | None = None
     telegram_enabled: bool | None = None
     telegram_bot_token: str | None = None
     telegram_chat_ids: str | None = None
@@ -87,9 +96,36 @@ async def put_config(patch: AlertConfigPatch) -> dict:
     if "telegram_bot_token" in body:
         body["telegram_bot_token"] = body["telegram_bot_token"].strip()
     saved = alert_config.update(body)
+    # policy is live-read on the next alert, but refresh eagerly so the
+    # response reflects what will actually be enforced
+    from app.services.alert_policy import refresh_policy
+    refresh_policy()
     saved["telegram_ready"] = alert_config.telegram_ready()
     saved["chat_count"] = len(alert_config.chat_ids())
     return saved
+
+
+@router.get("/incidents")
+async def list_incidents() -> dict:
+    """Live incident state — what is currently suppressed and why."""
+    from app.services.alert_policy import get_policy_engine
+    engine = get_policy_engine()
+    return {
+        "stats": engine.stats(),
+        "incidents": [{
+            "key": i.key, "camera": i.camera_id, "gear": i.gear,
+            "person": i.person, "observations": i.count, "alerts": i.alerts,
+            "escalations": i.escalations,
+            "first_at": i.first_at, "last_seen_at": i.last_seen_at,
+        } for i in engine.active_incidents()],
+    }
+
+
+@router.post("/incidents/reset")
+async def reset_incidents(camera_id: str | None = None) -> dict:
+    from app.services.alert_policy import get_policy_engine
+    get_policy_engine().reset(camera_id)
+    return {"reset": camera_id or "all"}
 
 
 @router.get("/telegram/verify")

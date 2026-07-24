@@ -156,9 +156,13 @@ class CameraWorker:
                 self.config.camera_id,
                 getattr(fired, "gear", "ppe"),
                 snapshot_path=snapshot_path,
+                person=getattr(fired, "identity", None) or None,
                 meta={"mode": mode,
                       "rule_type": getattr(fired, "rule_type", "ppe"),
-                      "track_id": getattr(fired, "track_id", None)},
+                      "track_id": getattr(fired, "track_id", None),
+                      "identity": getattr(fired, "identity", None),
+                      "evidence_frames": getattr(fired, "evidence_frames", 0),
+                      "confidence": getattr(fired, "confidence", None)},
             )
             if decision.get("sent"):
                 self.stats.alerts_sent += 1

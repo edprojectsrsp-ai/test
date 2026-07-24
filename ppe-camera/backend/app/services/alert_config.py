@@ -35,6 +35,19 @@ _SPEC: dict[str, tuple[str | None, Any]] = {
     "telegram_send_photo": ("PPE_TELEGRAM_SEND_PHOTO", True),
     "webhook_url":        ("PPE_ALERT_WEBHOOK", ""),
     "cooldown_s":         ("PPE_ALERT_COOLDOWN", 60),
+    # --- alert policy (per-person deduplication) ---------------------------
+    # key_mode "person" dedupes per worker; "camera_gear" reproduces the old
+    # zone-level behaviour and suits scene hazards like fire, where which
+    # person triggered it is irrelevant.
+    "key_mode":            (None, "person"),
+    "person_cooldown_s":   ("PPE_PERSON_COOLDOWN", 0),      # 0 = use cooldown_s
+    "escalate_after_s":    ("PPE_ESCALATE_AFTER", 900),
+    "max_escalations":     (None, 3),
+    "incident_reset_s":    ("PPE_INCIDENT_RESET", 1800),
+    "max_per_minute":      ("PPE_MAX_ALERTS_PER_MIN", 12),
+    "digest_window_s":     ("PPE_DIGEST_WINDOW", 300),
+    "quiet_from":          (None, -1),                       # -1 = disabled
+    "quiet_to":            (None, -1),
     # which violation types to notify on; empty list == all
     "telegram_gear_filter": (None, []),
 }

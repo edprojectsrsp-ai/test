@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import abc
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 class FrameSource(abc.ABC):
@@ -327,6 +327,155 @@ class ONVIFSource(FrameSource):
             self._inner = None
 
 
+
+@dataclass
+class MJPEGSource(FrameSource):
+    """HTTP MJPEG stream — the fallback almost every IP camera exposes.
+
+    Cheap Chinese and older Axis/Hikvision units often serve MJPEG on an HTTP
+    path even when RTSP is locked down or on a nonstandard port, so this is
+    frequently the only way in without vendor credentials. Parsed directly
+    from the multipart stream rather than through OpenCV, which handles
+    boundary quirks poorly on some firmware.
+    """
+    url: str
+    username: str = ""
+    password: str = ""
+    timeout: float = 10.0
+    _resp: object | None = None
+    _buf: bytes = b""
+
+    def open(self) -> None:
+        import urllib.request
+
+        req = urllib.request.Request(self.url)
+        if self.username:
+            import base64
+            token = base64.b64encode(
+                f"{self.username}:{self.password}".encode()).decode()
+            req.add_header("Authorization", f"Basic {token}")
+        self._resp = urllib.request.urlopen(req, timeout=self.timeout)
+        self._buf = b""
+
+    def read(self):
+        import numpy as np
+        import cv2
+
+        if self._resp is None:
+            return None
+        # Accumulate until a complete JPEG (SOI..EOI) is in the buffer.
+        for _ in range(2048):
+            start = self._buf.find(b"\xff\xd8")
+            end = self._buf.find(b"\xff\xd9", start + 2) if start != -1 else -1
+            if start != -1 and end != -1:
+                jpg = self._buf[start:end + 2]
+                self._buf = self._buf[end + 2:]
+                frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8),
+                                     cv2.IMREAD_COLOR)
+                if frame is not None:
+                    return frame
+                continue
+            chunk = self._resp.read(4096)  # type: ignore[attr-defined]
+            if not chunk:
+                return None
+            self._buf += chunk
+        return None
+
+    def close(self) -> None:
+        if self._resp is not None:
+            try:
+                self._resp.close()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            self._resp = None
+        self._buf = b""
+
+
+@dataclass
+class HTTPSnapshotSource(FrameSource):
+    """Polls a still-image URL (…/snapshot.jpg, …/cgi-bin/currentpic.cgi).
+
+    Every IP camera ever made serves one of these. It is the lowest common
+    denominator: no streaming protocol, no codec negotiation, works through
+    HTTP proxies and locked-down site firewalls that block RTSP outright.
+    Frame rate is limited by poll_interval rather than the camera.
+    """
+    url: str
+    username: str = ""
+    password: str = ""
+    poll_interval: float = 1.0
+    timeout: float = 8.0
+    _last_poll: float = 0.0
+
+    def open(self) -> None:
+        self._last_poll = 0.0
+
+    def read(self):
+        import time as _t
+        import urllib.request
+
+        import numpy as np
+        import cv2
+
+        wait = self.poll_interval - (_t.time() - self._last_poll)
+        if wait > 0:
+            _t.sleep(wait)
+        self._last_poll = _t.time()
+
+        req = urllib.request.Request(self.url)
+        if self.username:
+            import base64
+            token = base64.b64encode(
+                f"{self.username}:{self.password}".encode()).decode()
+            req.add_header("Authorization", f"Basic {token}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+                data = r.read()
+        except Exception:
+            return None
+        return cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+    def close(self) -> None:
+        pass
+
+
+@dataclass
+class ImageFolderSource(FrameSource):
+    """Reads images from a directory, newest last.
+
+    Two real uses: replaying a day of captured evidence through a changed model
+    to compare detection counts, and ingesting from drone or handheld cameras
+    that drop stills onto a share rather than streaming.
+    """
+    path: str
+    loop: bool = False
+    pattern: str = "*.jpg"
+    _files: list = field(default_factory=list)
+    _idx: int = 0
+
+    def open(self) -> None:
+        import glob
+        import os
+
+        self._files = sorted(glob.glob(os.path.join(self.path, self.pattern)))
+        self._idx = 0
+
+    def read(self):
+        import cv2
+
+        if self._idx >= len(self._files):
+            if not self.loop or not self._files:
+                return None
+            self._idx = 0
+        path = self._files[self._idx]
+        self._idx += 1
+        return cv2.imread(path)
+
+    def close(self) -> None:
+        self._files = []
+        self._idx = 0
+
+
 def build_source(kind: str, **kwargs) -> FrameSource:
     """Factory used by the camera manager to instantiate from config."""
     kind = kind.lower()
@@ -348,7 +497,54 @@ def build_source(kind: str, **kwargs) -> FrameSource:
             username=kwargs.get("username", ""), password=kwargs.get("password", ""),
             rtsp_url=kwargs.get("rtsp_url", ""),
         )
+    if kind in ("mjpeg", "http-mjpeg"):
+        return MJPEGSource(url=kwargs["url"], username=kwargs.get("username", ""),
+                           password=kwargs.get("password", ""),
+                           timeout=float(kwargs.get("timeout", 10.0)))
+    if kind in ("snapshot", "http", "http-snapshot"):
+        return HTTPSnapshotSource(
+            url=kwargs["url"], username=kwargs.get("username", ""),
+            password=kwargs.get("password", ""),
+            poll_interval=float(kwargs.get("poll_interval", 1.0)),
+            timeout=float(kwargs.get("timeout", 8.0)))
+    if kind in ("folder", "images"):
+        return ImageFolderSource(path=kwargs["path"], loop=kwargs.get("loop", False),
+                                 pattern=kwargs.get("pattern", "*.jpg"))
+    if kind in ("hls", "rtmp", "http-stream", "youtube"):
+        # CamGear's FFmpeg backend already handles these; RTSPSource is just a
+        # thin wrapper over it, so the same class serves them.
+        return RTSPSource(url=kwargs["url"], transport=kwargs.get("transport", ""))
     if kind == "fake":
         # API-created demo cameras should live long enough for cold model warmup.
         return FakeSource(frames=kwargs.get("frames", 300))
-    raise ValueError(f"unknown source kind '{kind}'")
+    raise ValueError(
+        f"unknown source kind '{kind}'. Supported: " + ", ".join(SOURCE_KINDS))
+
+
+# Advertised to the frontend so the camera form can build itself, and so an
+# operator can see what the system supports without reading the code.
+SOURCE_KINDS: dict[str, dict] = {
+    "rtsp": {"label": "RTSP stream", "fields": ["url", "transport"],
+             "hint": "rtsp://user:pass@host:554/Streaming/Channels/101"},
+    "onvif": {"label": "ONVIF (auto-discover)",
+              "fields": ["host", "port", "username", "password"],
+              "hint": "Finds the RTSP URL automatically. Most modern IP cameras."},
+    "mjpeg": {"label": "HTTP MJPEG", "fields": ["url", "username", "password"],
+              "hint": "http://host/video.cgi — works when RTSP is blocked"},
+    "snapshot": {"label": "HTTP snapshot (polling)",
+                 "fields": ["url", "username", "password", "poll_interval"],
+                 "hint": "http://host/snapshot.jpg — lowest common denominator"},
+    "hls": {"label": "HLS / RTMP / HTTP stream", "fields": ["url"],
+            "hint": "https://host/stream.m3u8 — NVR and cloud re-streams"},
+    "webcam": {"label": "USB / built-in camera", "fields": ["index"],
+               "hint": "Device index, usually 0"},
+    "video": {"label": "Video file", "fields": ["path", "loop", "speed"],
+              "hint": "Replay recorded footage"},
+    "folder": {"label": "Image folder", "fields": ["path", "pattern", "loop"],
+               "hint": "Drone or handheld stills dropped on a share"},
+    "screen": {"label": "Screen capture",
+               "fields": ["top", "left", "width", "height"],
+               "hint": "For NVR software with no stream export"},
+    "fake": {"label": "Test pattern", "fields": ["frames"],
+             "hint": "Synthetic frames for pipeline testing"},
+}

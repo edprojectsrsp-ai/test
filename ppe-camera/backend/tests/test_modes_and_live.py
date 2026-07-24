@@ -101,13 +101,20 @@ annotated = live_view.draw_overlay(img, frame_result(dets=[uncertain_det(0)]), '
 assert annotated.shape == img.shape
 print('live view: publish->jpeg + overlay draw  OK')
 
-# ---- 3) alert cooldown ------------------------------------------------------
+# ---- 3) alert dedup ---------------------------------------------------------
+# Deduplication is now per person rather than per (camera, gear): the same
+# worker stays quiet, but a second worker must still get through.
 from app.services.alert_service import AlertService
+from app.services.alert_policy import get_policy_engine
 al = AlertService(start_worker=False)
+get_policy_engine().reset()
 t0 = 5000.0
-assert al.fire('gate', 'helmet', now=t0)['sent']
-r = al.fire('gate', 'helmet', now=t0 + 10)
-assert r['suppressed'] and abs(r['remaining_s'] - 50) < 1
+assert al.fire('gate', 'helmet', now=t0, person='t1')['sent']
+r = al.fire('gate', 'helmet', now=t0 + 10, person='t1')
+assert r['suppressed'] and r['remaining_s'] > 0
+assert al.fire('gate', 'helmet', now=t0 + 10, person='t2')['sent'], \
+    'a different person must not be suppressed by the first one'
+get_policy_engine().reset()
 assert al.fire('gate', 'vest', now=t0 + 10)['sent']
 assert al.fire('gate', 'helmet', now=t0 + 61)['sent']
 print('alerts: cooldown suppress / per-gear / expiry  OK')

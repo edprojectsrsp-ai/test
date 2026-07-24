@@ -49,21 +49,37 @@ class AlertService:
 
     # ---- public ------------------------------------------------------------
     def fire(self, camera_id: str, gear: str, snapshot_path: str | None = None,
-             meta: dict | None = None, now: float | None = None) -> dict:
+             meta: dict | None = None, now: float | None = None,
+             person: str | None = None) -> dict:
+        """Queue an alert if policy allows.
+
+        Deduplication is per *person*, not per (camera, gear). The old key
+        meant ten bare-headed workers on one camera produced a single alert
+        and nine genuine violations were dropped, while one worker walking in
+        and out of frame could re-alert indefinitely.
+        """
         now = time.time() if now is None else now
-        key = (camera_id, gear)
-        elapsed = now - self._last.get(key, 0.0)
-        if elapsed < self.cooldown_s:
-            return {"sent": False, "suppressed": True,
-                    "remaining_s": round(self.cooldown_s - elapsed, 1)}
-        self._last[key] = now
+        meta = dict(meta or {})
+        person = person or meta.get("identity") or (
+            f"t{meta['track_id']}" if meta.get("track_id") is not None else None)
+
+        from app.services.alert_policy import get_policy_engine
+        decision = get_policy_engine().evaluate(camera_id, gear, person, now=now)
+        self._maybe_send_digest(now)
+        if not decision.send:
+            return decision.as_dict()
+
+        meta.update({"incident": decision.incident_key,
+                     "occurrence": decision.occurrence,
+                     "escalation": decision.escalation_level})
+        prefix = "ESCALATION — " if decision.kind == "escalation" else ""
         payload = {
             "event": "ppe_violation",
             "camera": camera_id,
-            "violation": f"NO_{gear}" if not gear.startswith("NO_") else gear,
+            "violation": prefix + (f"NO_{gear}" if not gear.startswith("NO_") else gear),
             "snapshot": snapshot_path,
             "at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
-            "meta": meta or {},
+            "meta": meta,
         }
         try:
             self._q.put_nowait(payload)
@@ -73,7 +89,36 @@ class AlertService:
                 self._q.put_nowait(payload)
             except queue.Empty:
                 pass
-        return {"sent": True, "suppressed": False, "remaining_s": 0.0}
+        return decision.as_dict()
+
+    def _maybe_send_digest(self, now: float) -> None:
+        """Flush the suppressed-alert digest when its window closes.
+
+        Without this, everything the rate limiter held back would vanish and a
+        chaotic shift would look quieter than a calm one.
+        """
+        from app.services.alert_policy import get_policy_engine
+        engine = get_policy_engine()
+        if not engine.digest_due(now):
+            return
+        d = engine.take_digest(now)
+        if not d:
+            return
+        lines = [f"\u2022 {cam}: " + ", ".join(f"{g} \u00d7{n}" for g, n in gears.items())
+                 for cam, gears in d["by_camera"].items()]
+        payload = {
+            "event": "ppe_digest",
+            "camera": "(digest)",
+            "violation": (f"{d['suppressed_count']} further violations suppressed "
+                          f"({d['distinct_people']} people) {d['from']}\u2013{d['to']}"),
+            "snapshot": None,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+            "meta": {"digest": True, "detail": "\n".join(lines)},
+        }
+        try:
+            self._q.put_nowait(payload)
+        except queue.Full:
+            pass
 
     def reset(self, camera_id: str | None = None) -> None:
         if camera_id is None:
@@ -109,8 +154,19 @@ class AlertService:
                 lines.append(f"Confidence: {float(meta['confidence']):.0%}")
             except (TypeError, ValueError):
                 pass
-        if meta.get("track_id") is not None:
+        if meta.get("identity"):
+            lines.append(f"Person: {meta['identity']}")
+        elif meta.get("track_id") is not None:
             lines.append(f"Track: {meta['track_id']}")
+        if meta.get("evidence_frames"):
+            lines.append(f"Evidence: {meta['evidence_frames']} frames")
+        if meta.get("occurrence", 0) > 1:
+            lines.append(f"Occurrence: {meta['occurrence']} in this incident")
+        if meta.get("escalation"):
+            lines.append(f"Escalation level {meta['escalation']} \u2014 not yet corrected")
+        if meta.get("detail"):
+            lines.append("")
+            lines.append(str(meta["detail"]))
         return "\n".join(lines)
 
     def _telegram(self, payload: dict) -> None:

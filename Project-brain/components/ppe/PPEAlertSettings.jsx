@@ -83,6 +83,16 @@ export default function PPEAlertSettings() {
   const [sendPhoto, setSendPhoto] = useState(true);
   const [cooldown, setCooldown] = useState(60);
   const [gearFilter, setGearFilter] = useState([]);
+  // Alert policy — this is what stops the channel filling with duplicates.
+  const [keyMode, setKeyMode] = useState("person");
+  const [personCooldown, setPersonCooldown] = useState(300);
+  const [escalateAfter, setEscalateAfter] = useState(900);
+  const [incidentReset, setIncidentReset] = useState(1800);
+  const [maxPerMin, setMaxPerMin] = useState(12);
+  const [digestWindow, setDigestWindow] = useState(300);
+  const [quietFrom, setQuietFrom] = useState(-1);
+  const [quietTo, setQuietTo] = useState(-1);
+  const [incidents, setIncidents] = useState(null);
   const [discovered, setDiscovered] = useState([]);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState(null);
@@ -101,6 +111,14 @@ export default function PPEAlertSettings() {
       setChatIds(typeof c.telegram_chat_ids === "string" ? c.telegram_chat_ids : "");
       setCooldown(Number(c.cooldown_s) || 60);
       setGearFilter(Array.isArray(c.telegram_gear_filter) ? c.telegram_gear_filter : []);
+      setKeyMode(c.key_mode || "person");
+      setPersonCooldown(Number(c.person_cooldown_s) || 0);
+      setEscalateAfter(Number(c.escalate_after_s) || 900);
+      setIncidentReset(Number(c.incident_reset_s) || 1800);
+      setMaxPerMin(Number(c.max_per_minute) ?? 12);
+      setDigestWindow(Number(c.digest_window_s) ?? 300);
+      setQuietFrom(Number(c.quiet_from) ?? -1);
+      setQuietTo(Number(c.quiet_to) ?? -1);
     } catch (e) {
       flash("danger", `Could not load settings: ${e.message}`);
     }
@@ -117,6 +135,14 @@ export default function PPEAlertSettings() {
         telegram_send_photo: sendPhoto,
         telegram_gear_filter: gearFilter,
         cooldown_s: Number(cooldown) || 60,
+        key_mode: keyMode,
+        person_cooldown_s: Number(personCooldown) || 0,
+        escalate_after_s: Number(escalateAfter) || 900,
+        incident_reset_s: Number(incidentReset) || 1800,
+        max_per_minute: Number(maxPerMin) || 0,
+        digest_window_s: Number(digestWindow) || 0,
+        quiet_from: Number(quietFrom),
+        quiet_to: Number(quietTo),
       };
       if (token.trim()) body.telegram_bot_token = token.trim();
       const saved = await api("/api/alerts/config", {
@@ -173,6 +199,19 @@ export default function PPEAlertSettings() {
     } catch (e) {
       flash("danger", e.message);
     } finally { setBusy(""); }
+  };
+
+  const loadIncidents = async () => {
+    try { setIncidents(await api("/api/alerts/incidents")); }
+    catch (e) { flash("danger", e.message); }
+  };
+
+  const resetIncidents = async () => {
+    try {
+      await api("/api/alerts/incidents/reset", { method: "POST" });
+      flash("ok", "Incident state cleared — the next violation alerts fresh.");
+      loadIncidents();
+    } catch (e) { flash("danger", e.message); }
   };
 
   const toggleGear = (g) => {
@@ -317,6 +356,115 @@ export default function PPEAlertSettings() {
             {busy === "test" ? "Sending…" : "Send test alert"}
           </Btn>
         </div>
+      </Section>
+
+      <Section
+        title="Duplicate suppression"
+        hint="A channel that floods gets muted, and a muted channel alerts nobody. These rules decide what counts as the same incident."
+      >
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 6 }}>
+            Treat as the same incident when…
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+            {[
+              ["person", "Same person + gear", "Correct for PPE. Ten bare-headed workers = ten alerts."],
+              ["camera_gear", "Same camera + gear", "For scene hazards like fire, where who triggered it does not matter."],
+              ["camera", "Same camera", "One alert per camera. Very quiet; use only for low-traffic zones."],
+            ].map(([val, label, hint]) => (
+              <button key={val} onClick={() => setKeyMode(val)} title={hint}
+                style={{
+                  padding: "7px 13px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+                  cursor: "pointer", textAlign: "left",
+                  background: keyMode === val ? "#eef4fb" : C.panel2,
+                  color: keyMode === val ? "#1c4f82" : C.sub,
+                  border: `1px solid ${keyMode === val ? "#9dc0e4" : C.line}`,
+                }}>{label}</button>
+            ))}
+          </div>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 6 }}>
+            {keyMode === "person"
+              ? "Each worker is tracked separately, so a second violator is never hidden behind the first."
+              : keyMode === "camera_gear"
+                ? "All people on a camera share one alert per gear type."
+                : "Everything on a camera collapses into one alert."}
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(210px,1fr))", gap: 12 }}>
+          {[
+            ["Quiet period (s)", personCooldown, setPersonCooldown,
+             "Minimum gap between alerts for the same person, including if they leave and re-enter frame. 0 uses the cooldown above."],
+            ["Escalate after (s)", escalateAfter, setEscalateAfter,
+             "Still violating this long after the first alert? Re-alert as an escalation — uncorrected is worse than new."],
+            ["Incident closes after (s)", incidentReset, setIncidentReset,
+             "Not seen violating for this long ends the incident. The next violation starts fresh."],
+            ["Max alerts / minute", maxPerMin, setMaxPerMin,
+             "Burst cap across all cameras. Anything above this rolls into the digest. 0 disables."],
+            ["Digest window (s)", digestWindow, setDigestWindow,
+             "Suppressed alerts are summarised and sent at this interval. 0 discards them."],
+          ].map(([label, val, setter, hint]) => (
+            <label key={label} style={{ display: "block" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>{label}</div>
+              <input type="number" min={0} value={val}
+                onChange={(e) => setter(e.target.value)}
+                style={{ ...inputStyle, ...mono }} />
+              <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4, lineHeight: 1.4 }}>{hint}</div>
+            </label>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.sub }}>Quiet hours</span>
+          <input type="number" min={-1} max={23} value={quietFrom}
+            onChange={(e) => setQuietFrom(e.target.value)}
+            style={{ ...inputStyle, ...mono, width: 80 }} />
+          <span style={{ fontSize: 12, color: C.sub }}>to</span>
+          <input type="number" min={-1} max={23} value={quietTo}
+            onChange={(e) => setQuietTo(e.target.value)}
+            style={{ ...inputStyle, ...mono, width: 80 }} />
+          <span style={{ fontSize: 11, color: C.sub }}>
+            −1 disables. Escalations still go out during quiet hours.
+          </span>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <Btn tone="primary" onClick={save} disabled={busy === "save"}>
+            {busy === "save" ? "Saving…" : "Save policy"}
+          </Btn>
+          <Btn onClick={loadIncidents}>View live incidents</Btn>
+          {incidents && <Btn onClick={resetIncidents}>Clear incident state</Btn>}
+        </div>
+
+        {incidents && (
+          <div style={{ marginTop: 14, borderTop: `1px solid ${C.line}`, paddingTop: 12 }}>
+            <div style={{ fontSize: 12, color: C.sub, marginBottom: 8 }}>
+              {incidents.stats.active_incidents} active ·{" "}
+              {incidents.stats.sent_last_minute} sent in the last minute ·{" "}
+              {incidents.stats.pending_digest} awaiting digest
+            </div>
+            {incidents.incidents.length === 0 ? (
+              <div style={{ fontSize: 12, color: C.sub }}>No incidents currently open.</div>
+            ) : (
+              <div style={{ maxHeight: 220, overflowY: "auto" }}>
+                {incidents.incidents.map((i) => (
+                  <div key={i.key} style={{
+                    display: "flex", gap: 10, alignItems: "baseline", padding: "5px 0",
+                    borderBottom: `1px solid ${C.line}`, fontSize: 12,
+                  }}>
+                    <span style={{ ...mono, fontWeight: 700 }}>{i.camera}</span>
+                    <span style={{ color: "#c02b3c", fontWeight: 700 }}>{i.gear}</span>
+                    <span style={{ ...mono, color: C.sub }}>{i.person}</span>
+                    <span style={{ marginLeft: "auto", ...mono, color: C.sub }}>
+                      {i.observations} seen · {i.alerts} sent
+                      {i.escalations > 0 && ` · esc ${i.escalations}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Section>
     </div>
   );
