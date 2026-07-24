@@ -321,23 +321,23 @@ async def save_baseline(project_id: str, name: str,
 async def list_baselines(project_id: str, s: AsyncSession = Depends(get_session)):
     """Every baseline captured for the project, newest first."""
     rows = (await s.execute(sql_text("""
-        SELECT b.id, b.name, b.project_finish, b.created_at,
+        SELECT b.id, b.name, b.project_finish, b.captured_at,
                (SELECT COUNT(*) FROM baseline_activities ba
                  WHERE ba.baseline_id = b.id) AS activity_count
         FROM baselines b WHERE b.project_id = :pid
-        ORDER BY b.created_at DESC, b.id DESC
-    """), {"pid": int(project_id)})).mappings().all()
+        ORDER BY b.captured_at DESC, b.id DESC
+    """), {"pid": project_id})).mappings().all()
     return [{
         "baseline_id": r["id"], "name": r["name"],
         "project_finish": r["project_finish"].isoformat() if r["project_finish"] else None,
-        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "captured_at": r["captured_at"].isoformat() if r["captured_at"] else None,
         "activity_count": r["activity_count"],
     } for r in rows]
 
 
 @router.delete("/baselines/{baseline_id}")
 async def delete_baseline(baseline_id: str, s: AsyncSession = Depends(get_session)):
-    bid = int(baseline_id)
+    bid = baseline_id
     await s.execute(sql_text("DELETE FROM baseline_activities WHERE baseline_id=:b"),
                     {"b": bid})
     await s.execute(sql_text("DELETE FROM baselines WHERE id=:b"), {"b": bid})
@@ -358,18 +358,17 @@ async def compare_multiple_baselines(
     see that work has slipped against the original while still holding the
     rebaseline the client approved.
     """
-    pid = int(project_id)
-    try:
-        ids = [int(x) for x in baseline_ids.split(",") if x.strip()]
-    except ValueError:
-        raise HTTPException(400, "baseline_ids must be comma-separated integers")
+    # Ids are passed through as given rather than coerced: the schema uses UUID
+    # primary keys, so int() would raise on every real id.
+    pid = project_id
+    ids = [x.strip() for x in baseline_ids.split(",") if x.strip()]
     if not ids:
         raise HTTPException(400, "No baseline_ids supplied")
     if len(ids) > 6:
         raise HTTPException(400, "At most 6 baselines can be compared at once")
 
     bl_meta = (await s.execute(sql_text("""
-        SELECT id, name, project_finish, created_at FROM baselines
+        SELECT id, name, project_finish, captured_at FROM baselines
         WHERE project_id = :pid AND id = ANY(:ids)
     """), {"pid": pid, "ids": ids})).mappings().all()
     if not bl_meta:
@@ -401,7 +400,7 @@ async def compare_multiple_baselines(
         baselines=[BaselineRef(
             baseline_id=b["id"], name=b["name"],
             project_finish=b["project_finish"],
-            captured_at=b["created_at"].date() if b["created_at"] else None)
+            captured_at=b["captured_at"].date() if b["captured_at"] else None)
             for b in bl_meta],
         baseline_rows=[BaselineActivityRow(
             baseline_id=r["baseline_id"], code=r["code"], bl_start=r["bl_start"],
@@ -427,7 +426,7 @@ async def export_schedule(project_id: str, fmt: str = "xer",
     if fmt not in EXPORT_FORMATS:
         raise HTTPException(415, f"Unsupported format. Use one of: "
                                  f"{', '.join(sorted(EXPORT_FORMATS))}")
-    pid = int(project_id)
+    pid = project_id
 
     proj = (await s.execute(sql_text(
         "SELECT name, data_date FROM projects WHERE id=:pid"),
@@ -445,9 +444,10 @@ async def export_schedule(project_id: str, fmt: str = "xer",
         FROM activities WHERE project_id=:pid ORDER BY code
     """), {"pid": pid})).mappings().all()
     rel_rows = (await s.execute(sql_text("""
-        SELECT r.pred_id, r.succ_id, r.rel_type, COALESCE(r.lag,0) AS lag
-        FROM relationships r JOIN activities a ON a.id = r.succ_id
-        WHERE a.project_id = :pid
+        SELECT r.predecessor_id, r.successor_id, r.rel_type,
+               COALESCE(r.lag, 0) AS lag
+        FROM relationships r
+        WHERE r.project_id = :pid
     """), {"pid": pid})).mappings().all()
 
     sched = ImportedSchedule(
@@ -464,7 +464,8 @@ async def export_schedule(project_id: str, fmt: str = "xer",
             actual_finish=a["actual_finish"], constraint_type=a["ctype"],
             constraint_date=a["constraint_date"]) for a in act_rows],
         relationships=[ImpRelationship(
-            pred_src_id=str(r["pred_id"]), succ_src_id=str(r["succ_id"]),
+            pred_src_id=str(r["predecessor_id"]),
+            succ_src_id=str(r["successor_id"]),
             rel_type=r["rel_type"] or "FS", lag=int(r["lag"] or 0))
             for r in rel_rows],
     )
