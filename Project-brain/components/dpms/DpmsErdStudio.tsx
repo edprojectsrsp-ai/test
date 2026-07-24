@@ -46,6 +46,7 @@ import {
 import { suggestBoardJoins, type JoinSuggestion } from "@/lib/dpmsSuggest";
 import TableSchemaNode, { type TableSchemaData } from "./TableSchemaNode";
 import RelationEdge, { type RelationEdgeData } from "./RelationEdge";
+import JoinInspector from "./JoinInspector";
 
 const nodeTypes = { tableSchema: TableSchemaNode };
 const edgeTypes = { relation: RelationEdge };
@@ -552,6 +553,15 @@ function StudioInner() {
         showToast(
           `Linked ${payload.child_table}.${payload.child_col} → ${payload.parent_table}.${payload.parent_col}`
         );
+        // Show the joined result straight away. Drawing the line is the easy
+        // part; whether the join actually matches anything is the question
+        // that matters, and it should not need a second deliberate click.
+        try {
+          const data = await dpmsApi.linkSample(payload, 50);
+          setSample({ rel: payload, data });
+        } catch {
+          /* preview is best-effort: the link itself is already saved */
+        }
         return true;
       } catch (e) {
         showToast(e instanceof Error ? e.message : "Link failed");
@@ -1353,76 +1363,33 @@ function StudioInner() {
         </div>
 
         {sample ? (
-          <div
-            style={{
-              borderTop: "1px solid var(--line, #cbd5e1)",
-              maxHeight: 200,
-              overflow: "auto",
-              padding: 12,
-              background: "#fff",
-              flexShrink: 0,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                marginBottom: 8,
-                fontSize: 12,
-                fontWeight: 850,
+          // No height cap or padding here: JoinInspector owns its own layout
+          // and internal scrolling, and wrapping it in a 200px scroller
+          // squashed the health metrics out of view.
+          <div style={{ flexShrink: 0 }}>
+            <JoinInspector
+              rel={sample.rel}
+              sample={sample.data}
+              busy={busy}
+              onClose={() => setSample(null)}
+              onApprove={async () => {
+                await dpmsApi.saveRelationship({
+                  ...sample.rel, status: "approved",
+                  confidence: sample.rel.confidence || 100,
+                });
+                setRelationships(await dpmsApi.relationships());
+                setSample((s2) => (s2 ? { ...s2, rel: { ...s2.rel, status: "approved" } } : s2));
+                showToast("Link approved");
               }}
-            >
-              <span>
-                {sample.rel.child_table}.{sample.rel.child_col} → {sample.rel.parent_table}.
-                {sample.rel.parent_col}
-              </span>
-              <span style={badge}>{sample.rel.status || "candidate"}</span>
-              <button
-                type="button"
-                style={{ ...btn, marginLeft: "auto", padding: "4px 8px" }}
-                onClick={() => setSample(null)}
-              >
-                Close
-              </button>
-            </div>
-            <table style={{ borderCollapse: "collapse", fontSize: 11, width: "100%" }}>
-              <thead>
-                <tr>
-                  {Object.keys(sample.data.rows[0] || { link_value: "" }).map((c) => (
-                    <th
-                      key={c}
-                      style={{
-                        textAlign: "left",
-                        padding: "4px 8px",
-                        borderBottom: "1px solid #e2e8f0",
-                        background: "#eff6ff",
-                      }}
-                    >
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {(sample.data.rows || []).map((row, i) => (
-                  <tr key={i}>
-                    {Object.keys(sample.data.rows[0] || { link_value: "" }).map((c) => (
-                      <td
-                        key={c}
-                        style={{
-                          padding: "4px 8px",
-                          borderBottom: "1px solid #f1f5f9",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {String(row[c] ?? "")}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+              onReverse={() => {
+                void reverseRel(sample.rel.id || dpmsApi.relId(sample.rel));
+                setSample(null);
+              }}
+              onDelete={() => {
+                void deleteRel(sample.rel.id || dpmsApi.relId(sample.rel));
+                setSample(null);
+              }}
+            />
           </div>
         ) : null}
       </section>
