@@ -27,11 +27,11 @@ from app.models.review import CaptureItem, CaptureReason, CaptureStatus
 @dataclass
 class _CooldownKey:
     camera_id: str
-    track_id: int | None
+    person: str          # resolved identity: tracked id, else spatial identity
     gear: str
 
     def as_tuple(self):
-        return (self.camera_id, self.track_id, self.gear)
+        return (self.camera_id, self.person, self.gear)
 
 
 class CaptureService:
@@ -84,7 +84,12 @@ class CaptureService:
         unsure (confidence < TRAINING_CONF_MAX); confident detections are still
         saved as evidence but marked so they don't clutter the labeler."""
         now = time.time()
-        key = _CooldownKey(camera_id, fired.track_id, fired.gear)
+        # Identity, not raw track_id: when the tracker yields no id the engine
+        # assigns a spatial identity, and keying on a shared None would put
+        # every untracked worker on one cooldown and drop their evidence photos.
+        person = fired.identity or (
+            f"t{fired.track_id}" if fired.track_id is not None else "unknown")
+        key = _CooldownKey(camera_id, person, fired.gear)
         if self._throttled(key, now, window=self.settings.VIOLATION_COOLDOWN_S):
             return None
 
