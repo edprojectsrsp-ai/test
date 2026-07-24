@@ -53,6 +53,26 @@ const edgeTypes = { relation: RelationEdge };
 const LS_KEY = "dpms_erd_layout_v1";
 const MAX_BOARD = 10;
 
+type JoinPreviewResult = {
+  columns: string[];
+  rows: Record<string, string | null>[];
+  row_count: number;
+  tables: string[];
+  base_table?: string;
+  note?: string;
+  sql?: string;
+  skipped_tables?: string[];
+};
+
+function groupColsByTable(cols: string[]): Record<string, string[]> {
+  const g: Record<string, string[]> = {};
+  cols.forEach((c) => {
+    const t = c.split(".")[0];
+    (g[t] = g[t] || []).push(c);
+  });
+  return g;
+}
+
 type LayoutMap = Record<string, { x: number; y: number }>;
 type TableNode = Node<TableSchemaData, "tableSchema">;
 type RelEdge = Edge<RelationEdgeData, "relation">;
@@ -187,6 +207,15 @@ function StudioInner() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [sample, setSample] = useState<{ rel: DpmsRelationship; data: LinkSample } | null>(null);
+  const [joinView, setJoinView] = useState<JoinPreviewResult | null>(null);
+  const [joinBusy, setJoinBusy] = useState(false);
+  const joinOpenRef = useRef(false);
+  const [joinFilter, setJoinFilter] = useState("");
+  const [joinSort, setJoinSort] = useState<{ col: string | null; dir: 1 | -1 }>({ col: null, dir: 1 });
+  const [joinHidden, setJoinHidden] = useState<Set<string>>(new Set());
+  const [joinColsOpen, setJoinColsOpen] = useState(false);
+  const [joinExporting, setJoinExporting] = useState(false);
+  const [joinColFilters, setJoinColFilters] = useState<Record<string, string>>({});
   const [suggestions, setSuggestions] = useState<JoinSuggestion[]>([]);
   const [checkedSuggest, setCheckedSuggest] = useState<Set<string>>(new Set());
   const [nodes, setNodes, onNodesChange] = useNodesState<TableNode>([]);
@@ -603,6 +632,157 @@ function StudioInner() {
       ).length,
     [relationships, boardNames]
   );
+
+  // Build a live joined-table preview from the wires currently on the board.
+  const viewJoined = useCallback(async () => {
+    const links = relationships
+      .filter((r) => boardNames.has(r.child_table) && boardNames.has(r.parent_table))
+      .map((r) => ({
+        child_table: r.child_table, child_col: r.child_col,
+        parent_table: r.parent_table, parent_col: r.parent_col,
+      }));
+    if (!links.length) {
+      showToast("Wire at least one link between two board tables first");
+      return;
+    }
+    setJoinBusy(true);
+    try {
+      const res = await fetch(`${DPMS_URL}/api/join-preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ links, limit: 200 }),
+        cache: "no-store",
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.error || "Join failed");
+      setJoinView(body as JoinPreviewResult);
+      setJoinSort({ col: null, dir: 1 });
+      setJoinHidden((prev) => new Set([...prev].filter((c) => (body.columns || []).includes(c))));
+      setJoinColFilters((prev) => {
+        const next: Record<string, string> = {};
+        Object.entries(prev).forEach(([k, v]) => {
+          if ((body.columns || []).includes(k)) next[k] = v;
+        });
+        return next;
+      });
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Join failed");
+    } finally {
+      setJoinBusy(false);
+    }
+  }, [relationships, boardNames, showToast]);
+
+  const joinVisibleCols = useMemo(
+    () => (joinView ? joinView.columns.filter((c) => !joinHidden.has(c)) : []),
+    [joinView, joinHidden]
+  );
+
+  const joinRows = useMemo(() => {
+    if (!joinView) return [];
+    let rows = joinView.rows;
+    const f = joinFilter.trim().toLowerCase();
+    if (f) {
+      rows = rows.filter((r) =>
+        joinView.columns.some((c) => String(r[c] ?? "").toLowerCase().includes(f))
+      );
+    }
+    const cfs = Object.entries(joinColFilters)
+      .map(([c, v]) => [c, v.trim().toLowerCase()] as const)
+      .filter(([, v]) => v);
+    if (cfs.length) {
+      rows = rows.filter((r) => cfs.every(([c, v]) => String(r[c] ?? "").toLowerCase().includes(v)));
+    }
+    if (joinSort.col) {
+      const c = joinSort.col;
+      const dir = joinSort.dir;
+      rows = [...rows].sort((a, b) => {
+        const av = a[c] ?? "";
+        const bv = b[c] ?? "";
+        const an = parseFloat(av as string);
+        const bn = parseFloat(bv as string);
+        let cmp: number;
+        if (!Number.isNaN(an) && !Number.isNaN(bn) && av !== "" && bv !== "") cmp = an - bn;
+        else cmp = String(av).localeCompare(String(bv));
+        return cmp * dir;
+      });
+    }
+    return rows;
+  }, [joinView, joinFilter, joinColFilters, joinSort]);
+
+  const setColFilter = useCallback((c: string, v: string) => {
+    setJoinColFilters((prev) => {
+      const n = { ...prev };
+      if (v) n[c] = v;
+      else delete n[c];
+      return n;
+    });
+  }, []);
+
+  const toggleHiddenCol = useCallback((c: string) => {
+    setJoinHidden((prev) => {
+      const n = new Set(prev);
+      if (n.has(c)) {
+        n.delete(c);
+      } else {
+        n.add(c);
+        setJoinColFilters((f) => {
+          if (!(c in f)) return f;
+          const nf = { ...f };
+          delete nf[c];
+          return nf;
+        });
+      }
+      return n;
+    });
+  }, []);
+
+  const exportJoin = useCallback(async () => {
+    if (!joinView) return;
+    const links = relationships
+      .filter((r) => boardNames.has(r.child_table) && boardNames.has(r.parent_table))
+      .map((r) => ({
+        child_table: r.child_table, child_col: r.child_col,
+        parent_table: r.parent_table, parent_col: r.parent_col,
+      }));
+    setJoinExporting(true);
+    try {
+      const res = await fetch(`${DPMS_URL}/api/join-preview/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          links, q: joinFilter.trim(), col_filters: joinColFilters,
+          columns: joinVisibleCols, limit: 100000,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || "export failed");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `join_${(joinView.tables || []).slice(0, 4).join("_")}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+      showToast(`CSV exported · ${res.headers.get("X-Row-Count") || "?"} rows`);
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setJoinExporting(false);
+    }
+  }, [joinView, relationships, boardNames, joinFilter, joinColFilters, joinVisibleCols, showToast]);
+
+  // Stepwise: while the joined-table panel is open, re-run it whenever the set
+  // of wires on the board changes, so the user watches the join grow.
+  useEffect(() => {
+    joinOpenRef.current = joinView !== null;
+  }, [joinView]);
+  useEffect(() => {
+    if (joinOpenRef.current) void viewJoined();
+  }, [boardEdgeCount, viewJoined]);
 
   async function autoDiscover() {
     try {
@@ -1120,6 +1300,16 @@ function StudioInner() {
               {busy ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
               Save relationships
             </button>
+            <button
+              type="button"
+              style={btnPrimary}
+              onClick={() => void viewJoined()}
+              disabled={joinBusy || boardEdgeCount === 0}
+              title="Join the wired board tables and preview the combined table — updates as you add links"
+            >
+              {joinBusy ? <Loader2 size={13} className="animate-spin" /> : <Link2 size={13} />}
+              View joined table
+            </button>
             <button type="button" style={btn} onClick={nextBatch} title="Clear board, keep saved links">
               Next batch
             </button>
@@ -1361,6 +1551,206 @@ function StudioInner() {
             </div>
           )}
         </div>
+
+        {joinView ? (
+          <div
+            style={{
+              flexShrink: 0,
+              border: "1px solid var(--line, #cbd5e1)",
+              borderRadius: 14,
+              background: "#fff",
+              marginTop: 10,
+              overflow: "visible",
+              boxShadow: "0 8px 24px rgba(15,23,42,.06)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 12px",
+                borderBottom: "1px solid #e2e8f0",
+                background: "#f8fafc",
+                flexWrap: "wrap",
+                position: "relative",
+              }}
+            >
+              <b style={{ fontSize: 13 }}>Joined table</b>
+              <span style={{ fontSize: 11.5, color: "#0f172a", fontWeight: 700 }}>
+                {(joinView.tables || []).join(" ⋈ ")}
+              </span>
+              <span style={{ fontSize: 11, color: "#64748b" }}>
+                {joinRows.length}/{joinView.rows.length} rows · {joinVisibleCols.length}/{joinView.columns.length} cols
+              </span>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                <div style={{ position: "relative" }}>
+                  <Search size={12} style={{ position: "absolute", left: 8, top: 8, color: "#94a3b8" }} />
+                  <input
+                    value={joinFilter}
+                    onChange={(e) => setJoinFilter(e.target.value)}
+                    placeholder="Filter rows…"
+                    style={{ padding: "6px 8px 6px 26px", borderRadius: 8, border: "1px solid #cbd5e1", fontSize: 12, width: 150 }}
+                  />
+                </div>
+                <div style={{ position: "relative" }}>
+                  <button type="button" style={btn} onClick={() => setJoinColsOpen((o) => !o)}>
+                    Columns ▾
+                  </button>
+                  {joinColsOpen ? (
+                    <div
+                      style={{
+                        position: "absolute", top: "110%", right: 0, zIndex: 60, background: "#fff",
+                        border: "1px solid #cbd5e1", borderRadius: 10, boxShadow: "0 16px 40px rgba(15,23,42,.18)",
+                        padding: 10, maxHeight: 320, overflow: "auto", minWidth: 240,
+                      }}
+                    >
+                      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                        <button type="button" style={btn} onClick={() => setJoinHidden(new Set())}>Show all</button>
+                        <button type="button" style={btn} onClick={() => setJoinHidden(new Set(joinView.columns))}>Hide all</button>
+                      </div>
+                      {Object.entries(groupColsByTable(joinView.columns)).map(([t, cols]) => (
+                        <div key={t}>
+                          <div style={{ fontWeight: 800, fontSize: 11, color: "#334155", margin: "6px 0 3px" }}>{t}</div>
+                          {cols.map((c) => (
+                            <label key={c} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11.5, padding: "2px 0", cursor: "pointer" }}>
+                              <input type="checkbox" checked={!joinHidden.has(c)} onChange={() => toggleHiddenCol(c)} />
+                              {c.split(".").slice(1).join(".") || c}
+                            </label>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  style={btn}
+                  onClick={() => {
+                    setJoinFilter("");
+                    setJoinColFilters({});
+                  }}
+                >
+                  Clear filters
+                </button>
+                <button type="button" style={btn} onClick={() => setJoinSort({ col: null, dir: 1 })}>
+                  Clear sort
+                </button>
+                <button type="button" style={btnPrimary} onClick={() => void exportJoin()} disabled={joinExporting}>
+                  {joinExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />} Export CSV
+                </button>
+                <button
+                  type="button"
+                  style={btn}
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(joinView.sql || "");
+                    showToast("Join SQL copied");
+                  }}
+                >
+                  Copy SQL
+                </button>
+                <button type="button" style={btn} onClick={() => setJoinView(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            {joinView.note ? (
+              <div style={{ fontSize: 11, color: "#64748b", padding: "6px 12px" }}>
+                {joinView.note} · click a header to sort · Export = full join, visible columns, current filter.
+              </div>
+            ) : null}
+            <div style={{ overflow: "auto", maxHeight: 360 }}>
+              <table
+                style={{
+                  borderCollapse: "collapse",
+                  fontSize: 11.5,
+                  whiteSpace: "nowrap",
+                  width: "max-content",
+                  minWidth: "100%",
+                }}
+              >
+                <thead>
+                  <tr>
+                    {joinVisibleCols.map((c) => (
+                      <th
+                        key={c}
+                        title={c}
+                        onClick={() =>
+                          setJoinSort((s) => (s.col === c ? { col: c, dir: s.dir === 1 ? -1 : 1 } : { col: c, dir: 1 }))
+                        }
+                        style={{
+                          position: "sticky",
+                          top: 0,
+                          background: c.split(".")[0] === joinView.base_table ? "#dbeafe" : "#eff6ff",
+                          textAlign: "left",
+                          padding: "6px 9px",
+                          borderBottom: "1px solid #cbd5e1",
+                          fontWeight: 800,
+                          color: "#0f172a",
+                          cursor: "pointer",
+                          userSelect: "none",
+                        }}
+                      >
+                        {c}
+                        {joinSort.col === c ? (joinSort.dir === 1 ? " ▲" : " ▼") : ""}
+                      </th>
+                    ))}
+                  </tr>
+                  <tr>
+                    {joinVisibleCols.map((c) => (
+                      <th
+                        key={c}
+                        style={{
+                          position: "sticky",
+                          top: 27,
+                          background: "#f8fafc",
+                          padding: "2px 4px",
+                          zIndex: 1,
+                          borderBottom: "1px solid #e2e8f0",
+                        }}
+                      >
+                        <input
+                          value={joinColFilters[c] || ""}
+                          onChange={(e) => setColFilter(c, e.target.value)}
+                          placeholder="filter…"
+                          style={{
+                            width: "100%",
+                            minWidth: 70,
+                            fontSize: 11,
+                            padding: "3px 5px",
+                            border: "1px solid #cbd5e1",
+                            borderRadius: 6,
+                          }}
+                        />
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {joinRows.map((r, i) => (
+                    <tr key={i} style={{ background: i % 2 ? "#f8fafc" : "#fff" }}>
+                      {joinVisibleCols.map((c) => (
+                        <td
+                          key={c}
+                          title={String(r[c] ?? "")}
+                          style={{
+                            padding: "4px 9px",
+                            borderBottom: "1px solid #eef2f7",
+                            maxWidth: 240,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {r[c] == null || r[c] === "" ? <i style={{ color: "#94a3b8" }}>—</i> : String(r[c])}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : null}
 
         {sample ? (
           // No height cap or padding here: JoinInspector owns its own layout
