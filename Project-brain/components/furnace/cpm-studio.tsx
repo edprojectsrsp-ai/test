@@ -7,7 +7,7 @@
 // Backend: existing _scheduling_module endpoints for official runs, XER/MSP
 //   import, baselines. The rival's Codex-built module is an iframe island that
 //   needs a server round-trip for every recalculation; this does it in <1ms.
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 const BaselinePanel = dynamic(() => import("@/app/cpm/BaselinePanel"), { ssr: false });
 import { Gantt, Task, ViewMode } from "gantt-task-react";
@@ -21,6 +21,9 @@ import {
 } from "@/lib/furnace/cpmEngine";
 import { runDcma14 } from "@/lib/furnace/dcma";
 import { WorkCalendar, calendarFromSchedule } from "@/lib/furnace/workCalendar";
+import { History, historyShortcut } from "@/lib/furnace/history";
+import type { Assignment, Resource } from "@/lib/furnace/resources";
+const ResourceHistogramPanel = dynamic(() => import("@/components/furnace/ResourceHistogram"), { ssr: false });
 const ScheduleChecker = dynamic(() => import("@/components/furnace/ScheduleChecker"), { ssr: false });
 const MultiBaselinePanel = dynamic(() => import("@/components/furnace/MultiBaselinePanel"), { ssr: false });
 
@@ -57,11 +60,55 @@ export default function CpmStudio() {
   const [showChecker, setShowChecker] = useState(false);
   const [showMultiBl, setShowMultiBl] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [showResources, setShowResources] = useState(false);
+  const [, forceHistoryRender] = useState(0);
+
+  // Snapshot history over the schedule. Bar drags fire continuously, so edits
+  // to the same activity coalesce into a single undo step via mergeKey.
+  const historyRef = useRef<History<CpmScheduleFull> | null>(null);
+  if (historyRef.current === null) historyRef.current = new History<CpmScheduleFull>();
+  const history = historyRef.current;
+
+  const commit = useCallback((next: CpmScheduleFull, label: string, mergeKey?: string) => {
+    history.push(next, label, mergeKey);
+    setNet(next);
+    forceHistoryRender((n) => n + 1);
+  }, [history]);
+
+  const doUndo = useCallback(() => {
+    const prev = history.undo();
+    if (prev) { setNet(prev); forceHistoryRender((n) => n + 1); toast("Undo"); }
+  }, [history]);
+
+  const doRedo = useCallback(() => {
+    const next = history.redo();
+    if (next) { setNet(next); forceHistoryRender((n) => n + 1); toast("Redo"); }
+  }, [history]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const action = historyShortcut(e as any);
+      if (!action) return;
+      e.preventDefault();
+      action === "undo" ? doUndo() : doRedo();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [doUndo, doRedo]);
   const [groupByWbs, setGroupByWbs] = useState(true);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
 
   useEffect(() => { getSchedules().then((r) => { setRefs(r); setSchedId(r[0]?.schedule_id ?? null); }); }, []);
-  useEffect(() => { if (schedId != null) getScheduleFull(schedId).then(setNet); }, [schedId]);
+  useEffect(() => {
+    if (schedId == null) return;
+    getScheduleFull(schedId).then((full) => {
+      setNet(full);
+      // a freshly loaded schedule is the new origin: undoing into a previous
+      // schedule's edits would apply them to the wrong network
+      history.reset(full, "Loaded");
+      forceHistoryRender((n) => n + 1);
+    });
+  }, [schedId, history]);
 
   const calendar = useMemo(() => {
     const cal = calendarFromSchedule(net as any);
@@ -154,10 +201,19 @@ export default function CpmStudio() {
   // Drag a bar → adjust duration/offset and recompute CPM instantly
   const onDateChange = useCallback((task: Task) => {
     if (!net || task.id.startsWith("wbs:")) return;   // summary bars are derived
-    const days = Math.max(1, Math.round((task.end.getTime() - task.start.getTime()) / DAY));
-    setNet((n) => n && ({ ...n, activities: n.activities.map((a) => (a.id === task.id ? { ...a, duration: days } : a)) }));
+    // Bars span working days, so the new duration is the working-day count
+    // between the ends — not the calendar-day difference, which would read a
+    // 5-day bar dragged across a weekend as 7 days.
+    const lastWorked = new Date(task.end.getTime() - DAY);
+    const days = Math.max(1, calendar.workingDaysBetween(task.start, lastWorked));
+    const next: CpmScheduleFull = {
+      ...net,
+      activities: net.activities.map((a) =>
+        (a.id === task.id ? { ...a, duration: days } : a)),
+    };
+    commit(next, `${task.id} duration → ${days}d`, `drag:${task.id}`);
     toast(`${task.id} duration → ${days}d · critical path recomputed`);
-  }, [net]);
+  }, [net, calendar, commit]);
 
   const onImport = async (file: File) => {
     const fd = new FormData();
@@ -214,7 +270,16 @@ export default function CpmStudio() {
           <span style={{ flex: 1 }} />
           <Segmented value={String(view)} onChange={(v) => setView(v as ViewMode)}
             options={[{ value: String(ViewMode.Day), label: "Day" }, { value: String(ViewMode.Week), label: "Week" }, { value: String(ViewMode.Month), label: "Month" }]} />
+          <Button onClick={doUndo} disabled={!history.canUndo}
+            title={history.canUndo ? `Undo ${history.undoLabel ?? ""}` : "Nothing to undo"}>
+            ↶ Undo
+          </Button>
+          <Button onClick={doRedo} disabled={!history.canRedo}
+            title={history.canRedo ? `Redo ${history.redoLabel ?? ""}` : "Nothing to redo"}>
+            ↷ Redo
+          </Button>
           <Button onClick={() => setCriticalOnly((c) => !c)} kind={criticalOnly ? "accent" : "default"}>Critical only</Button>
+          <Button onClick={() => setShowResources((v) => !v)} kind={showResources ? "accent" : "default"}>Resources</Button>
           <Button onClick={() => setGroupByWbs((g) => !g)} kind={groupByWbs ? "accent" : "default"}>WBS outline</Button>
           {groupByWbs && (
             <Button onClick={() => setCollapsed((c) => (c.size ? new Set() : new Set(
@@ -280,6 +345,16 @@ export default function CpmStudio() {
       {showMultiBl && schedId != null && (
         <div style={{ marginTop: 14 }}>
           <MultiBaselinePanel projectId={schedId} />
+        </div>
+      )}
+
+      {showResources && net && result && (
+        <div style={{ marginTop: 14 }}>
+          <ResourceHistogramPanel
+            activities={net.activities} links={net.links} result={result}
+            resources={((net as any).resources ?? []) as Resource[]}
+            assignments={((net as any).assignments ?? []) as Assignment[]}
+            calendar={calendar} />
         </div>
       )}
 
