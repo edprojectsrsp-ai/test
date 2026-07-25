@@ -28,6 +28,7 @@ from app.ml.detector import FrameResult
 from app.ml.violations import ViolationEngine, ZoneRule
 from app.ml.hazards import HazardConfig, HazardEngine
 from app.services.sources import FrameSource, build_source
+from app.services.inference_budget import get_budget
 from app.services.stream_supervisor import (Action as SupervisorAction,
                                             StreamSupervisor)
 
@@ -48,6 +49,9 @@ class CameraConfig:
     source_kwargs: dict = field(default_factory=dict)
     required_ppe: set[str] = field(default_factory=lambda: {"helmet", "vest"})
     fps_limit: float = 6.0                 # cap inference rate to save compute
+    # Drives the share of detector capacity under load: a gate camera watching
+    # everyone enter should not be starved by a storage yard.
+    priority: str = "normal"               # critical | high | normal | low
     mode: str = "monitor"                  # off | monitor | collect | strict
     # non-PPE hazard rules (restricted zones, fall, near-miss, smoking, phone,
     # fire/smoke). None => a default HazardConfig (all rules on, no zones).
@@ -66,6 +70,8 @@ CaptureSink = Callable[[str, object, FrameResult, object], object]
 @dataclass
 class CameraStats:
     frames_read: int = 0
+    frames_skipped: int = 0                # refused by the inference budget
+    last_skip_reason: str = ""
     frames_inferred: int = 0
     violations_fired: int = 0
     captures_made: int = 0
@@ -96,6 +102,11 @@ class CameraWorker:
         # that was handed to us rather than built from config.
         self._source_opened = False
         self._supervisor = StreamSupervisor(config.source_kind)
+        # Admission control only makes sense for a live feed, where a skipped
+        # frame is replaced by another a few milliseconds later. Replaying a
+        # video file or an image folder, every frame is unique and dropping one
+        # loses it permanently — so finite sources run to completion instead.
+        self._admission_applies = not self._supervisor.is_finite
         self._engine = ViolationEngine(ZoneRule(required=config.required_ppe))
         self._hazards = HazardEngine(
             HazardConfig(restricted_zones=list(config.restricted_zones))
@@ -116,6 +127,12 @@ class CameraWorker:
             return
         self._stop.clear()
         self.state = CameraState.starting
+        if self._admission_applies:
+            get_budget().register(
+                self.config.camera_id,
+                requested_fps=self.config.fps_limit or 30.0,
+                priority=self.config.priority,
+            )
         self._thread = threading.Thread(
             target=self._run, name=f"cam-{self.config.camera_id}", daemon=True
         )
@@ -295,7 +312,27 @@ class CameraWorker:
                     live_view.publish(self.config.camera_id, frame, {"mode": mode})
                     continue
 
-                result = self._detect(frame)
+                # Admission control. The detector holds one model behind a
+                # mutex, so calling it unconditionally means every camera
+                # queues: measured at 20 cameras, p95 wait was 707 ms and the
+                # violation was found after the person had walked away.
+                # A refused frame is skipped rather than queued — the next one
+                # is milliseconds away and the scene has barely moved.
+                budget = get_budget()
+                if self._admission_applies:
+                    admitted, why = budget.acquire(
+                        self.config.camera_id, frame_age_s=time.time() - now)
+                    if not admitted:
+                        self.stats.frames_skipped += 1
+                        self.stats.last_skip_reason = why
+                        continue
+
+                t_infer = time.time()
+                try:
+                    result = self._detect(frame)
+                finally:
+                    if self._admission_applies:
+                        budget.release(self.config.camera_id, time.time() - t_infer)
                 self.stats.frames_inferred += 1
 
                 fired_list = self._engine.update(result)

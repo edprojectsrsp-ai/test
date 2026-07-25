@@ -51,9 +51,14 @@ async def fleet_health() -> dict:
     delivering a frozen picture used to report healthy while its counters
     climbed, which is the failure most likely to go unnoticed.
     """
+    from app.services.inference_budget import get_budget
+
     out = _manager().list_health()
     degraded = sum(1 for c in out
                    if c["health"] not in ("healthy", "starting", "stopped"))
+    budget = get_budget()
+    for cam in out:
+        cam["inference"] = budget.camera_stats(cam["camera_id"])
     return {
         "cameras": out,
         "total": len(out),
@@ -61,6 +66,9 @@ async def fleet_health() -> dict:
         "fleet_availability": (
             round(sum(c["availability"] or 0 for c in out) / len(out), 4)
             if out else None),
+        # Whether the detector can actually keep up with the fleet. Without
+        # this, an oversubscribed system looks healthy and simply lags.
+        "inference": budget.stats(),
     }
 
 
