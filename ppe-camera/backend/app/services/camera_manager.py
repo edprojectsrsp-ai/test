@@ -160,6 +160,7 @@ class CameraWorker:
         if mode not in ("off", "monitor", "collect", "strict"):
             raise ValueError(f"invalid mode {mode!r}")
         self.config.mode = mode
+        self._persist()
         return mode
 
     def set_required_ppe(self, items: set[str] | list[str]) -> list[str]:
@@ -176,6 +177,7 @@ class CameraWorker:
             required=cleaned,
             zones=ZoneMap.from_config(self.config.monitoring_zones, cleaned) or None,
         ))
+        self._persist()
         return sorted(cleaned)
 
     # Field names as the API exposes them -> ZoneRule attribute.
@@ -199,6 +201,16 @@ class CameraWorker:
         out["camera_id"] = self.config.camera_id
         out["required_ppe"] = sorted(self.config.required_ppe)
         return out
+
+    def _persist(self) -> None:
+        """Save this camera's config. Best effort — never blocks capture."""
+        try:
+            from app.services.camera_store import save_camera_sync
+            save_camera_sync(self.config.camera_id, self.config,
+                             detection_rule=self.get_detection_rule(),
+                             mode=self.config.mode)
+        except Exception:
+            pass
 
     def set_detection_rule(self, patch: dict) -> dict:
         """Apply detection tuning live.
@@ -225,6 +237,7 @@ class CameraWorker:
                 )
             except Exception:
                 pass
+        self._persist()
         return self.get_detection_rule()
 
     def set_monitoring_zones(self, zones: list) -> dict:
@@ -238,6 +251,7 @@ class CameraWorker:
         self.config.monitoring_zones = list(zones or [])
         rule = self._engine.rule
         rule.zones = zone_map or None
+        self._persist()
         return zone_map.describe()
 
     def _capture_meta(self, result) -> tuple[bool, str | None]:
@@ -472,13 +486,18 @@ class CameraManager:
         self._cameras: dict[str, CameraWorker] = {}
         self._lock = threading.Lock()
 
-    def add(self, config: CameraConfig, source: FrameSource | None = None) -> CameraWorker:
+    def add(self, config: CameraConfig, source: FrameSource | None = None,
+            persist: bool = True) -> CameraWorker:
         with self._lock:
             if config.camera_id in self._cameras:
                 raise ValueError(f"camera '{config.camera_id}' already exists")
             worker = CameraWorker(config, self._detect, self._capture, source=source)
             self._cameras[config.camera_id] = worker
-            return worker
+        # Outside the lock: persistence must never hold up the registry, and a
+        # camera added but not yet saved is still fully functional.
+        if persist:
+            worker._persist()
+        return worker
 
     def start(self, camera_id: str) -> None:
         self._get(camera_id).start()

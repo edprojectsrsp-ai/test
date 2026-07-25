@@ -32,3 +32,7 @@ vidgear>=0.3.3         # CamGear (RTSP) + ScreenGear (fallback)
 
 # --- Alerts (optional channels; wire as needed) ---
 # httpx already present -> used for WhatsApp Cloud API / webhooks
+
+# testing
+pytest>=8.0
+pytest-asyncio>=0.23

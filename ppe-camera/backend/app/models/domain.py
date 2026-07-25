@@ -69,6 +69,16 @@ class CameraRecord(Base):
     source_kwargs: Mapped[dict] = mapped_column(JSON, default=dict)
     required_ppe: Mapped[list] = mapped_column(JSON, default=list)
     zones: Mapped[list] = mapped_column(JSON, default=list)  # restricted-area polygons
+    # PPE monitoring zones: masks over public areas, regions of interest and
+    # per-zone gear rules. Distinct from `zones` above, which are hazard
+    # restricted areas ("nobody should be here at all").
+    monitoring_zones: Mapped[list] = mapped_column(JSON, default=list)
+    # Detection tuning. min_person_px in particular has to be per camera: 64
+    # suits 1080p, but a gantry camera down a 200 m yard gates out most workers
+    # at that value, and an operator who tunes it must not lose the change on
+    # the next restart.
+    detection_rule: Mapped[dict] = mapped_column(JSON, default=dict)
+    priority: Mapped[str] = mapped_column(String(16), default="normal")
     mode: Mapped[str] = mapped_column(String(16), default="monitor")
     fps_limit: Mapped[float] = mapped_column(Float, default=6.0)
     location: Mapped[str] = mapped_column(String(128), default="")

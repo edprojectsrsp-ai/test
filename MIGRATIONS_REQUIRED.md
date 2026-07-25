@@ -139,41 +139,40 @@ table. Until it is, the migration is harmless but inert.
 
 ---
 
-## 4. PPE — per-camera detection rules
+## 4. PPE — camera config persistence
 
-**Needed by:** the assessability gating in the violation engine
+**Database:** `ppe-camera`
+**Migration file:** `ppe-camera/backend/migrations_2026_07_24_camera_persistence.sql`
 
-`cameras.required_ppe` (JSON) exists, but every threshold is currently global.
-A gantry camera looking down a 200 m yard and a gate camera two metres from a
-turnstile cannot share `min_person_px` — this is the single setting that most
-affects the false-negative rate.
+This turned out to be larger than "persist the tuning". `CameraRecord` carried
+the docstring *"the CameraManager rehydrates these at startup so cameras no
+longer vanish on restart"*, and both `upsert_camera` and `all_cameras` were
+written — but **neither was ever called anywhere in the codebase**. So every
+camera, every zone mask and every tuned threshold was lost on restart. Adding
+twenty cameras and restarting the service lost all twenty.
+
+The code half is done and tested: saves fire on every config change and the
+fleet is rebuilt at startup. Three columns are needed:
 
 ```sql
-CREATE TABLE IF NOT EXISTS zone_rules (
-    camera_id                VARCHAR(64) PRIMARY KEY
-        REFERENCES cameras(id) ON DELETE CASCADE,
-    min_frames               INTEGER NOT NULL DEFAULT 5,
-    window_frames            INTEGER NOT NULL DEFAULT 15,
-    cooldown_s               REAL    NOT NULL DEFAULT 3.0,
-    min_person_px            INTEGER NOT NULL DEFAULT 64,
-    min_person_frac          REAL    NOT NULL DEFAULT 0.0,
-    always_assess_frac       REAL    NOT NULL DEFAULT 0.25,
-    occlusion_grace_frames   INTEGER NOT NULL DEFAULT 15,
-    min_evidence_conf        REAL    NOT NULL DEFAULT 0.35,
-    require_band             BOOLEAN NOT NULL DEFAULT 1,
-    edge_margin_px           INTEGER NOT NULL DEFAULT 4,
-    updated_at               TIMESTAMP
-);
+ALTER TABLE cameras ADD COLUMN monitoring_zones JSON DEFAULT '[]';
+ALTER TABLE cameras ADD COLUMN detection_rule   JSON DEFAULT '{}';
+ALTER TABLE cameras ADD COLUMN priority         VARCHAR(16) DEFAULT 'normal';
 ```
 
-Defaults match `ZoneRule` in `app/ml/violations.py` exactly, so a camera with no
-row behaves as it does today. **Do not seed a row per camera** — absence should
-mean "use defaults", so the defaults can be improved later without rewriting
-every row.
+| Column | Why |
+|---|---|
+| `monitoring_zones` | PPE masks and regions of interest. Distinct from the existing `zones`, which are hazard restricted areas — a different question ("nobody should be here" vs "judge PPE here, against what gear"). |
+| `detection_rule` | Per-camera tuning. `min_person_px` matters most: 64 suits 1080p, but a gantry camera down a 200 m yard gates out most workers at that value. |
+| `priority` | Share of detector capacity when the fleet is oversubscribed. |
 
-`always_assess_frac` is the low-resolution escape hatch: a person filling 25% of
-the frame is judged even on an analogue feed where the absolute pixel height is
-below `min_person_px`.
+A database that has not yet been migrated still restores its cameras — the
+loader falls back to defaults for absent columns rather than failing, so
+running the migration late costs you the zones and tuning, not the fleet.
+
+The separate `zone_rules` table proposed earlier is **not needed**: the same
+data lives in `detection_rule` on the camera row, which avoids a second table
+that could drift out of step with it.
 
 ---
 
@@ -317,7 +316,7 @@ For completeness, work that needed **no** schema change:
 2. §2 — violation event fields (already-merged code emits them)
 3. §3 — alert incidents (survives restart)
 4. §4b — DPR evidence + root cause (file is written; run it)
-5. §4 — per-camera zone rules (needed for real site tuning)
+5. §4 — camera config persistence (cameras currently vanish on restart)
 6. §5 — only if the DPMS service comes into the repo
 
 §6 needs no action: it was a code bug, already fixed.

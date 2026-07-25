@@ -30,6 +30,25 @@ async def lifespan(app: FastAPI):
     from app.services.runtime import set_event_loop
 
     set_event_loop(asyncio.get_running_loop())
+
+    # Rebuild the fleet from storage. CameraRecord has always carried the
+    # docstring "the CameraManager rehydrates these at startup", and
+    # upsert_camera/all_cameras were both written, but neither was ever called
+    # — so every camera, zone mask and tuned threshold was lost on restart.
+    try:
+        from app.services.camera_store import restore_fleet
+        from app.services.runtime import get_manager
+
+        result = await restore_fleet(get_manager())
+        if result.get("failed"):
+            import logging
+            logging.getLogger(__name__).warning(
+                "%d camera(s) could not be restored: %s",
+                len(result["failed"]), result["failed"])
+    except Exception as exc:  # noqa: BLE001 - never block startup
+        import logging
+        logging.getLogger(__name__).warning("fleet restore skipped: %s", exc)
+
     try:
         yield
     finally:
