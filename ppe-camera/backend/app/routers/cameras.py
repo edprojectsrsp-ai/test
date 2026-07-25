@@ -43,6 +43,27 @@ def _manager():
     return get_manager()
 
 
+@router.get("/health")
+async def fleet_health() -> dict:
+    """Stream health for every camera.
+
+    Reconnects, freezes and availability, not just running/stopped. A camera
+    delivering a frozen picture used to report healthy while its counters
+    climbed, which is the failure most likely to go unnoticed.
+    """
+    out = _manager().list_health()
+    degraded = sum(1 for c in out
+                   if c["health"] not in ("healthy", "starting", "stopped"))
+    return {
+        "cameras": out,
+        "total": len(out),
+        "degraded": degraded,
+        "fleet_availability": (
+            round(sum(c["availability"] or 0 for c in out) / len(out), 4)
+            if out else None),
+    }
+
+
 @router.get("/sources")
 async def list_source_kinds() -> dict:
     """Every camera type the system can ingest, with the fields each needs.

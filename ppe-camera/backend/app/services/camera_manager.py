@@ -28,6 +28,8 @@ from app.ml.detector import FrameResult
 from app.ml.violations import ViolationEngine, ZoneRule
 from app.ml.hazards import HazardConfig, HazardEngine
 from app.services.sources import FrameSource, build_source
+from app.services.stream_supervisor import (Action as SupervisorAction,
+                                            StreamSupervisor)
 
 
 class CameraState(str, enum.Enum):
@@ -85,6 +87,15 @@ class CameraWorker:
         self._detect = detect_fn
         self._capture = capture_sink
         self._source = source  # if None, built from config on start
+        # An injected source is reused on reconnect via this factory, so tests
+        # and fixtures keep their own object rather than being silently
+        # replaced by one built from config.
+        self._source_factory = (lambda: source) if source is not None else None
+        # An injected source still has to be opened once. Tracking "opened"
+        # separately from "is not None" avoids skipping open() for a source
+        # that was handed to us rather than built from config.
+        self._source_opened = False
+        self._supervisor = StreamSupervisor(config.source_kind)
         self._engine = ViolationEngine(ZoneRule(required=config.required_ppe))
         self._hazards = HazardEngine(
             HazardConfig(restricted_zones=list(config.restricted_zones))
@@ -93,6 +104,11 @@ class CameraWorker:
         self._stop = threading.Event()
         self.state = CameraState.created
         self.stats = CameraStats()
+
+    @property
+    def health(self) -> dict:
+        """Stream health for the dashboard: reconnects, freezes, availability."""
+        return self._supervisor.snapshot()
 
     # ---- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -170,22 +186,102 @@ class CameraWorker:
             pass
 
     # ---- worker body -----------------------------------------------------
-    def _run(self) -> None:
-        try:
-            if self._source is None:
-                self._source = build_source(
-                    self.config.source_kind, **self.config.source_kwargs
-                )
-            self._source.open()
-            self.state = CameraState.running
-            min_dt = 1.0 / self.config.fps_limit if self.config.fps_limit > 0 else 0.0
-            last = 0.0
+    def _open_source(self):
+        """(Re)build and open the frame source. Raises on failure."""
+        if self._source is not None and self._source_opened:
+            try:
+                self._source.close()
+            except Exception:
+                pass
+            self._source = None
+        if self._source is None:
+            self._source = (self._source_factory() if self._source_factory
+                            else build_source(self.config.source_kind,
+                                              **self.config.source_kwargs))
+        self._source.open()
+        self._source_opened = True
 
+    def _run(self) -> None:
+        """Supervised capture loop.
+
+        Previously a single empty read broke the loop and any exception exited
+        the thread, so one dropped keyframe or one camera reboot killed the
+        worker until a human restarted it. On a plant network that meant every
+        camera was dead by morning. The loop now delegates every stream fault
+        to StreamSupervisor and only leaves when told to stop or when a finite
+        source genuinely ends.
+        """
+        sup = self._supervisor
+        min_dt = 1.0 / self.config.fps_limit if self.config.fps_limit > 0 else 0.0
+        last = 0.0
+
+        try:
             while not self._stop.is_set():
-                frame = self._source.read()
+                # ---- ensure we have an open source ------------------------
+                if self._source is None or not self._source_opened:
+                    try:
+                        self._open_source()
+                        self.state = CameraState.running
+                    except Exception as exc:
+                        action = sup.on_error(exc)
+                        self.stats.last_error = sup.stats.last_error
+                        self.state = CameraState.error
+                        if action is SupervisorAction.ENDED:
+                            break
+                        sup.on_reconnect_attempt()
+                        if self._stop.wait(sup.backoff_s):
+                            break
+                        continue
+
+                # ---- read -------------------------------------------------
+                try:
+                    frame = self._source.read()
+                except Exception as exc:
+                    action = sup.on_error(exc)
+                    self.stats.last_error = sup.stats.last_error
+                    if action is SupervisorAction.ENDED:
+                        break
+                    self.state = CameraState.error
+                    sup.on_reconnect_attempt()
+                    self._source = None
+                    self._source_opened = False
+                    if self._stop.wait(sup.backoff_s):
+                        break
+                    continue
+
                 if frame is None:
-                    # end of stream (fake) or transient gap (real) -> break test-fast
-                    break
+                    action = sup.on_empty_read()
+                    if action is SupervisorAction.ENDED:
+                        break
+                    if action is SupervisorAction.RETRY:
+                        # a dropped packet, not a disconnection
+                        if self._stop.wait(0.05):
+                            break
+                        continue
+                    self.stats.last_error = sup.stats.last_error
+                    self.state = CameraState.error
+                    sup.on_reconnect_attempt()
+                    self._source = None
+                    self._source_opened = False
+                    if self._stop.wait(sup.backoff_s):
+                        break
+                    continue
+
+                # ---- a frame arrived; check the feed is actually moving ----
+                if sup.on_frame(frame) is SupervisorAction.RECONNECT:
+                    # frozen: reads succeed but the picture never changes, so
+                    # counters climb and the dashboard stays green
+                    self.stats.last_error = sup.stats.last_error
+                    self.state = CameraState.error
+                    sup.on_reconnect_attempt()
+                    self._source = None
+                    self._source_opened = False
+                    if self._stop.wait(sup.backoff_s):
+                        break
+                    continue
+
+                if self.state is not CameraState.running:
+                    self.state = CameraState.running
                 self.stats.frames_read += 1
 
                 now = time.time()
@@ -239,11 +335,14 @@ class CameraWorker:
                     )
                 except Exception:
                     pass
-        except Exception as e:  # source failure, codec error, etc.
+        except Exception as e:
+            # Anything reaching here is a defect in our own loop rather than a
+            # stream fault; stream faults are handled above and reconnect.
             self.state = CameraState.error
             self.stats.last_error = f"{type(e).__name__}: {e}"
             return
         finally:
+            sup.on_stopped()
             if self._source is not None:
                 try:
                     self._source.close()
@@ -303,6 +402,18 @@ class CameraManager:
         with self._lock:
             ids = list(self._cameras.keys())
         return [self.status(cid) for cid in ids]
+
+    def list_health(self) -> list[dict]:
+        """Stream health per camera — reconnects, freezes, availability."""
+        with self._lock:
+            items = list(self._cameras.items())
+        out = []
+        for cam_id, worker in items:
+            h = worker.health
+            h["camera_id"] = cam_id
+            h["state"] = worker.state.value
+            out.append(h)
+        return out
 
     def stop_all(self) -> None:
         with self._lock:
