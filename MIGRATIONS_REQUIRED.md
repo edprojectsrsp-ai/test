@@ -177,6 +177,54 @@ below `min_person_px`.
 
 ---
 
+## 4b. DPR — photo evidence and root cause
+
+**Database:** `project-brain-backend` (Postgres)
+**Migration file:** `migrations/2026_07_24_dpr_evidence_rootcause.sql` — already
+written and committed; just run it.
+
+Two gaps, both closed by that one file.
+
+**Photo provenance.** `dpr_entries_v2` already captures GPS live from the
+browser and `dpr_photos` already stores the image, but nothing ties them
+together — a gallery photo taken three weeks ago at another site attaches to a
+live-GPS entry and looks identical to one taken on the spot. Since that photo is
+the evidence behind a billing claim, it now carries its own EXIF location and
+timestamp, a verification verdict, the measured distance and time gap, the
+reasons behind the verdict, and a SHA-256 of the file.
+
+The hash is indexed because the same file attached to two entries is the
+clearest sign of a recycled photo, and it is only findable if you can group by it.
+
+**Root cause.** There was no root-cause field anywhere in the schema. Adds
+`root_cause`, `root_cause_note`, `days_lost`, `responsibility` and
+`subcontractor` to `dpr_entries_v2`.
+
+`root_cause` is deliberately **nullable and not back-filled**. Existing rows have
+no recorded cause, and inventing one would fabricate history; the summary
+endpoint reports them as "unclassified" so the gap stays visible in the numbers
+rather than being papered over.
+
+New endpoints, live once the migration runs:
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /dpr/root-causes` | Grouped taxonomy for the dropdown |
+| `GET /dpr/root-causes/summary/{scheme_id}` | Days lost by group and responsibility |
+| `POST /dpr/photos/verify` | Corroborate a photo against its entry |
+| `GET /dpr/photos/integrity/{scheme_id}` | Evidence quality + reused images |
+
+**One code change still needed:** the photo upload handler must compute and
+store `sha256` on upload. Until it does, the reused-image check returns nothing —
+it will not error, it will simply never find anything, which is the more
+dangerous failure because it looks like a clean result.
+
+**Optional dependency:** EXIF extraction uses Pillow. Without it, verification
+degrades to `unverified` for every photo rather than failing — but nothing is
+actually verified, so install it: `pip install Pillow`.
+
+---
+
 ## 5. Optional — DPMS join quality cache
 
 **Only if** you commit `dpms_viewer.py` to the repo. It is currently external,
@@ -268,8 +316,9 @@ For completeness, work that needed **no** schema change:
 1. §1 — resource capacity (unblocks the levelling UI)
 2. §2 — violation event fields (already-merged code emits them)
 3. §3 — alert incidents (survives restart)
-4. §4 — per-camera zone rules (needed for real site tuning)
-5. §5 — only if the DPMS service comes into the repo
+4. §4b — DPR evidence + root cause (file is written; run it)
+5. §4 — per-camera zone rules (needed for real site tuning)
+6. §5 — only if the DPMS service comes into the repo
 
 §6 needs no action: it was a code bug, already fixed.
 

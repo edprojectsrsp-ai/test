@@ -678,3 +678,156 @@ def dpr_qc(
         "productivity": productivity[:200],
         "anomalies": anomalies[:100],
     }
+
+
+# ─────────────────────── Root cause & photo evidence ─────────────────────────
+# Added with the DPR evidence work: a closed root-cause list so "why did we
+# slip" aggregates, and photo verification so a billing claim is defensible.
+
+@router.get("/root-causes")
+def list_root_causes():
+    """Grouped taxonomy for the deviation dropdown.
+
+    A closed list rather than free text, because three engineers writing
+    "rain", "heavy rains" and "weather" for one cause cannot be aggregated
+    afterwards by any amount of grouping.
+    """
+    from app.services.root_cause import catalogue
+    return {"groups": catalogue()}
+
+
+@router.get("/root-causes/summary/{scheme_id}")
+def root_cause_summary(
+    scheme_id: int,
+    date_from: Optional[str] = Query(None),
+    date_to: Optional[str] = Query(None),
+    include_benign: bool = Query(False),
+    db: Session = Depends(get_db),
+):
+    """Aggregate recorded causes into days lost, by group and responsibility.
+
+    Rows with no recorded cause are reported as unclassified rather than
+    dropped, so the total never looks more complete than it is.
+    """
+    from app.services.root_cause import summarise
+
+    clauses = ["scheme_id = :sid"]
+    params: dict = {"sid": scheme_id}
+    if date_from:
+        clauses.append("report_date >= CAST(:df AS date)")
+        params["df"] = date_from
+    if date_to:
+        clauses.append("report_date <= CAST(:dt AS date)")
+        params["dt"] = date_to
+
+    rows = db.execute(text(f"""
+        SELECT root_cause, COALESCE(days_lost, 0) AS days_lost
+        FROM dpr_entries_v2
+        WHERE {' AND '.join(clauses)}
+    """), params).fetchall()
+
+    report = summarise([(r[0], float(r[1] or 0)) for r in rows],
+                       include_benign=include_benign)
+    report["scheme_id"] = scheme_id
+    report["entries_examined"] = len(rows)
+    return report
+
+
+class PhotoVerifyIn(BaseModel):
+    photo_id: int
+
+
+@router.post("/photos/verify")
+def verify_dpr_photo(body: PhotoVerifyIn, db: Session = Depends(get_db)):
+    """Corroborate a stored photo against the entry it is attached to.
+
+    The result is persisted so a disputed measurement can be argued from the
+    record months later, rather than re-derived from a file that may since have
+    been re-encoded.
+    """
+    from datetime import datetime
+
+    from app.core.config import settings
+    from app.services.photo_evidence import verify_photo_file
+
+    row = db.execute(text("""
+        SELECT p.id, p.file_path, e.gps_lat, e.gps_lng, e.gps_accuracy_m,
+               e.report_date, e.created_at
+        FROM dpr_photos p
+        JOIN dpr_entries_v2 e ON e.id = p.dpr_entry_id
+        WHERE p.id = :pid
+    """), {"pid": body.photo_id}).mappings().first()
+    if not row:
+        raise HTTPException(404, "Photo not found")
+
+    upload_dir = getattr(settings, "UPLOAD_DIR", "uploads")
+    path = str(row["file_path"])
+    if not path.startswith("/"):
+        path = f"{str(upload_dir).rstrip('/')}/{path}"
+
+    # created_at is when the entry was saved, which is the moment the browser
+    # GPS was read; report_date alone would give midnight and make every
+    # afternoon photo look hours adrift.
+    entry_time = row["created_at"] or (
+        datetime.combine(row["report_date"], datetime.min.time())
+        if row["report_date"] else None)
+
+    result = verify_photo_file(
+        path, row["gps_lat"], row["gps_lng"], entry_time,
+        entry_accuracy_m=row["gps_accuracy_m"])
+
+    ev = result.evidence
+    db.execute(text("""
+        UPDATE dpr_photos SET
+            exif_lat = :lat, exif_lng = :lng, exif_taken_at = :taken,
+            camera_model = :cam, verification = :status,
+            distance_m = :dist, time_delta_s = :delta,
+            verification_note = :note
+        WHERE id = :pid
+    """), {
+        "lat": ev.lat if ev else None, "lng": ev.lng if ev else None,
+        "taken": ev.taken_at if ev else None,
+        "cam": (ev.camera_model if ev else None) or None,
+        "status": result.status,
+        "dist": result.distance_m, "delta": result.time_delta_s,
+        "note": " ".join(result.reasons)[:2000],
+        "pid": body.photo_id,
+    })
+    db.commit()
+    return result.as_dict()
+
+
+@router.get("/photos/integrity/{scheme_id}")
+def photo_integrity(scheme_id: int, db: Session = Depends(get_db)):
+    """Evidence quality across a scheme, plus any reused images.
+
+    The same file attached to two entries is the clearest sign of a recycled
+    photo, and it is only findable because the upload hash is stored.
+    """
+    counts = db.execute(text("""
+        SELECT COALESCE(p.verification, 'unverified') AS status, COUNT(*) AS n
+        FROM dpr_photos p JOIN dpr_entries_v2 e ON e.id = p.dpr_entry_id
+        WHERE e.scheme_id = :sid
+        GROUP BY 1
+    """), {"sid": scheme_id}).fetchall()
+
+    dupes = db.execute(text("""
+        SELECT p.sha256, COUNT(DISTINCT p.dpr_entry_id) AS entries
+        FROM dpr_photos p JOIN dpr_entries_v2 e ON e.id = p.dpr_entry_id
+        WHERE e.scheme_id = :sid AND p.sha256 IS NOT NULL AND p.sha256 <> ''
+        GROUP BY p.sha256 HAVING COUNT(DISTINCT p.dpr_entry_id) > 1
+    """), {"sid": scheme_id}).fetchall()
+
+    by_status = {r[0]: r[1] for r in counts}
+    total = sum(by_status.values())
+    verified = by_status.get("verified", 0)
+    return {
+        "scheme_id": scheme_id,
+        "total_photos": total,
+        "by_status": by_status,
+        "verified_pct": round(100.0 * verified / total, 1) if total else None,
+        "reused_images": [{"sha256": r[0], "entries": r[1]} for r in dupes],
+        "note": ("Unverified usually means the photo's EXIF was stripped, which "
+                 "messaging apps do routinely. It is not by itself evidence of "
+                 "anything — only 'suspect' indicates EXIF that disagrees."),
+    }
