@@ -43,6 +43,43 @@ def _manager():
     return get_manager()
 
 
+class ZonesIn(BaseModel):
+    zones: list = []
+
+
+@router.get("/{camera_id}/zones")
+async def get_zones(camera_id: str) -> dict:
+    """Current monitoring zones for a camera."""
+    try:
+        return _manager().get_zones(camera_id)
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+
+
+@router.put("/{camera_id}/zones")
+async def put_zones(camera_id: str, body: ZonesIn) -> dict:
+    """Replace a camera's monitoring zones. Applied live, no restart.
+
+    Every zone is validated first and the whole update is rejected on any
+    error, rather than silently dropping the bad one — an operator who has just
+    drawn a mask over a public road needs to know it did not take effect.
+    """
+    from app.ml.zones import validate_zone
+    problems: list[str] = []
+    for i, z in enumerate(body.zones or []):
+        if not isinstance(z, dict):
+            problems.append(f"zone {i}: not an object")
+            continue
+        problems += [f"zone {i} ({z.get('name') or 'unnamed'}): {p}"
+                     for p in validate_zone(z)]
+    if problems:
+        raise HTTPException(400, {"errors": problems})
+    try:
+        return _manager().set_zones(camera_id, body.zones or [])
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+
+
 @router.get("/health")
 async def fleet_health() -> dict:
     """Stream health for every camera.

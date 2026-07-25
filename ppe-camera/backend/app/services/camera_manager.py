@@ -26,6 +26,7 @@ from typing import Callable
 
 from app.ml.detector import FrameResult
 from app.ml.violations import ViolationEngine, ZoneRule
+from app.ml.zones import ZoneMap
 from app.ml.hazards import HazardConfig, HazardEngine
 from app.services.sources import FrameSource, build_source
 from app.services.inference_budget import get_budget
@@ -56,6 +57,10 @@ class CameraConfig:
     # non-PPE hazard rules (restricted zones, fall, near-miss, smoking, phone,
     # fire/smoke). None => a default HazardConfig (all rules on, no zones).
     restricted_zones: list = field(default_factory=list)
+    # PPE monitoring zones: masks over public areas, regions of interest, and
+    # per-zone gear requirements. Distinct from restricted_zones, which answer
+    # "this person should not be here at all".
+    monitoring_zones: list = field(default_factory=list)
     hazards_enabled: bool = True
 
 
@@ -107,7 +112,11 @@ class CameraWorker:
         # video file or an image folder, every frame is unique and dropping one
         # loses it permanently — so finite sources run to completion instead.
         self._admission_applies = not self._supervisor.is_finite
-        self._engine = ViolationEngine(ZoneRule(required=config.required_ppe))
+        self._engine = ViolationEngine(ZoneRule(
+            required=config.required_ppe,
+            zones=ZoneMap.from_config(config.monitoring_zones,
+                                      config.required_ppe) or None,
+        ))
         self._hazards = HazardEngine(
             HazardConfig(restricted_zones=list(config.restricted_zones))
         ) if config.hazards_enabled else None
@@ -163,8 +172,24 @@ class CameraWorker:
         self.config.required_ppe = cleaned
         # rebuild violation engine with new zone rule
         from app.ml.violations import ZoneRule, ViolationEngine
-        self._engine = ViolationEngine(ZoneRule(required=cleaned))
+        self._engine = ViolationEngine(ZoneRule(
+            required=cleaned,
+            zones=ZoneMap.from_config(self.config.monitoring_zones, cleaned) or None,
+        ))
         return sorted(cleaned)
+
+    def set_monitoring_zones(self, zones: list) -> dict:
+        """Hot-update masks and regions of interest.
+
+        Applied live because zone editing is iterative — an operator drags a
+        polygon over the public road and wants to see the false alerts stop,
+        not restart the camera and lose the stream for ten seconds.
+        """
+        zone_map = ZoneMap.from_config(zones, self.config.required_ppe)
+        self.config.monitoring_zones = list(zones or [])
+        rule = self._engine.rule
+        rule.zones = zone_map or None
+        return zone_map.describe()
 
     def _capture_meta(self, result) -> tuple[bool, str | None]:
         """Normalize capture-sink outputs so legacy bool sinks still work."""
@@ -423,6 +448,14 @@ class CameraManager:
 
     def set_required_ppe(self, camera_id: str, items: list[str] | set[str]) -> list[str]:
         return self._get(camera_id).set_required_ppe(items)
+
+    def get_zones(self, camera_id: str) -> dict:
+        w = self._get(camera_id)
+        return ZoneMap.from_config(w.config.monitoring_zones,
+                                   w.config.required_ppe).describe()
+
+    def set_zones(self, camera_id: str, zones: list) -> dict:
+        return self._get(camera_id).set_monitoring_zones(zones)
 
     def status(self, camera_id: str) -> dict:
         w = self._get(camera_id)

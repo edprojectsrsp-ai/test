@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 
 from app.ml.detector import Detection, FrameResult
 from app.ml import taxonomy
+from app.ml.zones import ZoneMap
 
 # ---------------------------------------------------------------------------
 # Anatomical bands as fractions of person-box height, measured from the top.
@@ -87,6 +88,9 @@ class ZoneRule:
     min_evidence_conf: float = 0.35   # below this a negative detection is weak
     require_band: bool = True         # enforce anatomical placement
     edge_margin_px: int = 4           # how close to the edge counts as truncated
+    # Where PPE is enforced on this camera, and which gear applies where.
+    # None means the whole frame under `required`.
+    zones: ZoneMap | None = None
 
 
 @dataclass
@@ -99,6 +103,7 @@ class FiredViolation:
     rule_type: str = "ppe"            # "ppe" | restricted_area | fall | ...
     evidence_frames: int = 0          # how many frames supported it
     identity: str = ""                # resolved identity key
+    zone: str | None = None           # monitoring zone the person was standing in
 
 
 @dataclass
@@ -286,7 +291,25 @@ class ViolationEngine:
 
         for person in people:
             ident = self._resolve_identity(person)
-            for item in self.rule.required:
+
+            # Where is this person standing, and do our rules apply there?
+            # Without this a camera that also frames a public road turns every
+            # passer-by into a violation, and a system that cries wolf stops
+            # being read.
+            required = self.rule.required
+            zone_name = None
+            if self.rule.zones is not None:
+                decision = self.rule.zones.evaluate(
+                    person.xyxy, fr.width, fr.height)
+                if not decision.monitored:
+                    assessments.append(PersonAssessment(
+                        ident.key, "-", "unassessable", 0.0, decision.reason))
+                    continue
+                zone_name = decision.zone_name
+                if decision.required_ppe:
+                    required = decision.required_ppe
+
+            for item in required:
                 ok, why = self._assessable(person, item, fr.width, fr.height)
                 if not ok:
                     assessments.append(PersonAssessment(
@@ -319,6 +342,7 @@ class ViolationEngine:
                     at=now,
                     evidence_frames=int(score),
                     identity=ident.key,
+                    zone=zone_name,
                 ))
 
         self.last_assessments = assessments
