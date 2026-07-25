@@ -93,6 +93,12 @@ export default function PPEAlertSettings() {
   const [quietFrom, setQuietFrom] = useState(-1);
   const [quietTo, setQuietTo] = useState(-1);
   const [incidents, setIncidents] = useState(null);
+  // Detection tuning — the settings that decide whether a violation is even
+  // assessable. min_person_px is the one that most affects false negatives.
+  const [cameras, setCameras] = useState([]);
+  const [camId, setCamId] = useState("");
+  const [rule, setRule] = useState(null);
+  const [ruleBusy, setRuleBusy] = useState("");
   const [discovered, setDiscovered] = useState([]);
   const [busy, setBusy] = useState("");
   const [msg, setMsg] = useState(null);
@@ -125,6 +131,23 @@ export default function PPEAlertSettings() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    api("/api/cameras")
+      .then((d) => {
+        const list = Array.isArray(d) ? d : (d.cameras || []);
+        setCameras(list);
+        if (list.length && !camId) setCamId(list[0].camera_id || list[0].id);
+      })
+      .catch(() => setCameras([]));
+  }, []);
+
+  useEffect(() => {
+    if (!camId) { setRule(null); return; }
+    api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`)
+      .then(setRule)
+      .catch(() => setRule(null));
+  }, [camId]);
 
   const save = async () => {
     setBusy("save");
@@ -464,6 +487,116 @@ export default function PPEAlertSettings() {
               </div>
             )}
           </div>
+        )}
+      </Section>
+
+      <Section
+        title="Detection tuning"
+        hint="Per camera. These decide whether a person can be judged at all — a 20-pixel figure at the back of a yard cannot be, and guessing would be worse than declining."
+      >
+        {cameras.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: C.sub }}>
+            No cameras configured yet. Add one in the Live tab first.
+          </div>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: C.sub }}>Camera</span>
+              <select value={camId} onChange={(e) => setCamId(e.target.value)}
+                style={{ ...inputStyle, ...mono, width: "auto", minWidth: 190 }}>
+                {cameras.map((c) => {
+                  const id = c.camera_id || c.id;
+                  return <option key={id} value={id}>{id}{c.location ? ` — ${c.location}` : ""}</option>;
+                })}
+              </select>
+              {rule?.priority && (
+                <span style={{ fontSize: 11, color: C.sub }}>
+                  priority <strong>{rule.priority}</strong> — decides its share of
+                  detector capacity when the fleet is oversubscribed
+                </span>
+              )}
+            </div>
+
+            {!rule ? (
+              <div style={{ fontSize: 12.5, color: C.sub }}>Loading camera rules…</div>
+            ) : (
+              <>
+                <div style={{ marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 5 }}>
+                    Priority under load
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {["critical", "high", "normal", "low"].map((p) => (
+                      <button key={p} onClick={() => setRule((r) => ({ ...r, priority: p }))}
+                        style={{
+                          padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 700,
+                          cursor: "pointer",
+                          background: rule.priority === p ? "#eef4fb" : C.panel2,
+                          color: rule.priority === p ? "#1c4f82" : C.sub,
+                          border: `1px solid ${rule.priority === p ? "#9dc0e4" : C.line}`,
+                        }}>{p}</button>
+                    ))}
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.sub, marginTop: 5 }}>
+                    A gate watching everyone enter should not be starved by a storage yard.
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(215px,1fr))", gap: 12 }}>
+                  {[
+                    ["min_person_px", "Min person height (px)",
+                     "Below this, PPE is not judged. 64 suits 1080p; a gantry camera down a long yard needs it lower. This setting most affects missed violations."],
+                    ["always_assess_frac", "Always assess above (frame %)",
+                     "A person filling this much of the frame is judged even on a low-resolution or analogue feed, where an absolute pixel floor would gate out everyone."],
+                    ["min_frames", "Frames before firing",
+                     "Evidence needed within the window. One frame of 'no helmet' is noise, not a violation."],
+                    ["window_frames", "Evidence window (frames)",
+                     "How far back supporting frames are counted."],
+                    ["occlusion_grace_frames", "Occlusion grace (frames)",
+                     "How long a person keeps their identity while hidden. Too low and a crowded site resets evidence constantly."],
+                    ["min_evidence_conf", "Min detection confidence",
+                     "Below this a 'no helmet' box is too weak to count as evidence."],
+                  ].map(([key, label, hint]) => (
+                    <label key={key} style={{ display: "block" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>{label}</div>
+                      <input type="number" step={key.includes("frac") || key.includes("conf") ? 0.05 : 1}
+                        min={0} value={rule[key] ?? ""}
+                        onChange={(e) => setRule((r) => ({ ...r, [key]: Number(e.target.value) }))}
+                        style={{ ...inputStyle, ...mono }} />
+                      <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4, lineHeight: 1.45 }}>{hint}</div>
+                    </label>
+                  ))}
+                </div>
+
+                <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 14, cursor: "pointer" }}>
+                  <input type="checkbox" checked={rule.require_band !== false}
+                    onChange={(e) => setRule((r) => ({ ...r, require_band: e.target.checked }))} />
+                  <span style={{ fontSize: 12.5, color: C.ink }}>
+                    Require gear to be anatomically placed
+                  </span>
+                </label>
+                <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4, marginLeft: 24 }}>
+                  Stops a helmet lying on the ground at a worker's feet from counting as worn.
+                  Turn off only if your model's boxes are unreliable.
+                </div>
+
+                <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                  <Btn tone="primary" disabled={ruleBusy === "save"} onClick={async () => {
+                    setRuleBusy("save");
+                    try {
+                      await api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(rule),
+                      });
+                      flash("ok", `Detection rules saved for ${camId}. Applied live.`);
+                    } catch (e) { flash("danger", e.message); }
+                    finally { setRuleBusy(""); }
+                  }}>{ruleBusy === "save" ? "Saving…" : "Save camera rules"}</Btn>
+                </div>
+              </>
+            )}
+          </>
         )}
       </Section>
     </div>

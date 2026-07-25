@@ -43,6 +43,49 @@ def _manager():
     return get_manager()
 
 
+class DetectionRuleIn(BaseModel):
+    """Per-camera detection tuning. Every field optional — a partial update
+    leaves the rest untouched."""
+    min_person_px: int | None = None
+    min_person_frac: float | None = None
+    always_assess_frac: float | None = None
+    min_frames: int | None = None
+    window_frames: int | None = None
+    occlusion_grace_frames: int | None = None
+    min_evidence_conf: float | None = None
+    require_band: bool | None = None
+    cooldown_s: float | None = None
+    priority: str | None = None
+
+
+@router.get("/{camera_id}/detection-rule")
+async def get_detection_rule(camera_id: str) -> dict:
+    try:
+        return _manager().get_detection_rule(camera_id)
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+
+
+@router.put("/{camera_id}/detection-rule")
+async def put_detection_rule(camera_id: str, body: DetectionRuleIn) -> dict:
+    """Update detection tuning for one camera. Applied live.
+
+    min_person_px is the setting that most affects missed violations: 64 suits
+    1080p, but a gantry camera looking down a 200 m yard will gate out most
+    workers at that value. It has to be per camera.
+    """
+    patch = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not patch:
+        raise HTTPException(400, "Empty update")
+    if "priority" in patch and patch["priority"] not in (
+            "critical", "high", "normal", "low"):
+        raise HTTPException(400, "priority must be critical, high, normal or low")
+    try:
+        return _manager().set_detection_rule(camera_id, patch)
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+
+
 class ZonesIn(BaseModel):
     zones: list = []
 

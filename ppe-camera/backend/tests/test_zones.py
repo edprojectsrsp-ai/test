@@ -332,3 +332,58 @@ class TestViolationEngineIntegration:
         for _ in range(10):
             fired += e.update(self._frame(box, head))
         assert fired, "backward compatibility broken"
+
+
+class TestLiveTuning:
+    """Detection rules must be changeable mid-shift without losing evidence."""
+
+    @staticmethod
+    def _worker():
+        from app.ml.detector import FrameResult
+        from app.services.camera_manager import CameraConfig, CameraWorker
+        return CameraWorker(
+            CameraConfig(camera_id="t", source_kind="rtsp", required_ppe={"helmet"}),
+            detect_fn=lambda f: FrameResult(width=W, height=H),
+            capture_sink=lambda *a, **k: False)
+
+    def test_rule_round_trips(self):
+        w = self._worker()
+        before = w.get_detection_rule()
+        assert before["min_person_px"] == 64 and before["priority"] == "normal"
+        after = w.set_detection_rule({"min_person_px": 24, "priority": "critical"})
+        assert after["min_person_px"] == 24 and after["priority"] == "critical"
+        assert w.get_detection_rule()["min_person_px"] == 24
+
+    def test_partial_update_leaves_other_fields_alone(self):
+        w = self._worker()
+        w.set_detection_rule({"min_frames": 9})
+        r = w.get_detection_rule()
+        assert r["min_frames"] == 9 and r["min_person_px"] == 64
+
+    def test_tuning_does_not_discard_accumulated_evidence(self):
+        """Rebuilding the engine would silently reset every in-progress
+        violation, so raising a threshold mid-shift would lose them."""
+        from app.ml.detector import Detection, FrameResult
+        w = self._worker()
+        w._engine.rule.min_frames = 5
+        box = person_at(0.5, feet_frac=0.5)
+        fr = FrameResult(width=W, height=H)
+        fr.detections = [
+            Detection("person", "person", 0.9, box, 1),
+            Detection("no_helmet", "no_helmet", 0.9,
+                      (box[0] + 10, box[1], box[0] + 60, box[1] + 60), None),
+        ]
+        for _ in range(3):
+            w._engine.update(fr)
+        evidence_before = len(w._engine.evidence_for("t1", "helmet"))
+        assert evidence_before == 3
+        w.set_detection_rule({"min_person_px": 32})
+        assert len(w._engine.evidence_for("t1", "helmet")) == evidence_before
+
+    def test_zones_survive_a_detection_rule_change(self):
+        w = self._worker()
+        w.set_monitoring_zones([{"name": "road", "kind": "exclude",
+                                 "points": [[0.5, 0], [1, 0], [1, 1], [0.5, 1]]}])
+        assert w._engine.rule.zones is not None
+        w.set_detection_rule({"min_frames": 4})
+        assert w._engine.rule.zones is not None, "zones lost on rule update"

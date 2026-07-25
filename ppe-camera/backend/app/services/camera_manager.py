@@ -178,6 +178,55 @@ class CameraWorker:
         ))
         return sorted(cleaned)
 
+    # Field names as the API exposes them -> ZoneRule attribute.
+    _RULE_FIELDS = {
+        "min_person_px": "min_person_px",
+        "min_person_frac": "min_person_frac",
+        "always_assess_frac": "always_assess_frac",
+        "min_frames": "min_frames",
+        "window_frames": "window",
+        "occlusion_grace_frames": "occlusion_grace_frames",
+        "min_evidence_conf": "min_evidence_conf",
+        "require_band": "require_band",
+        "cooldown_s": "cooldown_s",
+    }
+
+    def get_detection_rule(self) -> dict:
+        r = self._engine.rule
+        out = {api_name: getattr(r, attr)
+               for api_name, attr in self._RULE_FIELDS.items()}
+        out["priority"] = self.config.priority
+        out["camera_id"] = self.config.camera_id
+        out["required_ppe"] = sorted(self.config.required_ppe)
+        return out
+
+    def set_detection_rule(self, patch: dict) -> dict:
+        """Apply detection tuning live.
+
+        Mutating the existing rule rather than rebuilding the engine is
+        deliberate: a rebuild would discard every identity's accumulated
+        evidence, so raising a threshold mid-shift would silently reset all
+        in-progress violations.
+        """
+        r = self._engine.rule
+        for api_name, attr in self._RULE_FIELDS.items():
+            if api_name in patch and patch[api_name] is not None:
+                setattr(r, attr, patch[api_name])
+        # window is a deque maxlen captured at creation, so an existing
+        # identity keeps its old window until it ages out. Say so rather than
+        # pretending the change is instant everywhere.
+        if "priority" in patch and patch["priority"]:
+            self.config.priority = patch["priority"]
+            try:
+                get_budget().register(
+                    self.config.camera_id,
+                    requested_fps=self.config.fps_limit or 30.0,
+                    priority=self.config.priority,
+                )
+            except Exception:
+                pass
+        return self.get_detection_rule()
+
     def set_monitoring_zones(self, zones: list) -> dict:
         """Hot-update masks and regions of interest.
 
@@ -448,6 +497,12 @@ class CameraManager:
 
     def set_required_ppe(self, camera_id: str, items: list[str] | set[str]) -> list[str]:
         return self._get(camera_id).set_required_ppe(items)
+
+    def get_detection_rule(self, camera_id: str) -> dict:
+        return self._get(camera_id).get_detection_rule()
+
+    def set_detection_rule(self, camera_id: str, patch: dict) -> dict:
+        return self._get(camera_id).set_detection_rule(patch)
 
     def get_zones(self, camera_id: str) -> dict:
         w = self._get(camera_id)

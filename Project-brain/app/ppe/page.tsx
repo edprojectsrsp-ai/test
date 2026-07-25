@@ -6,10 +6,12 @@ import ViolationsGallery from "../../components/ppe/ViolationsGallery";
 import PPEAnalytics from "../../components/ppe/PPEAnalytics";
 import PPEReports from "../../components/ppe/PPEReports";
 import PPEAlertSettings from "../../components/ppe/PPEAlertSettings";
+import PPEFleetHealth from "../../components/ppe/PPEFleetHealth";
+import PPEZoneEditor from "../../components/ppe/PPEZoneEditor";
 
 const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
 
-type Tab = "live" | "alerts" | "reports" | "analytics" | "review" | "settings";
+type Tab = "live" | "alerts" | "reports" | "analytics" | "review" | "health" | "zones" | "settings";
 
 type Health = "connecting" | "online" | "offline";
 
@@ -19,7 +21,9 @@ const TABS: { id: Tab; label: string; hint: string }[] = [
   { id: "reports", label: "Reports", hint: "Audit log · trends · CSV export" },
   { id: "analytics", label: "Analytics", hint: "KPIs · model PPE coverage" },
   { id: "review", label: "Review", hint: "Label frames to improve the model" },
-  { id: "settings", label: "Settings", hint: "Telegram alerts \u00b7 cooldown \u00b7 channels" },
+  { id: "health", label: "Health", hint: "Stream uptime \u00b7 freezes \u00b7 detector capacity" },
+  { id: "zones", label: "Zones", hint: "Mask public areas \u00b7 per-zone gear rules" },
+  { id: "settings", label: "Settings", hint: "Telegram alerts \u00b7 dedup \u00b7 detection tuning" },
 ];
 
 export default function PPEPage() {
@@ -335,6 +339,10 @@ export default function PPEPage() {
           <PPEReports embedded />
         ) : tab === "analytics" ? (
           <PPEAnalytics embedded />
+        ) : tab === "health" ? (
+          <PPEFleetHealth />
+        ) : tab === "zones" ? (
+          <ZonesTab />
         ) : tab === "settings" ? (
           <PPEAlertSettings />
         ) : (
@@ -382,6 +390,58 @@ function MetaChip({
     >
       <span style={{ color: "var(--ink-4)", fontWeight: 600 }}>{label}</span>
       <span style={{ color: map.fg, fontWeight: 800, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    </div>
+  );
+}
+
+/**
+ * Zones tab — pick a camera, then draw on its live feed.
+ *
+ * Kept here rather than inside the editor so the editor stays a pure
+ * single-camera component and can also be opened from the live grid.
+ */
+function ZonesTab() {
+  const API = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+  const [cams, setCams] = useState<any[]>([]);
+  const [sel, setSel] = useState<string>("");
+
+  useEffect(() => {
+    fetch(`${API}/api/cameras`, { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        const list = Array.isArray(d) ? d : (d.cameras || []);
+        setCams(list);
+        if (list.length) setSel(list[0].camera_id || list[0].id);
+      })
+      .catch(() => setCams([]));
+  }, [API]);
+
+  if (!cams.length) {
+    return (
+      <div style={{ padding: 18, fontSize: 13, color: "var(--ink-3)" }}>
+        No cameras configured yet. Add one in the Live tab, then come back to
+        mask any public areas it can see.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-3)" }}>Camera</span>
+        <select value={sel} onChange={(e) => setSel(e.target.value)}
+          style={{
+            padding: "7px 11px", borderRadius: 8, fontSize: 12.5,
+            border: "1px solid var(--line)", background: "var(--panel)",
+            color: "var(--ink)", minWidth: 200,
+          }}>
+          {cams.map((c) => {
+            const id = c.camera_id || c.id;
+            return <option key={id} value={id}>{id}{c.location ? ` \u2014 ${c.location}` : ""}</option>;
+          })}
+        </select>
+      </div>
+      {sel ? <PPEZoneEditor key={sel} cameraId={sel} /> : null}
     </div>
   );
 }
