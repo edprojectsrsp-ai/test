@@ -23,22 +23,22 @@ from ..core.delay_analysis import (DelayAnalyzer, BaselineActivity)
 from ..core import reports
 
 
-async def _load_project(session: AsyncSession, project_id: int):
+async def _load_project(session: AsyncSession, project_id: str):
     row = (await session.execute(
         sql_text("SELECT id, name, start_date, data_date "
                  "FROM projects WHERE id = :pid"),
-        {"pid": int(project_id)})).mappings().first()
+        {"pid": project_id})).mappings().first()
     if not row:
         raise ValueError("Project not found")
     return row
 
 
-async def _load_calendar(session: AsyncSession, project_id: int) -> WorkCalendar:
+async def _load_calendar(session: AsyncSession, project_id: str) -> WorkCalendar:
     row = (await session.execute(
         sql_text("SELECT c.name, c.working_weekdays, c.holidays "
                  "FROM calendars c JOIN projects p "
                  "ON p.default_calendar_id = c.id WHERE p.id = :pid"),
-        {"pid": int(project_id)})).mappings().first()
+        {"pid": project_id})).mappings().first()
     if not row:
         return DEFAULT_CALENDAR
     return calendar_from_spec({
@@ -48,7 +48,7 @@ async def _load_calendar(session: AsyncSession, project_id: int) -> WorkCalendar
     })
 
 
-async def _load_activities(session: AsyncSession, project_id: int):
+async def _load_activities(session: AsyncSession, project_id: str):
     rows = (await session.execute(
         sql_text("""
             SELECT id, code, name, duration, remaining_duration,
@@ -56,11 +56,11 @@ async def _load_activities(session: AsyncSession, project_id: int):
                    constraint_type, constraint_date, agency, discipline,
                    package, area
             FROM activities WHERE project_id = :pid
-        """), {"pid": int(project_id)})).mappings().all()
+        """), {"pid": project_id})).mappings().all()
     return rows
 
 
-async def _load_relationships(session: AsyncSession, project_id: int):
+async def _load_relationships(session: AsyncSession, project_id: str):
     rows = (await session.execute(
         sql_text("""
             SELECT r.rel_type, r.lag, p.code AS pred_code, s.code AS succ_code
@@ -68,14 +68,15 @@ async def _load_relationships(session: AsyncSession, project_id: int):
             JOIN activities p ON p.id = r.predecessor_id
             JOIN activities s ON s.id = r.successor_id
             WHERE r.project_id = :pid
-        """), {"pid": int(project_id)})).mappings().all()
+        """), {"pid": project_id})).mappings().all()
     return rows
 
 
-def _to_cpm_activities(rows) -> tuple[list[CPMActivity], dict[str, int]]:
+def _to_cpm_activities(rows) -> tuple[list[CPMActivity], dict[str, str]]:
     acts, code_to_uuid = [], {}
     for r in rows:
-        code_to_uuid[r["code"]] = int(r["id"])
+        # activity ids are UUID; int() raised on every real row here
+        code_to_uuid[r["code"]] = r["id"]
         acts.append(CPMActivity(
             id=r["code"], name=r["name"], duration=int(r["duration"] or 0),
             remaining_duration=r["remaining_duration"],
@@ -88,9 +89,9 @@ def _to_cpm_activities(rows) -> tuple[list[CPMActivity], dict[str, int]]:
     return acts, code_to_uuid
 
 
-async def run_cpm(session: AsyncSession, project_id: int,
+async def run_cpm(session: AsyncSession, project_id: str,
                   persist: bool = True) -> CPMResult:
-    project_id = int(project_id)
+    project_id = project_id
     proj = await _load_project(session, project_id)
     cal = await _load_calendar(session, project_id)
     act_rows = await _load_activities(session, project_id)
@@ -119,10 +120,10 @@ async def run_cpm(session: AsyncSession, project_id: int,
     return result
 
 
-async def run_dcma(session: AsyncSession, project_id: int,
+async def run_dcma(session: AsyncSession, project_id: str,
                    baseline_id: Optional[int] = None) -> dict:
-    project_id = int(project_id)
-    baseline_id = int(baseline_id) if baseline_id is not None else None
+    project_id = project_id
+    baseline_id = baseline_id if baseline_id is not None else None
     proj = await _load_project(session, project_id)
     cal = await _load_calendar(session, project_id)
     act_rows = await _load_activities(session, project_id)
@@ -160,10 +161,10 @@ async def run_dcma(session: AsyncSession, project_id: int,
     return report.as_dict()
 
 
-async def run_delay(session: AsyncSession, project_id: int,
-                    baseline_id: int) -> dict:
-    project_id = int(project_id)
-    baseline_id = int(baseline_id)
+async def run_delay(session: AsyncSession, project_id: str,
+                    baseline_id: str) -> dict:
+    project_id = project_id
+    baseline_id = baseline_id
     cpm = await run_cpm(session, project_id, persist=False)
     cal = await _load_calendar(session, project_id)
 
@@ -210,8 +211,8 @@ async def run_delay(session: AsyncSession, project_id: int,
 # ---------------------------------------------------------------------------
 # report export
 # ---------------------------------------------------------------------------
-async def _delay_report_obj(session: AsyncSession, project_id: int,
-                            baseline_id: int, cpm: CPMResult):
+async def _delay_report_obj(session: AsyncSession, project_id: str,
+                            baseline_id: str, cpm: CPMResult):
     """Build a DelayReport engine object (not the JSON dict) for export."""
     cal = await _load_calendar(session, project_id)
     bl_rows = (await session.execute(sql_text("""
@@ -237,7 +238,7 @@ async def _delay_report_obj(session: AsyncSession, project_id: int,
         current_project_finish=cpm.project_finish, groups=groups).analyze()
 
 
-async def export_reports(session: AsyncSession, project_id: int, fmt: str,
+async def export_reports(session: AsyncSession, project_id: str, fmt: str,
                          out_path: str, baseline_id: Optional[int] = None,
                          look_ahead_days: int = 0) -> str:
     """
@@ -282,5 +283,5 @@ async def export_reports(session: AsyncSession, project_id: int, fmt: str,
     else:
         raise ValueError(f"unsupported format: {fmt}")
     return out_path
-    project_id = int(project_id)
-    baseline_id = int(baseline_id) if baseline_id is not None else None
+    project_id = project_id
+    baseline_id = baseline_id if baseline_id is not None else None

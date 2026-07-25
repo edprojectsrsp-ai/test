@@ -21,7 +21,9 @@ from typing import Iterable, Optional
 
 @dataclass(frozen=True)
 class BaselineRef:
-    baseline_id: int
+    # Opaque identifier. Baselines have UUID primary keys, so this must not be
+    # narrowed to int — it only ever needs to be hashable and printable.
+    baseline_id: str
     name: str
     project_finish: Optional[date] = None
     captured_at: Optional[date] = None
@@ -29,7 +31,7 @@ class BaselineRef:
 
 @dataclass(frozen=True)
 class BaselineActivityRow:
-    baseline_id: int
+    baseline_id: str
     code: str
     bl_start: Optional[date] = None
     bl_finish: Optional[date] = None
@@ -50,7 +52,7 @@ class CurrentActivityRow:
 
 @dataclass
 class CellVariance:
-    baseline_id: int
+    baseline_id: str
     bl_start: Optional[date]
     bl_finish: Optional[date]
     start_var_days: Optional[int]
@@ -68,13 +70,13 @@ class ActivityComparison:
     current_finish: Optional[date]
     current_critical: bool
     percent_complete: float
-    cells: dict[int, CellVariance] = field(default_factory=dict)
+    cells: dict[str, CellVariance] = field(default_factory=dict)
     worst_slip_days: int = 0          # largest finish slip across all baselines
 
 
 @dataclass
 class BaselineSummary:
-    baseline_id: int
+    baseline_id: str
     name: str
     project_finish: Optional[date]
     current_project_finish: Optional[date]
@@ -144,7 +146,7 @@ def compare_baselines(
     """Compare the live schedule against every supplied baseline at once."""
     current_list = list(current)
     baseline_list = list(baselines)
-    by_baseline: dict[int, dict[str, BaselineActivityRow]] = {
+    by_baseline: dict[str, dict[str, BaselineActivityRow]] = {
         b.baseline_id: {} for b in baseline_list}
     for row in baseline_rows:
         if row.baseline_id in by_baseline:
@@ -157,8 +159,8 @@ def compare_baselines(
     comparisons: list[ActivityComparison] = []
     counters = {b.baseline_id: {"slipped": 0, "ahead": 0, "on_track": 0, "added": 0}
                 for b in baseline_list}
-    went_critical: dict[int, list[str]] = {b.baseline_id: [] for b in baseline_list}
-    seen_codes: dict[int, set[str]] = {b.baseline_id: set() for b in baseline_list}
+    went_critical: dict[str, list[str]] = {b.baseline_id: [] for b in baseline_list}
+    seen_codes: dict[str, set[str]] = {b.baseline_id: set() for b in baseline_list}
 
     for act in current_list:
         comp = ActivityComparison(

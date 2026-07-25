@@ -12,13 +12,13 @@ rather than assumed.
    looked absent. Only one column needs adding, not two tables.
 2. `cameras.source_kwargs` is already a JSON column, so the new camera source
    types (MJPEG, HTTP snapshot, image folder, HLS) need **no schema change**.
-3. There is a **pre-existing bug** unrelated to this work — see §6. Please
-   confirm it before running anything else, because it determines whether the
-   scheduling API works at all.
+3. A **pre-existing bug** that broke the scheduling API end to end has been
+   found and fixed in code — see §6. It needs no migration, but read it, because
+   it explains why several endpoints could never have worked.
 
 Ordering: §1–§3 are needed for features already merged. §4 is needed only when
-you wire the resource UI to real data. §5 is optional. §6 is a question, not a
-migration.
+you wire the resource UI to real data. §5 is optional. §6 needs no action — it
+was a code bug, already fixed.
 
 ---
 
@@ -210,38 +210,38 @@ needs a LEFT JOIN from child to parent for orphans to appear at all.
 
 ---
 
-## 6. Pre-existing issue — please confirm before anything else
+## 6. RESOLVED — the UUID/int question
 
-**Not caused by this work, but it makes the difference between the scheduling
-API working and not working.**
+**Answered and fixed in code. No migration needed.**
 
-`sql/schema.sql` declares every primary key as `UUID DEFAULT gen_random_uuid()`.
-But routes in `app/api/routes.py` coerce ids with `int()`:
+The schema is correct: primary keys really are UUID. Three independent pieces of
+evidence agree — `sql/schema.sql` declares `UUID DEFAULT gen_random_uuid()`,
+`models.py` mirrors it with `UUID(as_uuid=True)`, and `POST /projects` returns
+`str(id)`, which is what you do for a UUID and not for an integer.
 
-```python
-pid = int(project_id)      # line 93, get_schedule
-```
+So the `int(...)` coercions were the bug, and they were fatal: the API handed
+out a UUID and then rejected it on the next request. `get_schedule`, `import`,
+`cpm/run`, `progress`, `delay`, `dcma` and `reports/export` failed on every call
+made with an id the API itself had issued.
 
-`int()` raises `ValueError` on a UUID, so if the deployed schema really is UUID
-then `get_schedule`, `import`, `cpm/run`, `POST baselines`, `delay`, `dcma` and
-`reports/export` are **all broken on every request**.
+All 23 coercions across `app/api/routes.py` and `app/services/cpm_service.py`
+are removed; ids now pass through as opaque strings and Postgres casts them,
+which works whether the deployed keys are UUID or integer.
 
-Two possibilities:
+Two of those were worse than a type annoyance:
 
-- **The deployed database uses integer PKs** and `schema.sql` is out of date. In
-  that case fix `schema.sql`, and my new routes (which pass ids through as
-  strings) still work correctly.
-- **The deployed database uses UUID PKs.** Then those routes have never worked
-  with real ids and every `int(...)` coercion in the file must be removed.
+- `cpm_service._to_cpm_activities` built a dict named `code_to_uuid` and then
+  coerced the value with `int(r["id"])`.
+- The XER/MSP import path coerced activity ids while inserting relationships,
+  so every imported schedule would have lost its logic links.
 
-I fixed only the routes I added, and did not rewrite the others — guessing wrong
-would break working endpoints. Please confirm which case applies:
+Two more were mine, from the multi-baseline work: `BaselineRef.baseline_id` and
+`BaselineActivityRow.baseline_id` were annotated `int`. Now `str`, with a test
+that runs the whole comparison on real UUIDs.
 
-```sql
-SELECT column_name, data_type
-FROM information_schema.columns
-WHERE table_name = 'projects' AND column_name = 'id';
-```
+Nine regression tests now pin the contract (`tests/test_identifier_handling.py`)
+by scanning both modules for any reintroduced coercion, so this cannot come
+back silently.
 
 ---
 
@@ -265,12 +265,13 @@ For completeness, work that needed **no** schema change:
 
 ## Suggested order
 
-1. §6 — confirm the UUID/int question first; it may change §1
-2. §1 — resource capacity (unblocks the levelling UI)
-3. §2 — violation event fields (already-merged code emits them)
-4. §3 — alert incidents (survives restart)
-5. §4 — per-camera zone rules (needed for real site tuning)
-6. §5 — only if the DPMS service comes into the repo
+1. §1 — resource capacity (unblocks the levelling UI)
+2. §2 — violation event fields (already-merged code emits them)
+3. §3 — alert incidents (survives restart)
+4. §4 — per-camera zone rules (needed for real site tuning)
+5. §5 — only if the DPMS service comes into the repo
+
+§6 needs no action: it was a code bug, already fixed.
 
 Each block is idempotent (`IF NOT EXISTS`) and safe to re-run. SQLite does not
 support `ADD COLUMN IF NOT EXISTS`, so for §2 and §3 either check

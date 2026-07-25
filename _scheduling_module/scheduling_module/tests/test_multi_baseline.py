@@ -175,3 +175,26 @@ def test_current_start_present_for_bar_drawing(scenario):
     payload = compare_baselines(cur, bls, rows).to_dict()
     assert payload["activities"][0]["current_start"] is not None
     assert payload["activities"][0]["cells"]["1"]["bl_start"] is not None
+
+
+def test_works_with_uuid_baseline_ids():
+    """Baselines have UUID primary keys. The comparison must key on whatever
+    the database issues, not on small integers that only appear in fixtures."""
+    import uuid
+    b1, b2 = str(uuid.uuid4()), str(uuid.uuid4())
+    result = compare_baselines(
+        current=[CurrentActivityRow("A010", "Mobilisation", D(2026, 1, 1),
+                                    D(2026, 3, 1), 60, False, 50)],
+        baselines=[BaselineRef(b1, "Original", project_finish=D(2026, 2, 1)),
+                   BaselineRef(b2, "Rebaseline", project_finish=D(2026, 3, 1))],
+        baseline_rows=[
+            BaselineActivityRow(b1, "A010", D(2026, 1, 1), D(2026, 2, 1), 31, True),
+            BaselineActivityRow(b2, "A010", D(2026, 1, 1), D(2026, 3, 1), 60, True),
+        ],
+    )
+    act = result.activities[0]
+    assert act.cells[b1].finish_var_days == 28      # late against the original
+    assert act.cells[b2].finish_var_days == 0       # holding the rebaseline
+    payload = result.to_dict()
+    assert payload["activities"][0]["cells"][b1]["status"] == "slipped"
+    assert payload["activities"][0]["cells"][b2]["status"] == "on_track"

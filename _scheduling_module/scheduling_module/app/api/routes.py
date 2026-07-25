@@ -90,7 +90,7 @@ async def create_project(body: ProjectIn, s: AsyncSession = Depends(get_session)
 
 @router.get("/projects/{project_id}/schedule")
 async def get_schedule(project_id: str, s: AsyncSession = Depends(get_session)):
-    pid = int(project_id)
+    pid = project_id
     proj = (await s.execute(sql_text("""
         SELECT id, name, start_date, data_date
         FROM projects WHERE id = :pid
@@ -186,7 +186,7 @@ async def get_schedule(project_id: str, s: AsyncSession = Depends(get_session)):
 @router.post("/projects/{project_id}/import")
 async def import_schedule(project_id: str, file: UploadFile = File(...),
                           s: AsyncSession = Depends(get_session)):
-    pid = int(project_id)
+    pid = project_id
     raw = await file.read()
     name = (file.filename or "").lower()
     try:
@@ -232,8 +232,8 @@ async def import_schedule(project_id: str, file: UploadFile = File(...),
                     successor_id, rel_type, lag)
                 VALUES (:pid,:p,:su,:rt,:lag)
                 ON CONFLICT DO NOTHING
-            """), {"pid": pid, "p": int(code_to_id[r.pred_src_id]),
-                   "su": int(code_to_id[r.succ_src_id]), "rt": r.rel_type,
+            """), {"pid": pid, "p": code_to_id[r.pred_src_id],
+                   "su": code_to_id[r.succ_src_id], "rt": r.rel_type,
                    "lag": r.lag})
     await s.execute(sql_text("""
         INSERT INTO schedule_imports (project_id, file_name, file_format,
@@ -249,7 +249,7 @@ async def import_schedule(project_id: str, file: UploadFile = File(...),
 # ---- CPM -------------------------------------------------------------------
 @router.post("/projects/{project_id}/cpm/run")
 async def cpm_run(project_id: str, s: AsyncSession = Depends(get_session)):
-    res = await cpm_service.run_cpm(s, int(project_id), persist=True)
+    res = await cpm_service.run_cpm(s, project_id, persist=True)
     return {
         "project_start": res.project_start.isoformat(),
         "project_finish": res.project_finish.isoformat(),
@@ -279,18 +279,18 @@ async def update_progress(activity_id: str, body: ProgressIn,
             INSERT INTO update_logs (project_id, activity_id, field_name,
                 previous_value, revised_value, changed_by, remarks)
             VALUES (:pid,:aid,:f,:prev,:rev,:by,:rem)
-        """), {"pid": int(cur["project_id"]), "aid": int(activity_id), "f": field,
+        """), {"pid": cur["project_id"], "aid": activity_id, "f": field,
                "prev": str(cur[field]), "rev": str(new_val),
                "by": body.changed_by, "rem": body.remarks})
 
     sets = ", ".join(f"{k} = :{k}" for k in changes)
     if sets:
-        changes["id"] = int(activity_id)
+        changes["id"] = activity_id
         await s.execute(sql_text(
             f"UPDATE activities SET {sets} WHERE id = :id"), changes)
     await s.commit()
     # recompute schedule
-    res = await cpm_service.run_cpm(s, int(cur["project_id"]), persist=True)
+    res = await cpm_service.run_cpm(s, cur["project_id"], persist=True)
     return {"updated_fields": list(changes.keys()),
             "project_finish": res.project_finish.isoformat()}
 
@@ -299,7 +299,7 @@ async def update_progress(activity_id: str, body: ProgressIn,
 @router.post("/projects/{project_id}/baselines")
 async def save_baseline(project_id: str, name: str,
                         s: AsyncSession = Depends(get_session)):
-    pid = int(project_id)
+    pid = project_id
     # snapshot current early dates as the baseline
     res = await cpm_service.run_cpm(s, pid, persist=True)
     bid = (await s.execute(sql_text("""
@@ -481,7 +481,7 @@ async def export_schedule(project_id: str, fmt: str = "xer",
 @router.get("/projects/{project_id}/delay")
 async def delay_analysis(project_id: str, baseline_id: str,
                          s: AsyncSession = Depends(get_session)):
-    return await cpm_service.run_delay(s, int(project_id), int(baseline_id))
+    return await cpm_service.run_delay(s, project_id, baseline_id)
 
 
 # ---- DCMA ------------------------------------------------------------------
@@ -489,13 +489,13 @@ async def delay_analysis(project_id: str, baseline_id: str,
 async def dcma(project_id: str, baseline_id: Optional[str] = None,
                s: AsyncSession = Depends(get_session)):
     return await cpm_service.run_dcma(
-        s, int(project_id), int(baseline_id) if baseline_id is not None else None)
+        s, project_id, baseline_id)
 
 
 # ---- alerts / dashboard ----------------------------------------------------
 @router.get("/projects/{project_id}/dashboard")
 async def dashboard(project_id: str, s: AsyncSession = Depends(get_session)):
-    pid = int(project_id)
+    pid = project_id
     res = await cpm_service.run_cpm(s, pid, persist=False)
     # relationships for logic checks
     rel_rows = (await s.execute(sql_text("""
@@ -529,8 +529,8 @@ async def export_reports(project_id: str, fmt: str = "xlsx",
     os.close(fd)
     try:
         await cpm_service.export_reports(
-            s, int(project_id), fmt, path,
-            baseline_id=int(baseline_id) if baseline_id is not None else None,
+            s, project_id, fmt, path,
+            baseline_id=baseline_id,
             look_ahead_days=look_ahead_days)
     except Exception as e:
         raise HTTPException(500, f"report generation failed: {e}")
