@@ -14,10 +14,17 @@ from app.services.alert_service import AlertService
 
 
 @pytest.fixture(autouse=True)
-def clean_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("PPE_ROOT", str(tmp_path))
-    from app.core.config import get_settings
-    get_settings.cache_clear()
+def _isolated_config(tmp_path, monkeypatch):
+    """Give each test its own alert_config.json.
+
+    Settings.DATA_DIR is evaluated at class-definition time, so setting
+    PPE_ROOT has no effect on where the config is written no matter how many
+    caches are cleared — every test was in fact sharing one file, and only
+    ordering kept that from showing. Pointing _config_path at tmp_path is the
+    reliable isolation.
+    """
+    monkeypatch.setattr(ac, "_config_path",
+                        lambda: tmp_path / "alert_config.json")
     ac.invalidate()
     yield
     ac.invalidate()

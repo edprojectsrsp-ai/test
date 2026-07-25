@@ -83,6 +83,15 @@ export default function PPEAlertSettings() {
   const [sendPhoto, setSendPhoto] = useState(true);
   const [cooldown, setCooldown] = useState(60);
   const [gearFilter, setGearFilter] = useState([]);
+  // WhatsApp (Meta Cloud API)
+  const [waEnabled, setWaEnabled] = useState(false);
+  const [waToken, setWaToken] = useState("");
+  const [waPhoneId, setWaPhoneId] = useState("");
+  const [waTo, setWaTo] = useState("");
+  const [waPhoto, setWaPhoto] = useState(true);
+  const [waTemplate, setWaTemplate] = useState("");
+  const [waTemplateLang, setWaTemplateLang] = useState("en");
+  const [waGearFilter, setWaGearFilter] = useState([]);
   // Alert policy — this is what stops the channel filling with duplicates.
   const [keyMode, setKeyMode] = useState("person");
   const [personCooldown, setPersonCooldown] = useState(300);
@@ -117,6 +126,13 @@ export default function PPEAlertSettings() {
       setChatIds(typeof c.telegram_chat_ids === "string" ? c.telegram_chat_ids : "");
       setCooldown(Number(c.cooldown_s) || 60);
       setGearFilter(Array.isArray(c.telegram_gear_filter) ? c.telegram_gear_filter : []);
+      setWaEnabled(!!c.whatsapp_enabled);
+      setWaPhoneId(c.whatsapp_phone_id || "");
+      setWaTo(typeof c.whatsapp_to === "string" ? c.whatsapp_to : "");
+      setWaPhoto(c.whatsapp_send_photo !== false);
+      setWaTemplate(c.whatsapp_template || "");
+      setWaTemplateLang(c.whatsapp_template_lang || "en");
+      setWaGearFilter(Array.isArray(c.whatsapp_gear_filter) ? c.whatsapp_gear_filter : []);
       setKeyMode(c.key_mode || "person");
       setPersonCooldown(Number(c.person_cooldown_s) || 0);
       setEscalateAfter(Number(c.escalate_after_s) || 900);
@@ -157,6 +173,13 @@ export default function PPEAlertSettings() {
         telegram_chat_ids: chatIds,
         telegram_send_photo: sendPhoto,
         telegram_gear_filter: gearFilter,
+        whatsapp_enabled: waEnabled,
+        whatsapp_phone_id: waPhoneId,
+        whatsapp_to: waTo,
+        whatsapp_send_photo: waPhoto,
+        whatsapp_template: waTemplate,
+        whatsapp_template_lang: waTemplateLang,
+        whatsapp_gear_filter: waGearFilter,
         cooldown_s: Number(cooldown) || 60,
         key_mode: keyMode,
         person_cooldown_s: Number(personCooldown) || 0,
@@ -168,6 +191,7 @@ export default function PPEAlertSettings() {
         quiet_to: Number(quietTo),
       };
       if (token.trim()) body.telegram_bot_token = token.trim();
+      if (waToken.trim()) body.whatsapp_token = waToken.trim();
       const saved = await api("/api/alerts/config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -175,6 +199,7 @@ export default function PPEAlertSettings() {
       });
       setCfg(saved);
       setToken("");
+      setWaToken("");
       flash("ok", "Settings saved. Alerts route to Telegram immediately — no restart.");
     } catch (e) {
       flash("danger", e.message);
@@ -378,6 +403,142 @@ export default function PPEAlertSettings() {
           <Btn tone="ok" onClick={test} disabled={!ready || busy === "test"}>
             {busy === "test" ? "Sending…" : "Send test alert"}
           </Btn>
+        </div>
+      </Section>
+
+      <Section
+        title="WhatsApp alerts"
+        hint="Meta Cloud API. Sends the evidence photo with the same detail as Telegram — camera, zone, person and how many frames supported the violation."
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            <input type="checkbox" checked={waEnabled}
+              onChange={(e) => setWaEnabled(e.target.checked)} />
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.ink }}>Enable WhatsApp notifications</span>
+          </label>
+          <span style={{
+            marginLeft: "auto", fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 999,
+            background: cfg.whatsapp_ready ? "#e6f6ef" : "#fdf1e3",
+            color: cfg.whatsapp_ready ? "#0a8f5b" : "#b25e00",
+          }}>{cfg.whatsapp_ready ? `READY · ${cfg.whatsapp_count} recipient(s)` : "NOT CONFIGURED"}</span>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 5 }}>
+            Permanent access token {cfg.whatsapp_token_set && (
+              <span style={{ ...mono, fontWeight: 500 }}>· saved: {cfg.whatsapp_token}</span>
+            )}
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input style={{ ...inputStyle, ...mono }} type="password"
+              placeholder={cfg.whatsapp_token_set ? "Leave blank to keep current token" : "EAAG…"}
+              value={waToken} onChange={(e) => setWaToken(e.target.value)} />
+            <Btn onClick={async () => {
+              setBusy("waverify");
+              try {
+                const r = await api("/api/alerts/whatsapp/verify");
+                flash("ok", `Credentials valid — ${r.name || "business account"} on ${r.number}${r.quality ? ` (quality ${r.quality})` : ""}`);
+              } catch (e) { flash("danger", e.message); }
+              finally { setBusy(""); }
+            }} disabled={busy === "waverify"}>
+              {busy === "waverify" ? "…" : "Verify"}
+            </Btn>
+          </div>
+          <div style={{ fontSize: 11, color: C.sub, marginTop: 5 }}>
+            From Meta Business → WhatsApp → API Setup. Save the token first, then Verify.
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 14 }}>
+          <label>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>
+              Phone number ID
+            </div>
+            <input style={{ ...inputStyle, ...mono }} placeholder="123456789012345"
+              value={waPhoneId} onChange={(e) => setWaPhoneId(e.target.value)} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>
+              Recipients (comma-separated, with country code)
+            </div>
+            <input style={{ ...inputStyle, ...mono }} placeholder="+919876543210, +919812345678"
+              value={waTo} onChange={(e) => setWaTo(e.target.value)} />
+          </label>
+        </div>
+
+        <div style={{
+          padding: "9px 12px", borderRadius: 9, marginBottom: 14, fontSize: 11.5, lineHeight: 1.55,
+          background: "#fdf1e3", border: "1px solid #f0d4a8", color: "#8a5a00",
+        }}>
+          <strong>WhatsApp's 24-hour rule.</strong> Meta only allows free-text messages
+          within 24 hours of that person last messaging your business number. Outside
+          that window a plain alert is accepted by the API and never delivered — which
+          is exactly when an overnight violation matters. Either have each recipient
+          message the business number once per shift, or name an approved template below.
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 12, marginBottom: 14 }}>
+          <label>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>
+              Approved template name (optional)
+            </div>
+            <input style={{ ...inputStyle, ...mono }} placeholder="ppe_violation"
+              value={waTemplate} onChange={(e) => setWaTemplate(e.target.value)} />
+          </label>
+          <label>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>Language</div>
+            <input style={{ ...inputStyle, ...mono }} placeholder="en"
+              value={waTemplateLang} onChange={(e) => setWaTemplateLang(e.target.value)} />
+          </label>
+        </div>
+
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 12 }}>
+          <input type="checkbox" checked={waPhoto} onChange={(e) => setWaPhoto(e.target.checked)} />
+          <span style={{ fontSize: 12.5, color: C.ink }}>Attach evidence photo</span>
+        </label>
+        <div style={{ fontSize: 10.5, color: C.sub, marginTop: -6, marginBottom: 14, marginLeft: 24 }}>
+          A photo also sidesteps the 24-hour rule less often than plain text, and it is
+          what makes a violation arguable rather than an assertion.
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 7 }}>
+            Notify only for (none selected = all)
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            {GEAR_TYPES.map((g) => {
+              const on = waGearFilter.includes(g);
+              return (
+                <button key={g} onClick={() => setWaGearFilter((prev) =>
+                  prev.includes(g) ? prev.filter((x) => x !== g) : [...prev, g])}
+                  style={{
+                    padding: "5px 11px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                    cursor: "pointer", ...mono,
+                    background: on ? "#fdecee" : C.panel2,
+                    color: on ? "#c02b3c" : C.sub,
+                    border: `1px solid ${on ? "#f5c2c8" : C.line}`,
+                  }}>{g}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn tone="primary" onClick={save} disabled={busy === "save"}>
+            {busy === "save" ? "Saving…" : "Save settings"}
+          </Btn>
+          <Btn tone="ok" disabled={!cfg.whatsapp_ready || busy === "watest"} onClick={async () => {
+            setBusy("watest");
+            try {
+              const r = await api("/api/alerts/whatsapp/test", {
+                method: "POST", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ camera: "TEST-CAM", violation: "NO_HELMET" }),
+              });
+              flash("ok", `Test delivered to ${r.delivered.length} number(s).`
+                + (r.failed.length ? ` ${r.failed.length} failed — likely outside the 24-hour window.` : ""));
+            } catch (e) { flash("danger", e.message); }
+            finally { setBusy(""); }
+          }}>{busy === "watest" ? "Sending…" : "Send test WhatsApp"}</Btn>
         </div>
       </Section>
 

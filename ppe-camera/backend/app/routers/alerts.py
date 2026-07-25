@@ -31,6 +31,14 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 
 class AlertConfigPatch(BaseModel):
+    whatsapp_enabled: bool | None = None
+    whatsapp_token: str | None = None
+    whatsapp_phone_id: str | None = None
+    whatsapp_to: str | None = None
+    whatsapp_send_photo: bool | None = None
+    whatsapp_gear_filter: list[str] | None = None
+    whatsapp_template: str | None = None
+    whatsapp_template_lang: str | None = None
     key_mode: str | None = None
     person_cooldown_s: int | None = None
     escalate_after_s: int | None = None
@@ -83,6 +91,8 @@ async def get_config() -> dict:
     cfg = alert_config.masked()
     cfg["telegram_ready"] = alert_config.telegram_ready()
     cfg["chat_count"] = len(alert_config.chat_ids())
+    cfg["whatsapp_ready"] = alert_config.whatsapp_ready()
+    cfg["whatsapp_count"] = len(alert_config.whatsapp_numbers())
     return cfg
 
 
@@ -102,6 +112,8 @@ async def put_config(patch: AlertConfigPatch) -> dict:
     refresh_policy()
     saved["telegram_ready"] = alert_config.telegram_ready()
     saved["chat_count"] = len(alert_config.chat_ids())
+    saved["whatsapp_ready"] = alert_config.whatsapp_ready()
+    saved["whatsapp_count"] = len(alert_config.whatsapp_numbers())
     return saved
 
 
@@ -161,6 +173,69 @@ async def discover_chats(token: str | None = None) -> dict:
         return {"chats": [], "hint": "Send any message to the bot (or add it to your "
                                      "group and post once), then press Detect again."}
     return {"chats": list(seen.values())}
+
+
+@router.get("/whatsapp/verify")
+async def verify_whatsapp() -> dict:
+    """Check the WhatsApp credentials by reading the sending number back.
+
+    Wrong token or phone id is the usual setup failure and produces no error
+    on send — the message is simply accepted and never delivered.
+    """
+    import urllib.error
+    import urllib.request
+
+    token = str(alert_config.get("whatsapp_token") or "")
+    phone_id = str(alert_config.get("whatsapp_phone_id") or "")
+    if not (token and phone_id):
+        raise HTTPException(400, "Set a WhatsApp token and phone number ID first")
+    req = urllib.request.Request(
+        f"https://graph.facebook.com/v20.0/{phone_id}"
+        "?fields=display_phone_number,verified_name,quality_rating",
+        headers={"Authorization": f"Bearer {token}"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            info = json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as exc:
+        raise HTTPException(400, f"WhatsApp rejected the credentials: "
+                                 f"{exc.read().decode(errors='replace')[:250]}") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(502, f"Cannot reach WhatsApp: {exc.reason}") from exc
+    return {"ok": True, "number": info.get("display_phone_number"),
+            "name": info.get("verified_name"),
+            "quality": info.get("quality_rating")}
+
+
+@router.post("/whatsapp/test")
+async def send_whatsapp_test(payload: TestPayload) -> dict:
+    """Send a test WhatsApp alert to every configured number."""
+    if not alert_config.whatsapp_ready():
+        raise HTTPException(400, "WhatsApp not ready: enable it and set a token, "
+                                 "phone number ID and at least one recipient")
+    text = AlertService.format_message({
+        "violation": payload.violation, "camera": payload.camera,
+        "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "meta": {"note": "Test alert from Project Brain \u2014 delivery is working."},
+    }).replace("*", "")
+    token = str(alert_config.get("whatsapp_token"))
+    phone_id = str(alert_config.get("whatsapp_phone_id"))
+    delivered, failed = [], []
+    for number in alert_config.whatsapp_numbers():
+        try:
+            AlertService._whatsapp_post(token, phone_id, {
+                "messaging_product": "whatsapp", "to": number,
+                "type": "text", "text": {"body": text}})
+            delivered.append(number)
+        except Exception as exc:  # noqa: BLE001 - report per number
+            failed.append({"to": number, "error": str(exc)[:200]})
+    if not delivered:
+        raise HTTPException(502, {
+            "detail": "All WhatsApp sends failed", "failed": failed,
+            "hint": ("Outside Meta's 24-hour service window only an approved "
+                     "template can be delivered. Message the business number "
+                     "from each phone first, or configure a template name."),
+        })
+    return {"ok": True, "delivered": delivered, "failed": failed}
 
 
 @router.post("/test")

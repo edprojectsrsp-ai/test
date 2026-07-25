@@ -33,6 +33,18 @@ _SPEC: dict[str, tuple[str | None, Any]] = {
     "telegram_bot_token": ("PPE_TELEGRAM_BOT_TOKEN", ""),
     "telegram_chat_ids":  ("PPE_TELEGRAM_CHAT_IDS", ""),   # comma-separated
     "telegram_send_photo": ("PPE_TELEGRAM_SEND_PHOTO", True),
+    # --- whatsapp (Meta Cloud API) -----------------------------------------
+    "whatsapp_enabled":    ("PPE_WHATSAPP_ENABLED", False),
+    "whatsapp_token":      ("WHATSAPP_TOKEN", ""),
+    "whatsapp_phone_id":   ("WHATSAPP_PHONE_ID", ""),
+    "whatsapp_to":         ("PPE_ALERT_WHATSAPP_TO", ""),   # comma-separated
+    "whatsapp_send_photo": (None, True),
+    "whatsapp_gear_filter": (None, []),
+    # Outside Meta's 24-hour service window only an approved template may be
+    # sent; free text is silently rejected. Naming the template here is the
+    # difference between alerts arriving overnight and vanishing.
+    "whatsapp_template":   (None, ""),
+    "whatsapp_template_lang": (None, "en"),
     "webhook_url":        ("PPE_ALERT_WEBHOOK", ""),
     "cooldown_s":         ("PPE_ALERT_COOLDOWN", 60),
     # --- alert policy (per-person deduplication) ---------------------------
@@ -52,7 +64,7 @@ _SPEC: dict[str, tuple[str | None, Any]] = {
     "telegram_gear_filter": (None, []),
 }
 
-_SECRET_KEYS = {"telegram_bot_token"}
+_SECRET_KEYS = {"telegram_bot_token", "whatsapp_token"}
 
 
 def _config_path() -> Path:
@@ -153,6 +165,18 @@ def chat_ids() -> list[str]:
 
 def telegram_ready() -> bool:
     return bool(get("telegram_enabled") and get("telegram_bot_token") and chat_ids())
+
+
+def whatsapp_numbers() -> list[str]:
+    raw = get("whatsapp_to")
+    if isinstance(raw, list):
+        return [str(n).strip() for n in raw if str(n).strip()]
+    return [n.strip() for n in str(raw).split(",") if n.strip()]
+
+
+def whatsapp_ready() -> bool:
+    return bool(get("whatsapp_enabled") and get("whatsapp_token")
+                and get("whatsapp_phone_id") and whatsapp_numbers())
 
 
 def invalidate() -> None:

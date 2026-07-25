@@ -256,26 +256,115 @@ class AlertService:
             headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=8)
 
+    # ---- whatsapp (Meta Cloud API) -------------------------------------------
     def _whatsapp(self, payload: dict) -> None:
-        token = os.getenv("WHATSAPP_TOKEN")
-        phone_id = os.getenv("WHATSAPP_PHONE_ID")
-        to_list = [n for n in (os.getenv("PPE_ALERT_WHATSAPP_TO") or "").split(",") if n]
-        if not (token and phone_id and to_list):
+        """Send to WhatsApp, with the evidence photo where possible.
+
+        Previously this was a stripped-down copy of the Telegram path: text
+        only, env-only config, its own short message, and — the real bug — a
+        single loop with no per-recipient isolation, so the first number that
+        failed aborted the send and every later supervisor heard nothing.
+        """
+        from app.services import alert_config
+
+        if not alert_config.whatsapp_ready():
             return
+        gear_filter = alert_config.get("whatsapp_gear_filter") or []
+        if gear_filter and payload.get("violation") not in gear_filter:
+            return
+
+        token = str(alert_config.get("whatsapp_token"))
+        phone_id = str(alert_config.get("whatsapp_phone_id"))
+        # Same body as every other channel, so a WhatsApp alert carries the
+        # zone, identity and evidence count rather than a thinner summary.
+        text = self.format_message(payload).replace("*", "")
+        snapshot = payload.get("snapshot")
+        want_photo = bool(alert_config.get("whatsapp_send_photo"))
+        media_id = None
+        if want_photo and snapshot and os.path.exists(snapshot):
+            try:
+                media_id = self._whatsapp_upload(token, phone_id, snapshot)
+            except Exception:
+                media_id = None      # fall back to text rather than sending nothing
+
+        template = str(alert_config.get("whatsapp_template") or "").strip()
+        lang = str(alert_config.get("whatsapp_template_lang") or "en")
+
+        for number in alert_config.whatsapp_numbers():
+            try:
+                if media_id:
+                    body = {"messaging_product": "whatsapp", "to": number,
+                            "type": "image",
+                            "image": {"id": media_id, "caption": text[:1024]}}
+                elif template:
+                    # Outside Meta's 24-hour service window free text is
+                    # rejected, so a configured template is the only thing that
+                    # reaches a supervisor overnight.
+                    body = {"messaging_product": "whatsapp", "to": number,
+                            "type": "template",
+                            "template": {"name": template,
+                                         "language": {"code": lang},
+                                         "components": [{
+                                             "type": "body",
+                                             "parameters": [{"type": "text",
+                                                             "text": text[:900]}]}]}}
+                else:
+                    body = {"messaging_product": "whatsapp", "to": number,
+                            "type": "text", "text": {"body": text}}
+                self._whatsapp_post(token, phone_id, body)
+            except Exception:
+                # one unreachable number must not silence the rest
+                continue
+
+    @staticmethod
+    def _whatsapp_post(token: str, phone_id: str, body: dict) -> dict:
         import urllib.request
 
-        text = (f"⚠️ PPE VIOLATION — {payload['violation']}\n"
-                f"Camera: {payload['camera']}\nTime: {payload['at']}")
-        for to in to_list:
-            body = {"messaging_product": "whatsapp", "to": to,
-                    "type": "text", "text": {"body": text}}
-            req = urllib.request.Request(
-                f"https://graph.facebook.com/v20.0/{phone_id}/messages",
-                data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json",
-                         "Authorization": f"Bearer {token}"},
-                method="POST")
-            urllib.request.urlopen(req, timeout=10)
+        req = urllib.request.Request(
+            f"https://graph.facebook.com/v20.0/{phone_id}/messages",
+            data=json.dumps(body).encode(),
+            headers={"Content-Type": "application/json",
+                     "Authorization": f"Bearer {token}"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode() or "{}")
+
+    @staticmethod
+    def _whatsapp_upload(token: str, phone_id: str, path: str) -> str | None:
+        """Upload the snapshot and return its media id.
+
+        The photo is the point of a PPE alert — a text saying "no helmet on
+        camera 7" leaves a supervisor with nothing to act on or dispute.
+        """
+        import mimetypes
+        import urllib.request
+        import uuid
+
+        boundary = uuid.uuid4().hex
+        with open(path, "rb") as fh:
+            image = fh.read()
+        filename = os.path.basename(path)
+        mime = mimetypes.guess_type(filename)[0] or "image/jpeg"
+
+        parts: list[bytes] = []
+        for field, value in (("messaging_product", "whatsapp"), ("type", mime)):
+            parts.append(
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n"
+                f"{value}\r\n".encode())
+        parts.append(
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{filename}\"\r\nContent-Type: {mime}\r\n\r\n".encode())
+        parts.append(image)
+        parts.append(f"\r\n--{boundary}--\r\n".encode())
+
+        req = urllib.request.Request(
+            f"https://graph.facebook.com/v20.0/{phone_id}/media",
+            data=b"".join(parts),
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}",
+                     "Authorization": f"Bearer {token}"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return json.loads(resp.read().decode() or "{}").get("id")
 
     def _email(self, payload: dict) -> None:
         host = os.getenv("PPE_SMTP_HOST")
