@@ -56,6 +56,10 @@ const SOURCE_HELP = {
   webcam: "Use the laptop/USB camera for a quick local test.",
   rtsp: "Paste a full RTSP/DVR stream URL (rtsp://user:pass@ip:554/…).",
   screen: "Capture a region of the desktop (e.g. DVR viewer window).",
+  mjpeg: "HTTP MJPEG stream (http://ip/video.cgi). Often the only way in when RTSP is blocked or the vendor RTSP password is unknown.",
+  snapshot: "Polls a still-image URL (http://ip/snapshot.jpg). Every IP camera serves one, and it survives HTTP-only site firewalls that block RTSP.",
+  hls: "HLS or RTMP re-stream (https://host/stream.m3u8) — typical for NVR and cloud gateways.",
+  folder: "Watch a folder of images — drone or handheld stills dropped on a share, or replaying captured evidence through a changed model.",
   video: "Upload a clip — full pipeline runs without a physical camera.",
   fake: "Synthetic frames for wiring checks only.",
 };
@@ -529,6 +533,10 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
     else setOpenLocal(next);
   };
   const [kind, setKind] = useState("ip");
+  const [pollInterval, setPollInterval] = useState(1);
+  const [folderPath, setFolderPath] = useState("");
+  const [folderPattern, setFolderPattern] = useState("*.jpg");
+  const [folderLoop, setFolderLoop] = useState(false);
   const [id, setId] = useState("");
   const [url, setUrl] = useState("");
   const [index, setIndex] = useState("0");
@@ -584,6 +592,22 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
         source_kwargs: { host: host.trim(), port: port ? Number(port) : 80, username: user, password: pass },
         display: `onvif://${host.trim()}:${port || 80}`,
       };
+    }
+    if (kind === "mjpeg") {
+      return { source_kind: "mjpeg", display: url.trim(),
+        source_kwargs: { url: url.trim(), username: user || "", password: pass || "" } };
+    }
+    if (kind === "snapshot") {
+      return { source_kind: "snapshot", display: url.trim(),
+        source_kwargs: { url: url.trim(), username: user || "", password: pass || "",
+                         poll_interval: Number(pollInterval) || 1.0 } };
+    }
+    if (kind === "hls") {
+      return { source_kind: "hls", source_kwargs: { url: url.trim() }, display: url.trim() };
+    }
+    if (kind === "folder") {
+      return { source_kind: "folder", display: folderPath,
+        source_kwargs: { path: folderPath.trim(), pattern: folderPattern || "*.jpg", loop: folderLoop } };
     }
     if (kind === "webcam") return { source_kind: "webcam", source_kwargs: { index: Number(index) || 0 } };
     if (kind === "rtsp") return { source_kind: "rtsp", source_kwargs: { url: url.trim(), transport } };
@@ -652,12 +676,20 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
     (kind === "rtsp" && !url.trim());
   const canTest = kind !== "video" && kind !== "fake" && !missingReq;
 
+  // Mirrors SOURCE_KINDS in the backend. The three HTTP options matter more
+  // than they look: on plenty of sites RTSP is blocked at the firewall or
+  // locked behind vendor credentials, and an MJPEG or snapshot URL is the only
+  // way to reach the camera at all.
   const kinds = [
     { id: "ip", label: "IP Camera", icon: "📡" },
     { id: "onvif", label: "ONVIF", icon: "🔎" },
-    { id: "webcam", label: "Webcam", icon: "📷" },
     { id: "rtsp", label: "RTSP URL", icon: "🔗" },
+    { id: "mjpeg", label: "HTTP MJPEG", icon: "🌐" },
+    { id: "snapshot", label: "HTTP snapshot", icon: "🖼" },
+    { id: "hls", label: "HLS / RTMP", icon: "📶" },
+    { id: "webcam", label: "Webcam", icon: "📷" },
     { id: "video", label: "Upload video", icon: "🎬" },
+    { id: "folder", label: "Image folder", icon: "📁" },
     { id: "screen", label: "Screen", icon: "🖥" },
     { id: "fake", label: "Fake", icon: "🧪" },
   ];
@@ -801,6 +833,53 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
                   <option value="udp">UDP</option>
                   <option value="">Auto</option>
                 </select>
+              </>
+            ) : null}
+            {kind === "mjpeg" || kind === "snapshot" || kind === "hls" ? (
+              <>
+                <input
+                  placeholder={
+                    kind === "mjpeg" ? "http://ip/video.cgi"
+                      : kind === "snapshot" ? "http://ip/snapshot.jpg"
+                        : "https://host/stream.m3u8"
+                  }
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  style={{ ...inp, flex: 1, minWidth: 260, ...mono }}
+                />
+                {kind !== "hls" ? (
+                  <>
+                    <input placeholder="user (optional)" value={user}
+                      onChange={(e) => setUser(e.target.value)}
+                      style={{ ...inp, width: 130 }} />
+                    <input placeholder="password" type="password" value={pass}
+                      onChange={(e) => setPass(e.target.value)}
+                      style={{ ...inp, width: 130 }} />
+                  </>
+                ) : null}
+                {kind === "snapshot" ? (
+                  <label title="How often to fetch a still. Frame rate is limited by this, not by the camera."
+                    style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    Poll every
+                    <input value={pollInterval} onChange={(e) => setPollInterval(e.target.value)}
+                      style={{ ...inp, width: 56 }} /> s
+                  </label>
+                ) : null}
+              </>
+            ) : null}
+            {kind === "folder" ? (
+              <>
+                <input placeholder="/mnt/site-photos/gate" value={folderPath}
+                  onChange={(e) => setFolderPath(e.target.value)}
+                  style={{ ...inp, flex: 1, minWidth: 220, ...mono }} />
+                <input placeholder="*.jpg" value={folderPattern}
+                  onChange={(e) => setFolderPattern(e.target.value)}
+                  style={{ ...inp, width: 90, ...mono }} />
+                <label style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <input type="checkbox" checked={folderLoop}
+                    onChange={(e) => setFolderLoop(e.target.checked)} />
+                  Loop
+                </label>
               </>
             ) : null}
             {kind === "webcam" ? (
