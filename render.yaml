@@ -37,7 +37,7 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: AI_DEFAULT_PROVIDER
-        value: openai
+        value: groq
       - key: UPLOAD_DIR
         value: /tmp/project_brain/uploads
       - key: UPLOAD_BACKUP_DIR
