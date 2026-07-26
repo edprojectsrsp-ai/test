@@ -72,7 +72,7 @@ FROM scheme_master s
 LEFT JOIN plan p ON p.scheme_id = s.scheme_id
 LEFT JOIN act  a ON a.scheme_id = s.scheme_id
 WHERE NOT COALESCE(s.is_deleted, FALSE)
-  AND COALESCE(s.current_status, '') NOT IN ('Completed', 'Closed', 'Dropped')
+  AND COALESCE(s.current_status::text, '') NOT IN ('Completed', 'Closed', 'Dropped')
   AND (p.fy_plan IS NOT NULL OR a.fy_actual IS NOT NULL)
   AND (%(scheme_id)s IS NULL OR s.scheme_id = %(scheme_id)s)
 ORDER BY s.scheme_id

@@ -186,7 +186,7 @@ def portfolio_evm(db, fy_start_year: Optional[int] = None,
         rows = db.execute(text(
             "SELECT scheme_id, scheme_name FROM scheme_master "
             "WHERE NOT COALESCE(is_deleted, FALSE) "
-            "AND COALESCE(current_status, '') NOT IN ('Completed', 'Closed', 'Dropped') "
+            "AND COALESCE(current_status::text, '') NOT IN ('Completed', 'Closed', 'Dropped') "
             "ORDER BY scheme_id")).mappings().all()
     else:
         rows = db.execute(text(
