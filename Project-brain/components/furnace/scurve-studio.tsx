@@ -54,20 +54,95 @@ export default function SCurveStudio() {
   const [edit, setEdit] = useState<EditCell | null>(null);
   const [editVal, setEditVal] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loadingPackages, setLoadingPackages] = useState(false);
+  const [loadingPlan, setLoadingPlan] = useState(false);
+  const [loadError, setLoadError] = useState("");
 
-  useEffect(() => { getSchemes().then((s) => { setSchemes(s); setSchemeId((v) => v ?? s[0]?.scheme_id ?? null); }); }, []);
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      setLoadError("");
+      try {
+        const s = await getSchemes();
+        if (!mounted) return;
+        setSchemes(s);
+        const sample = s.slice(0, 25);
+        for (const scheme of sample) {
+          const packages = await getPackages(scheme.scheme_id).catch(() => []);
+          const active = packages.find((p) => p.has_active_plan) ?? packages[0];
+          if (active) {
+            if (!mounted) return;
+            setSchemeId(scheme.scheme_id);
+            setPkgs(packages);
+            setPkgId(active.package_id);
+            return;
+          }
+        }
+        setSchemeId((v) => v ?? s[0]?.scheme_id ?? null);
+      } catch (e: any) {
+        if (mounted) setLoadError(e?.message || "Could not load schemes from backend.");
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
   useEffect(() => {
     if (schemeId == null) return;
-    getPackages(schemeId).then((p) => { setPkgs(p); setPkgId(p[0]?.package_id ?? null); });
+    let mounted = true;
+    setLoadingPackages(true);
+    setLoadError("");
+    getPackages(schemeId)
+      .then((p) => {
+        if (!mounted) return;
+        setPkgs(p);
+        setPkgId((current) => {
+          if (current && p.some((pkg) => pkg.package_id === current)) return current;
+          return (p.find((pkg) => pkg.has_active_plan) ?? p[0])?.package_id ?? null;
+        });
+      })
+      .catch((e: any) => {
+        if (mounted) {
+          setPkgs([]);
+          setPkgId(null);
+          setLoadError(e?.message || "Could not load packages from backend.");
+        }
+      })
+      .finally(() => { if (mounted) setLoadingPackages(false); });
+    return () => { mounted = false; };
   }, [schemeId]);
   useEffect(() => {
     if (pkgId == null) return;
-    getPlans(pkgId).then((ps) => { setPlans(ps); setPlanId(ps[0]?.progress_plan_id ?? null); });
-    getSCurve(pkgId).then(setCurve);
+    let mounted = true;
+    setLoadingPlan(true);
+    setLoadError("");
+    setFull(null);
+    Promise.all([
+      getPlans(pkgId),
+      getSCurve(pkgId).catch(() => null),
+    ])
+      .then(([ps, sc]) => {
+        if (!mounted) return;
+        setPlans(ps);
+        setPlanId(ps[0]?.progress_plan_id ?? null);
+        setCurve(sc);
+      })
+      .catch((e: any) => {
+        if (mounted) {
+          setPlans([]);
+          setPlanId(null);
+          setCurve(null);
+          setLoadError(e?.message || "Could not load S-curve package data from backend.");
+        }
+      })
+      .finally(() => { if (mounted) setLoadingPlan(false); });
+    return () => { mounted = false; };
   }, [pkgId]);
   const loadPlan = useCallback(() => {
     if (planId == null) return;
-    getPlanFull(planId).then((f) => { setFull(f); setDirty({}); setEdit(null); });
+    setLoadingPlan(true);
+    getPlanFull(planId)
+      .then((f) => { setFull(f); setDirty({}); setEdit(null); })
+      .catch((e: any) => setLoadError(e?.message || "Could not load plan grid from backend."))
+      .finally(() => setLoadingPlan(false));
   }, [planId]);
   useEffect(() => { loadPlan(); }, [loadPlan]);
 
@@ -75,6 +150,7 @@ export default function SCurveStudio() {
   const acts = full?.activities ?? [];
   const months = full?.months ?? [];
   const locked = Boolean(plan?.is_locked);
+  const activePackage = pkgs.find((p) => p.package_id === pkgId) ?? null;
 
   const plannedAt = useCallback((actId: number, m: string): number => {
     const k = key(actId, m);
@@ -216,12 +292,41 @@ export default function SCurveStudio() {
       <PageHeader title="S-Curve Studio" subtitle="Physical progress plan & actual · month-gated planning · forecast engine"
         right={<>
           <Field label="Scheme"><Select value={String(schemeId ?? "")} onChange={(v) => setSchemeId(Number(v))} options={schemes.map((s) => ({ value: String(s.scheme_id), label: s.scheme_name }))} style={{ minWidth: 210 }} /></Field>
-          <Field label="Package"><Select value={String(pkgId ?? "")} onChange={(v) => setPkgId(Number(v))} options={pkgs.map((p) => ({ value: String(p.package_id), label: `Pkg-${p.package_no} · ${p.package_name}` }))} style={{ minWidth: 220 }} /></Field>
+          <Field label="Package"><Select value={String(pkgId ?? "")} onChange={(v) => setPkgId(Number(v))} options={pkgs.map((p) => ({ value: String(p.package_id), label: `Pkg-${p.package_no} · ${p.package_name}${p.has_active_plan ? "" : " · no active plan"}` }))} style={{ minWidth: 260 }} /></Field>
           <ThemeToggle />
         </>} />
 
+      {loadError ? (
+        <Card style={{ marginTop: 14, borderColor: "var(--molten)" }}>
+          <div style={{ fontWeight: 800, color: "var(--molten)" }}>Backend data load failed</div>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--steel-dim)" }}>{loadError}</div>
+        </Card>
+      ) : null}
+
+      {!loadError && (loadingPackages || loadingPlan) ? (
+        <Card style={{ marginTop: 14, fontSize: 12.5, color: "var(--steel-dim)" }}>
+          Loading S-curve data from backend…
+        </Card>
+      ) : null}
+
+      {!loadingPackages && !pkgs.length && schemeId != null ? (
+        <Card style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 800 }}>No packages found for this scheme</div>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--steel-dim)" }}>The scheme is connected to the backend, but it has no package rows yet.</div>
+        </Card>
+      ) : null}
+
+      {!loadingPlan && activePackage && !plans.length ? (
+        <Card style={{ marginTop: 14 }}>
+          <div style={{ fontWeight: 800 }}>No active progress plan for this package</div>
+          <div style={{ marginTop: 6, fontSize: 12.5, color: "var(--steel-dim)" }}>
+            {activePackage.package_name} is loaded from the backend, but no current progress plan is available. Select another package or create/lock a plan in the plan engine.
+          </div>
+        </Card>
+      ) : null}
+
       {/* Plan rail */}
-      <Card style={{ marginTop: 14 }}>
+      {plans.length ? <Card style={{ marginTop: 14 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
           <span style={label}>Plan version</span>
           {plans.map((p) => (
@@ -239,7 +344,7 @@ export default function SCurveStudio() {
           <Button onClick={toggleLock} kind={locked ? "default" : "steel"}>{locked ? "Unlock" : "Save & lock"}</Button>
           <Button onClick={exportCsv}>CSV</Button>
         </div>
-      </Card>
+      </Card> : null}
 
       <div style={{ marginTop: 14 }}>
         <Tabs tabs={[{ key: "grid", label: "Plan Grid" }, { key: "curve", label: "Curve & Forecast" }, { key: "table", label: "Monthly Table" }]} active={tab} onChange={setTab} />

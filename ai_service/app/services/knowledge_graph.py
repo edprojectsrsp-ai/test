@@ -61,6 +61,21 @@ def _upsert_node(cur, node_type: str, ref_id: Optional[int], label: str,
                 cur.execute("UPDATE kg_nodes SET props = props || %s::jsonb WHERE node_id=%s",
                             (json.dumps(props), row[0]))
             return row[0]
+    else:
+        # PostgreSQL unique constraints treat NULL values as distinct, so
+        # label-keyed nodes like contractors/topics need an explicit lookup to
+        # keep repeated structural syncs idempotent.
+        cur.execute("""
+            SELECT node_id FROM kg_nodes
+            WHERE node_type=%s AND ref_id IS NULL AND lower(label)=lower(%s)
+            ORDER BY node_id LIMIT 1
+        """, (node_type, label))
+        row = cur.fetchone()
+        if row:
+            if props:
+                cur.execute("UPDATE kg_nodes SET props = props || %s::jsonb WHERE node_id=%s",
+                            (json.dumps(props), row[0]))
+            return row[0]
     cur.execute("""
         INSERT INTO kg_nodes (node_type, ref_id, label, props)
         VALUES (%s, %s, %s, %s::jsonb)
@@ -93,6 +108,24 @@ def sync_structural_graph() -> dict:
     stats = {"nodes": 0, "edges": 0}
     try:
         cur = conn.cursor()
+        # Rebuild cheap structural edges idempotently. Evidence-backed mined
+        # relations are left untouched; structural edges are deterministic DB
+        # mirrors and should not accumulate duplicate weights across syncs.
+        cur.execute("""
+            DELETE FROM kg_edges
+            WHERE relation IN ('has_package', 'contracted_to', 'about')
+              AND evidence_document_id IS NULL
+              AND evidence_chunk_id IS NULL
+        """)
+        cur.execute("""
+            DELETE FROM kg_nodes n
+            WHERE n.node_type = 'contractor'
+              AND n.ref_id IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM kg_edges e
+                  WHERE e.src_id = n.node_id OR e.dst_id = n.node_id
+              )
+        """)
         scheme_nodes: dict[int, int] = {}
         for r in query("""SELECT scheme_id, scheme_code, scheme_name FROM scheme_master
                           WHERE NOT coalesce(is_deleted,false)"""):

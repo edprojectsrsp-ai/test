@@ -113,7 +113,14 @@ function summarizeCurve(packageId: number, packageName: string, points: SCurvePo
 
 /* ---------- shared ---------- */
 export interface Scheme { scheme_id: number; scheme_name: string; current_status?: string; scheme_type?: string; }
-export interface Package { package_id: number; package_no: number; package_name: string; }
+export interface Package {
+  package_id: number;
+  package_no: number;
+  package_name: string;
+  has_active_plan?: boolean;
+  plan_id?: number | null;
+  plan_name?: string | null;
+}
 
 export const getSchemes = () =>
   get<Scheme[]>("/schemes/all", MOCK_SCHEMES, (data) => {
@@ -133,6 +140,9 @@ export const getPackages = (schemeId: number) =>
       package_id: +(row.package_id ?? 0),
       package_no: +(row.package_no ?? idx + 1),
       package_name: row.package_name ?? row.plan_name ?? `Package ${idx + 1}`,
+      has_active_plan: Boolean(row.has_active_plan ?? row.plan_id),
+      plan_id: row.plan_id == null ? null : +row.plan_id,
+      plan_name: row.plan_name ?? null,
     })).filter((row: Package) => row.package_id > 0);
   });
 
