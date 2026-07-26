@@ -25,7 +25,7 @@ type Props = {
   onSeeded?: () => void;
 };
 
-const API_BASE = "http://localhost:8000/api/v1";
+const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 export default function SeedActivitiesPanel({ planId, packageId, isLocked, onSeeded }: Props) {
   const [sources, setSources] = useState<SeedSourcesResponse | null>(null);

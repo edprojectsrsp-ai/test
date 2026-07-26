@@ -19,6 +19,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { clearSession, getToken } from "@/lib/auth";
 
 const API_ORIGINS = [
+  "project-brain-gil7.onrender.com",
   "localhost:8000", "127.0.0.1:8000",
   "localhost:8002", "127.0.0.1:8002",
 ];

@@ -21,7 +21,7 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import SeedActivitiesPanel from "@/components/plan/SeedActivitiesPanel";
 import Appendix2Tab from "@/components/plan/Appendix2Tab";
 
-const API = "http://localhost:8002/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 // =============================================================================
 //   TYPES
