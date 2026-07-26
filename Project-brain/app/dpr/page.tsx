@@ -25,6 +25,7 @@ import {
   MapPin,
   PlusCircle,
   Save,
+  ShieldCheck,
   X,
 } from "lucide-react";
 
@@ -32,6 +33,9 @@ import ManpowerMatrix from "./ManpowerMatrix";
 import DailyReportTab from "./DailyReportTab";
 import SchemeSummaryTab from "./SchemeSummaryTab";
 import ImportTab from "./ImportTab";
+import RootCausePicker from "./RootCausePicker";
+import DelayCausesTab from "./DelayCausesTab";
+import PhotoEvidenceTab from "./PhotoEvidenceTab";
 
 const API = "http://localhost:8000/api/v1";
 
@@ -71,7 +75,7 @@ export default function DPRPage() {
   const [selectedScheme, setSelectedScheme] = useState("");
   const [packages, setPackages]       = useState<Package[]>([]);
   const [selectedPkg, setSelectedPkg] = useState("");
-  const [tab, setTab]                 = useState<"entry" | "report" | "summary" | "board" | "obs" | "import" | "qc">("entry");
+  const [tab, setTab]                 = useState<"entry" | "report" | "summary" | "board" | "obs" | "import" | "qc" | "causes" | "evidence">("entry");
 
   // load schemes
   useEffect(() => {
@@ -157,7 +161,7 @@ export default function DPRPage() {
       {/* Tab bar */}
       {selectedPkg && (
         <div className="mb-6 inline-flex rounded-xl border border-zinc-800 bg-zinc-900 p-1 text-sm">
-          {(["entry", "report", "summary", "board", "obs", "qc", "import"] as const).map(t => (
+          {(["entry", "report", "summary", "board", "obs", "causes", "evidence", "qc", "import"] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -170,6 +174,8 @@ export default function DPRPage() {
               {t === "summary" && <><BarChart2   className="h-4 w-4" />Monthly Summary</>}
               {t === "board"   && <><BarChart2   className="h-4 w-4" />Summary</>}
               {t === "obs"     && <><MapPin      className="h-4 w-4" />Observations</>}
+              {t === "causes"  && <><AlertTriangle className="h-4 w-4" />Delay Causes</>}
+              {t === "evidence" && <><ShieldCheck className="h-4 w-4" />Photo Evidence</>}
               {t === "qc"      && <><AlertTriangle className="h-4 w-4" />QC / Productivity</>}
               {t === "import"  && <><PlusCircle  className="h-4 w-4" />Import File</>}
             </button>
@@ -192,6 +198,10 @@ export default function DPRPage() {
         <SchemeSummaryTab schemeId={parseInt(selectedScheme) || 0} />
       ) : tab === "import" ? (
         <ImportTab schemeId={parseInt(selectedScheme) || 0} />
+      ) : tab === "causes" ? (
+        <DelayCausesTab schemeId={parseInt(selectedScheme) || 0} />
+      ) : tab === "evidence" ? (
+        <PhotoEvidenceTab schemeId={parseInt(selectedScheme) || 0} />
       ) : tab === "qc" ? (
         <QcProductivityPane packageId={selectedPkg} />
       ) : (
@@ -219,6 +229,8 @@ function ActivityEntryPane({ packageId }: { packageId: string }) {
   // per-activity qty + remarks
   const [qtys, setQtys]     = useState<Record<number, string>>({});
   const [remarks, setRemarks] = useState<Record<number, string>>({});
+  // Root cause per activity, captured only where the day fell short of plan.
+  const [causes, setCauses] = useState<Record<number, any>>({});
 
   const loadActivities = async () => {
     setLoading(true);
@@ -260,6 +272,10 @@ function ActivityEntryPane({ packageId }: { packageId: string }) {
         manpower_count:     parseInt(manpower || "0", 10) || null,
         weather_conditions: weather || null,
         remarks:            remarks[a.activity_id] || null,
+        root_cause:         causes[a.activity_id]?.root_cause || null,
+        root_cause_note:    causes[a.activity_id]?.root_cause_note || null,
+        days_lost:          causes[a.activity_id]?.days_lost
+                              ? parseFloat(causes[a.activity_id].days_lost) : null,
         entered_via:        "web",
       }));
 
@@ -381,8 +397,16 @@ function ActivityEntryPane({ packageId }: { packageId: string }) {
                   const qty = parseFloat(qtys[a.activity_id] || "0");
                   const cum = a.cumulative_before + qty;
                   const pct = a.scope_qty > 0 ? Math.min((cum / a.scope_qty) * 100, 100) : 0;
+                  // Only ask why when there is actually a shortfall. Demanding a
+                  // reason on a day that met plan trains people to pick the first
+                  // option to get past the form.
+                  const entered = qtys[a.activity_id] !== undefined && qtys[a.activity_id] !== "";
+                  const dailyPlan = Number(a.month_plan_qty) / 26;   // ~working days
+                  const short = entered && dailyPlan > 0 && qty < dailyPlan * 0.9;
+                  const c = causes[a.activity_id] || {};
                   return (
-                    <tr key={a.activity_id} className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
+                    <React.Fragment key={a.activity_id}>
+                    <tr className="border-b border-zinc-800/50 hover:bg-zinc-800/20">
                       <td className="px-4 py-3 font-medium text-white">{a.activity_name}</td>
                       <td className="px-4 py-3 text-center text-zinc-400">{a.uom || "—"}</td>
                       <td className="px-4 py-3 text-center text-zinc-300">{Number(a.scope_qty).toFixed(1)}</td>
@@ -416,6 +440,28 @@ function ActivityEntryPane({ packageId }: { packageId: string }) {
                         />
                       </td>
                     </tr>
+                    {short && (
+                      <tr className="border-b border-zinc-800/50 bg-amber-500/[0.03]">
+                        <td colSpan={7} className="px-4 pb-3">
+                          <div className="flex flex-wrap items-start gap-3">
+                            <span className="mt-2 text-[11px] text-amber-300/80">
+                              Below plan ({qty.toFixed(1)} vs ~{dailyPlan.toFixed(1)} {a.uom || ""})
+                            </span>
+                            <div className="min-w-[280px] flex-1">
+                              <RootCausePicker
+                                compact
+                                value={c.root_cause}
+                                note={c.root_cause_note}
+                                daysLost={c.days_lost}
+                                onChange={(patch: any) =>
+                                  setCauses(cs => ({ ...cs, [a.activity_id]: { ...cs[a.activity_id], ...patch } }))}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>

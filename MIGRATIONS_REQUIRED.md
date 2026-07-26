@@ -213,6 +213,14 @@ New endpoints, live once the migration runs:
 | `POST /dpr/photos/verify` | Corroborate a photo against its entry |
 | `GET /dpr/photos/integrity/{scheme_id}` | Evidence quality + reused images |
 
+**A second migration is also needed:**
+`migrations/2026_07_24_daily_actuals_root_cause.sql`. The first migration put
+the cause columns on `dpr_entries_v2`, which is fed by the site-visit screen —
+but the Data Entry tab, where an engineer records the day's quantities and is
+asked why a figure fell short, writes to `daily_actuals`. Without these columns
+the cause is accepted by the API and silently dropped, and the form looks like
+it saved. Both tables carry the field, because both capture a shortfall.
+
 **One code change still needed:** the photo upload handler must compute and
 store `sha256` on upload. Until it does, the reused-image check returns nothing —
 it will not error, it will simply never find anything, which is the more

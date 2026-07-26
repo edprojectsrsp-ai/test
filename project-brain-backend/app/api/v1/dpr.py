@@ -196,6 +196,11 @@ class ActualEntry(BaseModel):
     entered_via: str = "web"
     location_lat: Optional[float] = None
     location_lng: Optional[float] = None
+    # Why the day fell short. A closed code plus a free note: the note carries
+    # the specifics, the code makes the quarter countable.
+    root_cause: Optional[str] = None
+    root_cause_note: Optional[str] = None
+    days_lost: Optional[float] = None
 
 
 class DailySubmission(BaseModel):
@@ -236,16 +241,21 @@ def upsert_actuals(payload: DailySubmission, db: Session = Depends(get_db)):
             INSERT INTO daily_actuals
                 (activity_id, actual_date, actual_qty, area_of_work,
                  manpower_count, equipment_deployed, weather_conditions,
-                 remarks, entered_via, location_lat, location_lng)
+                 remarks, entered_via, location_lat, location_lng,
+                 root_cause, root_cause_note, days_lost)
             VALUES
                 (:act_id, CAST(:act_date AS date), :qty, :area,
                  :manpower, :equip, :weather,
-                 :remarks, :via, :lat, :lng)
+                 :remarks, :via, :lat, :lng,
+                 :root_cause, :root_cause_note, :days_lost)
             ON CONFLICT (activity_id, actual_date) DO UPDATE SET
                 actual_qty         = EXCLUDED.actual_qty,
                 area_of_work       = COALESCE(EXCLUDED.area_of_work,       daily_actuals.area_of_work),
                 manpower_count     = COALESCE(EXCLUDED.manpower_count,     daily_actuals.manpower_count),
                 equipment_deployed = COALESCE(EXCLUDED.equipment_deployed, daily_actuals.equipment_deployed),
+                root_cause         = COALESCE(EXCLUDED.root_cause,         daily_actuals.root_cause),
+                root_cause_note    = COALESCE(EXCLUDED.root_cause_note,    daily_actuals.root_cause_note),
+                days_lost          = COALESCE(EXCLUDED.days_lost,          daily_actuals.days_lost),
                 weather_conditions = COALESCE(EXCLUDED.weather_conditions, daily_actuals.weather_conditions),
                 remarks            = COALESCE(EXCLUDED.remarks,            daily_actuals.remarks),
                 entered_via        = EXCLUDED.entered_via,
@@ -262,6 +272,9 @@ def upsert_actuals(payload: DailySubmission, db: Session = Depends(get_db)):
             "via":      e.entered_via,
             "lat":      e.location_lat,
             "lng":      e.location_lng,
+            "root_cause":      e.root_cause,
+            "root_cause_note": e.root_cause_note,
+            "days_lost":       e.days_lost,
         })
         upserted += 1
     db.commit()
@@ -711,18 +724,25 @@ def root_cause_summary(
     """
     from app.services.root_cause import summarise
 
-    clauses = ["scheme_id = :sid"]
+    # Read from daily_actuals, which is where the Data Entry tab writes via
+    # POST /dpr/actuals. An earlier version of this endpoint read
+    # dpr_entries_v2 — a different table fed by a different screen — so the
+    # tab would have shown zero no matter how many causes were recorded.
+    clauses = ["p.scheme_id = :sid"]
     params: dict = {"sid": scheme_id}
     if date_from:
-        clauses.append("report_date >= CAST(:df AS date)")
+        clauses.append("da.actual_date >= CAST(:df AS date)")
         params["df"] = date_from
     if date_to:
-        clauses.append("report_date <= CAST(:dt AS date)")
+        clauses.append("da.actual_date <= CAST(:dt AS date)")
         params["dt"] = date_to
 
     rows = db.execute(text(f"""
-        SELECT root_cause, COALESCE(days_lost, 0) AS days_lost
-        FROM dpr_entries_v2
+        SELECT da.root_cause, COALESCE(da.days_lost, 0) AS days_lost
+        FROM daily_actuals   da
+        JOIN plan_activities pa ON da.activity_id = pa.activity_id
+        JOIN progress_plans  pp ON pa.plan_id     = pp.plan_id
+        JOIN packages        p  ON pp.package_id  = p.package_id
         WHERE {' AND '.join(clauses)}
     """), params).fetchall()
 

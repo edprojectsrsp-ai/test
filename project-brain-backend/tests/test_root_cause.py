@@ -155,3 +155,53 @@ class TestSummarise:
     def test_serialises(self):
         import json
         json.dumps(summarise([("DRG_PENDING", 5), (None, 2)]))
+
+
+class TestApiContract:
+    """The UI is built against these shapes, so a rename here breaks a screen."""
+
+    def test_actual_entry_accepts_the_cause_fields(self):
+        """Pydantic ignores unknown fields by default, so without these the
+        cause posted by the Data Entry tab would be silently dropped and the
+        form would look like it saved."""
+        from app.api.v1.dpr import ActualEntry
+        e = ActualEntry(activity_id=1, actual_date="2026-07-24", actual_qty=5,
+                        root_cause="DRG_PENDING", root_cause_note="awaiting IFC",
+                        days_lost=2.5)
+        assert e.root_cause == "DRG_PENDING"
+        assert e.root_cause_note == "awaiting IFC"
+        assert e.days_lost == 2.5
+
+    def test_cause_fields_are_optional(self):
+        """A day that met plan is not asked for a reason."""
+        from app.api.v1.dpr import ActualEntry
+        e = ActualEntry(activity_id=1, actual_date="2026-07-24", actual_qty=5)
+        assert e.root_cause is None and e.days_lost is None
+
+    def test_catalogue_carries_every_field_the_picker_renders(self):
+        cause = catalogue()[0]["causes"][0]
+        for key in ("code", "label", "responsibility", "excusable", "hint",
+                    "note_required"):
+            assert key in cause, key
+
+    def test_summary_carries_every_field_the_tab_renders(self):
+        rep = summarise([("DRG_PENDING", 5)])
+        for key in ("causes", "by_group", "by_responsibility", "total_days_lost",
+                    "excusable_days", "non_excusable_days", "unclassified_count",
+                    "unclassified_days", "disclaimer"):
+            assert key in rep, key
+
+    def test_summary_reads_the_table_the_entry_screen_writes(self):
+        """The Data Entry tab posts to /dpr/actuals, which writes daily_actuals.
+        An earlier version of the summary query read dpr_entries_v2 — a
+        different table fed by a different screen — so the tab would have shown
+        zero however many causes were recorded."""
+        import inspect
+        import re
+
+        from app.api.v1 import dpr
+        src = inspect.getsource(dpr.root_cause_summary)
+        # Check the FROM clause specifically; the surrounding comment names the
+        # old table on purpose, to explain why it must not come back.
+        from_tables = re.findall(r"FROM\s+(\w+)", src)
+        assert from_tables == ["daily_actuals"], from_tables
