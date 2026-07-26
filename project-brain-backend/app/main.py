@@ -235,8 +235,9 @@ async def _proxy_to_ai(request: Request, path: str):
 
     headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in {"host", "content-length"}
+        if k.lower() not in {"host", "content-length", "accept-encoding"}
     }
+    headers["accept-encoding"] = "identity"
     async with httpx.AsyncClient(timeout=120.0) as client:
         upstream = await client.request(
             request.method,
@@ -249,7 +250,9 @@ async def _proxy_to_ai(request: Request, path: str):
         status_code=upstream.status_code,
         headers={
             k: v for k, v in upstream.headers.items()
-            if k.lower() not in {"content-encoding", "transfer-encoding", "connection"}
+            if k.lower() not in {
+                "content-encoding", "content-length", "transfer-encoding", "connection"
+            }
         },
         media_type=upstream.headers.get("content-type"),
     )
@@ -387,8 +390,9 @@ async def proxy_ppe_routes(path: str, request: Request):
         target = f"{target}?{request.url.query}"
     headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in {"host", "content-length"}
+        if k.lower() not in {"host", "content-length", "accept-encoding"}
     }
+    headers["accept-encoding"] = "identity"
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
             upstream = await client.request(
@@ -404,7 +408,9 @@ async def proxy_ppe_routes(path: str, request: Request):
         status_code=upstream.status_code,
         headers={
             k: v for k, v in upstream.headers.items()
-            if k.lower() not in {"content-encoding", "transfer-encoding", "connection"}
+            if k.lower() not in {
+                "content-encoding", "content-length", "transfer-encoding", "connection"
+            }
         },
         media_type=upstream.headers.get("content-type"),
     )
