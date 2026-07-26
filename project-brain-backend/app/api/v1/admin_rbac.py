@@ -29,7 +29,7 @@ import secrets
 import time
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Body, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -147,6 +147,33 @@ DEFAULT_SETTINGS = {
     "menu_show_ai": "1",
     "menu_show_delay": "1",
     "active_financial_year": "",
+    "ai_default_provider": "gemini",
+    "ai_assistant_enabled": "1",
+    "reports_ai_enabled": "1",
+    "ai_provider_groq_enabled": "1",
+    "ai_provider_groq_model": "llama-3.3-70b-versatile",
+    "ai_provider_gemini_enabled": "1",
+    "ai_provider_gemini_model": "gemini-2.5-flash",
+    "ai_provider_openai_enabled": "0",
+    "ai_provider_openai_model": "gpt-4.1-mini",
+    "ai_provider_openrouter_enabled": "0",
+    "ai_provider_openrouter_model": "qwen/qwen-2.5-72b-instruct:free",
+    "ai_provider_cerebras_enabled": "0",
+    "ai_provider_cerebras_model": "llama-3.3-70b",
+    "ppe_service_url": "",
+    "ppe_alerts_telegram_enabled": "0",
+    "ppe_alerts_whatsapp_enabled": "0",
+    "telegram_enabled": "0",
+    "telegram_chat_ids": "",
+    "telegram_send_photo": "1",
+    "whatsapp_enabled": "0",
+    "whatsapp_phone_id": "",
+    "whatsapp_to": "",
+    "whatsapp_send_photo": "1",
+    "whatsapp_template": "",
+    "whatsapp_template_lang": "en",
+    "reports_delivery_telegram_enabled": "0",
+    "reports_delivery_whatsapp_enabled": "0",
 }
 _ddl_done = False
 
@@ -199,6 +226,34 @@ def set_setting(db: Session, key: str, value: str) -> None:
         ON CONFLICT (setting_key) DO UPDATE
         SET setting_value = EXCLUDED.setting_value, updated_at = now()
     """), {"k": key, "v": str(value)})
+
+
+def _mask_secret(value: str | None) -> str:
+    value = str(value or "")
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "••••"
+    return f"{value[:4]}••••{value[-4:]}"
+
+
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes", "on", "enabled")
+
+
+def _settings_raw(db: Session) -> dict[str, str]:
+    _ensure(db)
+    rows = db.execute(text(
+        "SELECT setting_key, setting_value FROM app_settings"
+    )).mappings().all()
+    raw = {str(r["setting_key"]): str(r["setting_value"] or "") for r in rows}
+    for k, v in DEFAULT_SETTINGS.items():
+        raw.setdefault(k, v)
+    return raw
 
 
 def get_dpr_backdate_days(db: Session) -> int:
@@ -544,12 +599,7 @@ def get_audit(limit: int = 100, user: dict = Depends(require("admin", "view")), 
 
 # ---------------------------------------------------------------- SETTINGS (Sprint 2)
 def _settings_payload(db: Session) -> dict:
-    rows = db.execute(text(
-        "SELECT setting_key, setting_value FROM app_settings"
-    )).mappings().all()
-    raw = {r["setting_key"]: r["setting_value"] for r in rows}
-    for k, v in DEFAULT_SETTINGS.items():
-        raw.setdefault(k, v)
+    raw = _settings_raw(db)
 
     def flag(k: str) -> bool:
         return str(raw.get(k, "1")).strip().lower() in ("1", "true", "yes", "on")
@@ -569,6 +619,115 @@ def _settings_payload(db: Session) -> dict:
         "menu_show_ai": flag("menu_show_ai"),
         "menu_show_delay": flag("menu_show_delay"),
         "active_financial_year": raw.get("active_financial_year") or "",
+    }
+
+
+AI_PROVIDERS = {
+    "groq": {
+        "label": "Groq",
+        "env_keys": ("GROQ_API_KEY",),
+        "key_setting": "ai_provider_groq_api_key",
+        "enabled_setting": "ai_provider_groq_enabled",
+        "model_setting": "ai_provider_groq_model",
+        "default_model": "llama-3.3-70b-versatile",
+    },
+    "gemini": {
+        "label": "Gemini",
+        "env_keys": ("GEMINI_API_KEY", "GOOGLE_API_KEY"),
+        "key_setting": "ai_provider_gemini_api_key",
+        "enabled_setting": "ai_provider_gemini_enabled",
+        "model_setting": "ai_provider_gemini_model",
+        "default_model": "gemini-2.5-flash",
+    },
+    "openai": {
+        "label": "OpenAI",
+        "env_keys": ("OPENAI_API_KEY",),
+        "key_setting": "ai_provider_openai_api_key",
+        "enabled_setting": "ai_provider_openai_enabled",
+        "model_setting": "ai_provider_openai_model",
+        "default_model": "gpt-4.1-mini",
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "env_keys": ("OPENROUTER_API_KEY",),
+        "key_setting": "ai_provider_openrouter_api_key",
+        "enabled_setting": "ai_provider_openrouter_enabled",
+        "model_setting": "ai_provider_openrouter_model",
+        "default_model": "qwen/qwen-2.5-72b-instruct:free",
+    },
+    "cerebras": {
+        "label": "Cerebras",
+        "env_keys": ("CEREBRAS_API_KEY",),
+        "key_setting": "ai_provider_cerebras_api_key",
+        "enabled_setting": "ai_provider_cerebras_enabled",
+        "model_setting": "ai_provider_cerebras_model",
+        "default_model": "llama-3.3-70b",
+    },
+}
+
+SECRET_SETTINGS = {
+    meta["key_setting"] for meta in AI_PROVIDERS.values()
+} | {"telegram_bot_token", "whatsapp_token"}
+
+
+def _integrations_payload(db: Session) -> dict:
+    raw = _settings_raw(db)
+
+    providers = {}
+    for key, meta in AI_PROVIDERS.items():
+        secret = raw.get(meta["key_setting"], "") or next(
+            (os.environ.get(env_key, "") for env_key in meta["env_keys"] if os.environ.get(env_key)),
+            "",
+        )
+        providers[key] = {
+            "label": meta["label"],
+            "enabled": _as_bool(raw.get(meta["enabled_setting"]), key in ("groq", "gemini")),
+            "configured": bool(secret),
+            "api_key_mask": _mask_secret(secret),
+            "model": raw.get(meta["model_setting"]) or meta["default_model"],
+        }
+
+    return {
+        "ai": {
+            "assistant_enabled": _as_bool(raw.get("ai_assistant_enabled"), True),
+            "reports_ai_enabled": _as_bool(raw.get("reports_ai_enabled"), True),
+            "default_provider": raw.get("ai_default_provider") or "gemini",
+            "providers": providers,
+        },
+        "ppe": {
+            "service_url": raw.get("ppe_service_url") or os.environ.get("PPE_SERVICE_URL", ""),
+            "alerts_telegram_enabled": _as_bool(raw.get("ppe_alerts_telegram_enabled"), False),
+            "alerts_whatsapp_enabled": _as_bool(raw.get("ppe_alerts_whatsapp_enabled"), False),
+        },
+        "telegram": {
+            "enabled": _as_bool(raw.get("telegram_enabled"), False),
+            "configured": bool(raw.get("telegram_bot_token")),
+            "bot_token_mask": _mask_secret(raw.get("telegram_bot_token")),
+            "chat_ids": raw.get("telegram_chat_ids") or "",
+            "send_photo": _as_bool(raw.get("telegram_send_photo"), True),
+        },
+        "whatsapp": {
+            "enabled": _as_bool(raw.get("whatsapp_enabled"), False),
+            "configured": bool(raw.get("whatsapp_token")),
+            "token_mask": _mask_secret(raw.get("whatsapp_token")),
+            "phone_id": raw.get("whatsapp_phone_id") or "",
+            "to": raw.get("whatsapp_to") or "",
+            "send_photo": _as_bool(raw.get("whatsapp_send_photo"), True),
+            "template": raw.get("whatsapp_template") or "",
+            "template_lang": raw.get("whatsapp_template_lang") or "en",
+        },
+        "modules": {
+            "ai_assistant_provider": raw.get("ai_default_provider") or "gemini",
+            "reports_ai_provider": raw.get("ai_default_provider") or "gemini",
+            "ppe_alerts": {
+                "telegram": _as_bool(raw.get("ppe_alerts_telegram_enabled"), False),
+                "whatsapp": _as_bool(raw.get("ppe_alerts_whatsapp_enabled"), False),
+            },
+            "reports_delivery": {
+                "telegram": _as_bool(raw.get("reports_delivery_telegram_enabled"), False),
+                "whatsapp": _as_bool(raw.get("reports_delivery_whatsapp_enabled"), False),
+            },
+        },
     }
 
 
@@ -598,6 +757,113 @@ def put_settings(body: SettingsIn, user: dict = Depends(require("admin", "edit")
     db.commit()
     _audit(db, user.get("user_id"), "update_settings", "", data)
     return {"ok": True, **_settings_payload(db)}
+
+
+@router.get("/integrations")
+def get_integrations(user: dict = Depends(require("admin", "view")), db: Session = Depends(get_db)):
+    """AI provider, PPE service and messaging integration settings.
+
+    Secrets are never returned in plaintext. The UI receives configured flags
+    and masked values only.
+    """
+    return _integrations_payload(db)
+
+
+@router.put("/integrations")
+def put_integrations(
+    payload: dict = Body(...),
+    user: dict = Depends(require("admin", "edit")),
+    db: Session = Depends(get_db),
+):
+    """Update integration settings.
+
+    Secret fields are write-only: empty strings or masked values keep the
+    existing secret. Send a non-empty new token/key to replace it.
+    """
+    raw_updates: dict[str, object] = {}
+
+    ai = payload.get("ai") or {}
+    if isinstance(ai, dict):
+        if "assistant_enabled" in ai:
+            raw_updates["ai_assistant_enabled"] = "1" if _as_bool(ai.get("assistant_enabled")) else "0"
+        if "reports_ai_enabled" in ai:
+            raw_updates["reports_ai_enabled"] = "1" if _as_bool(ai.get("reports_ai_enabled")) else "0"
+        if "default_provider" in ai:
+            provider = str(ai.get("default_provider") or "").strip().lower()
+            if provider and provider not in AI_PROVIDERS:
+                raise HTTPException(422, f"Unknown AI provider '{provider}'")
+            if provider:
+                raw_updates["ai_default_provider"] = provider
+        providers = ai.get("providers") or {}
+        if isinstance(providers, dict):
+            for provider, body in providers.items():
+                provider = str(provider).strip().lower()
+                if provider not in AI_PROVIDERS or not isinstance(body, dict):
+                    continue
+                meta = AI_PROVIDERS[provider]
+                if "enabled" in body:
+                    raw_updates[meta["enabled_setting"]] = "1" if _as_bool(body.get("enabled")) else "0"
+                if "model" in body:
+                    raw_updates[meta["model_setting"]] = str(body.get("model") or meta["default_model"]).strip()
+                if "api_key" in body:
+                    value = str(body.get("api_key") or "").strip()
+                    if value and "••••" not in value and value.lower() not in ("configured", "unchanged"):
+                        raw_updates[meta["key_setting"]] = value
+
+    ppe = payload.get("ppe") or {}
+    if isinstance(ppe, dict):
+        if "service_url" in ppe:
+            raw_updates["ppe_service_url"] = str(ppe.get("service_url") or "").strip().rstrip("/")
+        if "alerts_telegram_enabled" in ppe:
+            raw_updates["ppe_alerts_telegram_enabled"] = "1" if _as_bool(ppe.get("alerts_telegram_enabled")) else "0"
+        if "alerts_whatsapp_enabled" in ppe:
+            raw_updates["ppe_alerts_whatsapp_enabled"] = "1" if _as_bool(ppe.get("alerts_whatsapp_enabled")) else "0"
+
+    telegram = payload.get("telegram") or {}
+    if isinstance(telegram, dict):
+        if "enabled" in telegram:
+            raw_updates["telegram_enabled"] = "1" if _as_bool(telegram.get("enabled")) else "0"
+        if "chat_ids" in telegram:
+            raw_updates["telegram_chat_ids"] = str(telegram.get("chat_ids") or "").strip()
+        if "send_photo" in telegram:
+            raw_updates["telegram_send_photo"] = "1" if _as_bool(telegram.get("send_photo"), True) else "0"
+        if "bot_token" in telegram:
+            value = str(telegram.get("bot_token") or "").strip()
+            if value and "••••" not in value and value.lower() not in ("configured", "unchanged"):
+                raw_updates["telegram_bot_token"] = value
+
+    whatsapp = payload.get("whatsapp") or {}
+    if isinstance(whatsapp, dict):
+        if "enabled" in whatsapp:
+            raw_updates["whatsapp_enabled"] = "1" if _as_bool(whatsapp.get("enabled")) else "0"
+        for key in ("phone_id", "to", "template", "template_lang"):
+            if key in whatsapp:
+                raw_updates[f"whatsapp_{key}"] = str(whatsapp.get(key) or "").strip()
+        if "send_photo" in whatsapp:
+            raw_updates["whatsapp_send_photo"] = "1" if _as_bool(whatsapp.get("send_photo"), True) else "0"
+        if "token" in whatsapp:
+            value = str(whatsapp.get("token") or "").strip()
+            if value and "••••" not in value and value.lower() not in ("configured", "unchanged"):
+                raw_updates["whatsapp_token"] = value
+
+    modules = payload.get("modules") or {}
+    if isinstance(modules, dict):
+        reports_delivery = modules.get("reports_delivery") or {}
+        if isinstance(reports_delivery, dict):
+            if "telegram" in reports_delivery:
+                raw_updates["reports_delivery_telegram_enabled"] = "1" if _as_bool(reports_delivery.get("telegram")) else "0"
+            if "whatsapp" in reports_delivery:
+                raw_updates["reports_delivery_whatsapp_enabled"] = "1" if _as_bool(reports_delivery.get("whatsapp")) else "0"
+
+    for key, value in raw_updates.items():
+        set_setting(db, key, str(value))
+    db.commit()
+    audit_detail = {
+        k: ("<secret>" if k in SECRET_SETTINGS else v)
+        for k, v in raw_updates.items()
+    }
+    _audit(db, user.get("user_id"), "update_integrations", "", audit_detail)
+    return {"ok": True, **_integrations_payload(db)}
 
 
 @router.get("/branding")

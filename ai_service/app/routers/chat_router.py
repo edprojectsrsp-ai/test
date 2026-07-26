@@ -55,12 +55,13 @@ def _normalize_provider(p: Optional[str]) -> Optional[str]:
 @router.get("/providers")
 def list_providers():
     """List configured providers and the default selection for the UI dropdown."""
-    from app.providers.router import get_router, DEFAULT_PROVIDER, VALID_PROVIDERS
+    from app.providers.router import get_router, VALID_PROVIDERS
     r = get_router()
+    default_provider = r.get_default_provider()
     return {
         "available": r.get_available(),
-        "default": r.get_default_provider() or DEFAULT_PROVIDER,
-        "configured_default": DEFAULT_PROVIDER,
+        "default": default_provider,
+        "configured_default": r.default_provider,
         "all_known": sorted(list(VALID_PROVIDERS)),
     }
 

@@ -357,9 +357,26 @@ def _ppe_fallback(path: str, method: str) -> Response:
     )
 
 
+def _ppe_service_url_from_settings() -> str:
+    try:
+        from sqlalchemy import text
+        from app.core.database import SessionLocal
+
+        db = SessionLocal()
+        try:
+            row = db.execute(
+                text("SELECT setting_value FROM app_settings WHERE setting_key='ppe_service_url'")
+            ).scalar()
+            return str(row or "").strip().rstrip("/")
+        finally:
+            db.close()
+    except Exception:
+        return ""
+
+
 @app.api_route("/ppe/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_ppe_routes(path: str, request: Request):
-    ppe_base = os.environ.get("PPE_SERVICE_URL", "").rstrip("/")
+    ppe_base = os.environ.get("PPE_SERVICE_URL", "").rstrip("/") or _ppe_service_url_from_settings()
     if not ppe_base:
         return _ppe_fallback(path, request.method)
 

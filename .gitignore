@@ -52,6 +52,7 @@ run_logs/
 # --- Local data / uploads (do not commit) ---
 uploads/
 project_brain.db
+*.db
 *.sqlite
 *.sqlite3
 *.dump

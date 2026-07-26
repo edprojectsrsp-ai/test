@@ -31,6 +31,52 @@ interface AppSettings {
   menu_show_delay: boolean;
   active_financial_year: string;
 }
+interface ProviderSetting {
+  label: string;
+  enabled: boolean;
+  configured: boolean;
+  api_key_mask: string;
+  model: string;
+  api_key?: string;
+}
+interface Integrations {
+  ai: {
+    assistant_enabled: boolean;
+    reports_ai_enabled: boolean;
+    default_provider: string;
+    providers: Record<string, ProviderSetting>;
+  };
+  ppe: {
+    service_url: string;
+    alerts_telegram_enabled: boolean;
+    alerts_whatsapp_enabled: boolean;
+  };
+  telegram: {
+    enabled: boolean;
+    configured: boolean;
+    bot_token_mask: string;
+    chat_ids: string;
+    send_photo: boolean;
+    bot_token?: string;
+  };
+  whatsapp: {
+    enabled: boolean;
+    configured: boolean;
+    token_mask: string;
+    phone_id: string;
+    to: string;
+    send_photo: boolean;
+    template: string;
+    template_lang: string;
+    token?: string;
+  };
+  modules: {
+    ai_assistant_provider: string;
+    reports_ai_provider: string;
+    ppe_alerts: { telegram: boolean; whatsapp: boolean };
+    reports_delivery: { telegram: boolean; whatsapp: boolean };
+  };
+}
 
 const MOCK_USERS: User[] = [
   { user_id: 1, username: "pkn", full_name: "PKN (Developer)", role: "admin", is_active: true, last_login_at: "2026-07-04 18:02", designation: "Sr. Engineer", department: "PMC" },
@@ -59,6 +105,29 @@ const MOCK_SETTINGS: AppSettings = {
   menu_show_ai: true,
   menu_show_delay: true,
   active_financial_year: "",
+};
+const MOCK_INTEGRATIONS: Integrations = {
+  ai: {
+    assistant_enabled: true,
+    reports_ai_enabled: true,
+    default_provider: "gemini",
+    providers: {
+      groq: { label: "Groq", enabled: true, configured: false, api_key_mask: "", model: "llama-3.3-70b-versatile" },
+      gemini: { label: "Gemini", enabled: true, configured: false, api_key_mask: "", model: "gemini-2.5-flash" },
+      openai: { label: "OpenAI", enabled: false, configured: false, api_key_mask: "", model: "gpt-4.1-mini" },
+      openrouter: { label: "OpenRouter", enabled: false, configured: false, api_key_mask: "", model: "qwen/qwen-2.5-72b-instruct:free" },
+      cerebras: { label: "Cerebras", enabled: false, configured: false, api_key_mask: "", model: "llama-3.3-70b" },
+    },
+  },
+  ppe: { service_url: "", alerts_telegram_enabled: false, alerts_whatsapp_enabled: false },
+  telegram: { enabled: false, configured: false, bot_token_mask: "", chat_ids: "", send_photo: true },
+  whatsapp: { enabled: false, configured: false, token_mask: "", phone_id: "", to: "", send_photo: true, template: "", template_lang: "en" },
+  modules: {
+    ai_assistant_provider: "gemini",
+    reports_ai_provider: "gemini",
+    ppe_alerts: { telegram: false, whatsapp: false },
+    reports_delivery: { telegram: false, whatsapp: false },
+  },
 };
 
 async function api(path: string, init?: RequestInit): Promise<any> {
@@ -91,6 +160,7 @@ export default function AdminConsole() {
   const [granted, setGranted] = useState<number[]>([]);
   const [nu, setNu] = useState({ username: "", full_name: "", password: "", role: "viewer" });
   const [settings, setSettings] = useState<AppSettings>(MOCK_SETTINGS);
+  const [integrations, setIntegrations] = useState<Integrations>(MOCK_INTEGRATIONS);
   const [loading, setLoading] = useState(!MOCK);
   const [err, setErr] = useState("");
 
@@ -99,16 +169,38 @@ export default function AdminConsole() {
     setLoading(true);
     setErr("");
     try {
-      const [u, m, a, s] = await Promise.all([
+      const [u, m, a, s, i] = await Promise.all([
         api("/users"),
         api("/roles/matrix"),
         api("/audit?limit=100"),
         api("/settings"),
+        api("/integrations"),
       ]);
       setUsers(u.users || []);
       setMatrix(m);
       setAudit(a.entries || []);
       setSettings({ ...MOCK_SETTINGS, ...s });
+      setIntegrations({
+        ...MOCK_INTEGRATIONS,
+        ...i,
+        ai: {
+          ...MOCK_INTEGRATIONS.ai,
+          ...(i.ai || {}),
+          providers: { ...MOCK_INTEGRATIONS.ai.providers, ...(i.ai?.providers || {}) },
+        },
+        ppe: { ...MOCK_INTEGRATIONS.ppe, ...(i.ppe || {}) },
+        telegram: { ...MOCK_INTEGRATIONS.telegram, ...(i.telegram || {}) },
+        whatsapp: { ...MOCK_INTEGRATIONS.whatsapp, ...(i.whatsapp || {}) },
+        modules: {
+          ...MOCK_INTEGRATIONS.modules,
+          ...(i.modules || {}),
+          ppe_alerts: { ...MOCK_INTEGRATIONS.modules.ppe_alerts, ...(i.modules?.ppe_alerts || {}) },
+          reports_delivery: {
+            ...MOCK_INTEGRATIONS.modules.reports_delivery,
+            ...(i.modules?.reports_delivery || {}),
+          },
+        },
+      });
       if ((u.users || []).length && !accessUser) {
         const first = (u.users as User[]).find((x) => x.role !== "admin" && x.role !== "pmc")
           || u.users[0];
@@ -214,6 +306,46 @@ export default function AdminConsole() {
     }
   };
 
+  const updateProvider = (key: string, patch: Partial<ProviderSetting>) => {
+    setIntegrations((cur) => ({
+      ...cur,
+      ai: {
+        ...cur.ai,
+        providers: {
+          ...cur.ai.providers,
+          [key]: { ...cur.ai.providers[key], ...patch },
+        },
+      },
+    }));
+  };
+
+  const saveIntegrations = async () => {
+    try {
+      const payload: Integrations = {
+        ...integrations,
+        ai: {
+          ...integrations.ai,
+          providers: Object.fromEntries(Object.entries(integrations.ai.providers).map(([key, provider]) => [
+            key,
+            {
+              ...provider,
+              api_key: provider.api_key || "",
+            },
+          ])),
+        },
+        telegram: { ...integrations.telegram, bot_token: integrations.telegram.bot_token || "" },
+        whatsapp: { ...integrations.whatsapp, token: integrations.whatsapp.token || "" },
+      };
+      if (!MOCK) {
+        const d = await api("/integrations", { method: "PUT", body: JSON.stringify(payload) });
+        setIntegrations({ ...MOCK_INTEGRATIONS, ...d });
+      }
+      toast("Integration settings saved.");
+    } catch (e: any) {
+      toast(e?.message || "Integration settings save failed.");
+    }
+  };
+
   const inputStyle: React.CSSProperties = {
     padding: "7px 10px", borderRadius: "var(--r)", border: "1px solid var(--line)",
     background: "var(--panel)", color: "var(--ink)", fontSize: 12.5, outline: "none", width: "100%",
@@ -246,6 +378,7 @@ export default function AdminConsole() {
             { key: "matrix", label: "Roles Matrix" },
             { key: "access", label: "Scheme Access" },
             { key: "settings", label: "Settings" },
+            { key: "integrations", label: "Integrations" },
             { key: "audit", label: "Audit" },
           ]}
           active={tab}
@@ -523,6 +656,259 @@ export default function AdminConsole() {
             <Button kind="accent" onClick={saveSettings}>Save settings</Button>
           </div>
         </Card>
+      ) : null}
+
+      {tab === "integrations" ? (
+        <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+          <Card>
+            <div style={{ display: "flex", gap: 14, alignItems: "end", flexWrap: "wrap" }}>
+              <Field label="Default AI provider">
+                <Select
+                  value={integrations.ai.default_provider}
+                  onChange={(v) => setIntegrations((cur) => ({
+                    ...cur,
+                    ai: { ...cur.ai, default_provider: v },
+                  }))}
+                  options={Object.entries(integrations.ai.providers).map(([key, provider]) => ({
+                    value: key,
+                    label: provider.label,
+                  }))}
+                  style={{ minWidth: 180 }}
+                />
+              </Field>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={integrations.ai.assistant_enabled}
+                  onChange={(e) => setIntegrations((cur) => ({
+                    ...cur,
+                    ai: { ...cur.ai, assistant_enabled: e.target.checked },
+                  }))}
+                />
+                AI Assistant
+              </label>
+              <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13 }}>
+                <input
+                  type="checkbox"
+                  checked={integrations.ai.reports_ai_enabled}
+                  onChange={(e) => setIntegrations((cur) => ({
+                    ...cur,
+                    ai: { ...cur.ai, reports_ai_enabled: e.target.checked },
+                  }))}
+                />
+                Reports AI
+              </label>
+            </div>
+            <div style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+              gap: 10,
+              marginTop: 14,
+            }}>
+              {Object.entries(integrations.ai.providers).map(([key, provider]) => (
+                <div key={key} style={{
+                  border: "1px solid var(--line)", borderRadius: "var(--r)",
+                  padding: 12, background: "var(--panel)",
+                }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10 }}>
+                    <label style={{ display: "flex", gap: 7, alignItems: "center", fontWeight: 650, fontSize: 13 }}>
+                      <input
+                        type="checkbox"
+                        checked={provider.enabled}
+                        onChange={(e) => updateProvider(key, { enabled: e.target.checked })}
+                      />
+                      {provider.label}
+                    </label>
+                    <span style={{ flex: 1 }} />
+                    <Chip tone={provider.configured ? "ok" : "moderate"}>
+                      {provider.configured ? "Configured" : "Key required"}
+                    </Chip>
+                  </div>
+                  <Field label="Model">
+                    <input
+                      value={provider.model}
+                      onChange={(e) => updateProvider(key, { model: e.target.value })}
+                      style={inputStyle}
+                    />
+                  </Field>
+                  <div style={{ height: 9 }} />
+                  <Field label="API key (leave blank to keep current)">
+                    <input
+                      type="password"
+                      value={provider.api_key || ""}
+                      onChange={(e) => updateProvider(key, { api_key: e.target.value })}
+                      placeholder={provider.api_key_mask || "Enter provider key"}
+                      autoComplete="new-password"
+                      style={inputStyle}
+                    />
+                  </Field>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700 }}>PPE camera service</p>
+            <Field label="Public PPE worker URL">
+              <input
+                value={integrations.ppe.service_url}
+                onChange={(e) => setIntegrations((cur) => ({
+                  ...cur,
+                  ppe: { ...cur.ppe, service_url: e.target.value },
+                }))}
+                placeholder="https://your-ppe-service.onrender.com"
+                style={inputStyle}
+              />
+            </Field>
+            <p style={{ margin: "7px 0 0", fontSize: 11.5, color: "var(--steel-dim)" }}>
+              Required for live cameras and inference. Without it, the main service supplies the model catalog only.
+            </p>
+          </Card>
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: 12 }}>
+            <Card>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <strong style={{ fontSize: 13 }}>Telegram</strong>
+                <span style={{ flex: 1 }} />
+                <Chip tone={integrations.telegram.configured ? "ok" : "moderate"}>
+                  {integrations.telegram.configured ? "Configured" : "Token required"}
+                </Chip>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={integrations.telegram.enabled}
+                    onChange={(e) => setIntegrations((cur) => ({
+                      ...cur,
+                      telegram: { ...cur.telegram, enabled: e.target.checked },
+                    }))}
+                  /> Enabled
+                </label>
+              </div>
+              <Field label="Bot token (leave blank to keep current)">
+                <input
+                  type="password"
+                  value={integrations.telegram.bot_token || ""}
+                  onChange={(e) => setIntegrations((cur) => ({
+                    ...cur,
+                    telegram: { ...cur.telegram, bot_token: e.target.value },
+                  }))}
+                  placeholder={integrations.telegram.bot_token_mask || "Telegram bot token"}
+                  autoComplete="new-password"
+                  style={inputStyle}
+                />
+              </Field>
+              <div style={{ height: 9 }} />
+              <Field label="Chat IDs (comma separated)">
+                <input
+                  value={integrations.telegram.chat_ids}
+                  onChange={(e) => setIntegrations((cur) => ({
+                    ...cur,
+                    telegram: { ...cur.telegram, chat_ids: e.target.value },
+                  }))}
+                  style={inputStyle}
+                />
+              </Field>
+            </Card>
+
+            <Card>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+                <strong style={{ fontSize: 13 }}>WhatsApp Cloud API</strong>
+                <span style={{ flex: 1 }} />
+                <Chip tone={integrations.whatsapp.configured ? "ok" : "moderate"}>
+                  {integrations.whatsapp.configured ? "Configured" : "Token required"}
+                </Chip>
+                <label style={{ fontSize: 12 }}>
+                  <input
+                    type="checkbox"
+                    checked={integrations.whatsapp.enabled}
+                    onChange={(e) => setIntegrations((cur) => ({
+                      ...cur,
+                      whatsapp: { ...cur.whatsapp, enabled: e.target.checked },
+                    }))}
+                  /> Enabled
+                </label>
+              </div>
+              <Field label="Access token (leave blank to keep current)">
+                <input
+                  type="password"
+                  value={integrations.whatsapp.token || ""}
+                  onChange={(e) => setIntegrations((cur) => ({
+                    ...cur,
+                    whatsapp: { ...cur.whatsapp, token: e.target.value },
+                  }))}
+                  placeholder={integrations.whatsapp.token_mask || "WhatsApp access token"}
+                  autoComplete="new-password"
+                  style={inputStyle}
+                />
+              </Field>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 9, marginTop: 9 }}>
+                <Field label="Phone number ID">
+                  <input
+                    value={integrations.whatsapp.phone_id}
+                    onChange={(e) => setIntegrations((cur) => ({
+                      ...cur,
+                      whatsapp: { ...cur.whatsapp, phone_id: e.target.value },
+                    }))}
+                    style={inputStyle}
+                  />
+                </Field>
+                <Field label="Recipient number">
+                  <input
+                    value={integrations.whatsapp.to}
+                    onChange={(e) => setIntegrations((cur) => ({
+                      ...cur,
+                      whatsapp: { ...cur.whatsapp, to: e.target.value },
+                    }))}
+                    style={inputStyle}
+                  />
+                </Field>
+              </div>
+            </Card>
+          </div>
+
+          <Card>
+            <p style={{ margin: "0 0 12px", fontSize: 13, fontWeight: 700 }}>Module delivery</p>
+            {([
+              ["ppe", "telegram", "PPE alerts to Telegram", integrations.ppe.alerts_telegram_enabled],
+              ["ppe", "whatsapp", "PPE alerts to WhatsApp", integrations.ppe.alerts_whatsapp_enabled],
+              ["reports", "telegram", "Reports to Telegram", integrations.modules.reports_delivery.telegram],
+              ["reports", "whatsapp", "Reports to WhatsApp", integrations.modules.reports_delivery.whatsapp],
+            ] as const).map(([module, channel, label, checked]) => (
+              <label key={`${module}-${channel}`} style={{
+                display: "inline-flex", alignItems: "center", gap: 7,
+                marginRight: 20, marginBottom: 8, fontSize: 13,
+              }}>
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  onChange={(e) => {
+                    if (module === "ppe") {
+                      setIntegrations((cur) => ({
+                        ...cur,
+                        ppe: {
+                          ...cur.ppe,
+                          [channel === "telegram" ? "alerts_telegram_enabled" : "alerts_whatsapp_enabled"]: e.target.checked,
+                        },
+                      }));
+                    } else {
+                      setIntegrations((cur) => ({
+                        ...cur,
+                        modules: {
+                          ...cur.modules,
+                          reports_delivery: { ...cur.modules.reports_delivery, [channel]: e.target.checked },
+                        },
+                      }));
+                    }
+                  }}
+                />
+                {label}
+              </label>
+            ))}
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+              <Button kind="accent" onClick={saveIntegrations}>Save integrations</Button>
+            </div>
+          </Card>
+        </div>
       ) : null}
 
       {tab === "audit" ? (

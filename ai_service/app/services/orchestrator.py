@@ -224,7 +224,11 @@ def get_db():
         or os.environ.get("DATABASE_URL")
         or "postgresql://postgres:abc123@127.0.0.1:5432/project_brain"
     )
-    return psycopg2.connect(dsn)
+    conn = psycopg2.connect(dsn)
+    # Neon/PgBouncer can hand this service a server connection previously used
+    # by a read-only AI tool. Reset the mode explicitly before persistence.
+    conn.set_session(readonly=False, autocommit=False)
+    return conn
 
 
 # ---------------------------------------------------------------------------
