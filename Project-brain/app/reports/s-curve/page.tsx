@@ -9,7 +9,7 @@ import {
 } from "recharts";
 import { TrendingUp, AlertTriangle, Activity, Calendar, Target, Package } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 const C = {
   bg: "#f7fafc",

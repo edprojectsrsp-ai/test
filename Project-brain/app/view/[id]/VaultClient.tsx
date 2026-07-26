@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
-const API = "http://localhost:8000/api/v1/schemes";
+const API = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/schemes`;
 
 // =============================================================================
 //   STATUS LEVELS & TAB CONFIG

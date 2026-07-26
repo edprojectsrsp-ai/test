@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Activity, CalendarDays, Save } from "lucide-react";
 import { useMos } from "../../../components/brain/MosContext";
 
-const API_URL = "http://localhost:8000/api/v1/plant";
+const API_URL = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/plant`;
 
 export default function PlantProgressWorkspace() {
   const { focusField, speakAndChat } = useMos();

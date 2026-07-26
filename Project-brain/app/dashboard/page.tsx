@@ -17,7 +17,7 @@ import PhysicalProgressSummary from "./PhysicalProgressSummary";
 import ProjectWiseDashboard from "./ProjectWiseDashboard";
 import { exportDashboard, type ExportFormat } from "@/lib/export";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -221,7 +221,7 @@ export default function DashboardPage() {
         setCards(Array.isArray(cds) ? cds : []);
         setCorpCapex(cc);
       })
-      .catch(() => setError("Failed to load dashboard. Ensure the backend is running on port 8000."))
+      .catch(() => setError(`Failed to load dashboard. Check backend connectivity: ${API}`))
       .finally(() => setLoading(false));
   }, []);
 

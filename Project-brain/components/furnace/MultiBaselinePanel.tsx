@@ -15,9 +15,7 @@ import { Button, Card, Chip } from "@/ui";
 // Chart view shares this panel's fetch — opening both costs one request.
 const BaselineGantt = dynamic(() => import("@/components/furnace/BaselineGantt"), { ssr: false });
 
-const API = (process.env.NEXT_PUBLIC_API_BASE
-  || process.env.NEXT_PUBLIC_API_BASE_URL
-  || "http://127.0.0.1:8000/api/scheduling").replace(/\/$/, "");
+const API = `${(process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/api/scheduling`;
 
 const mono: React.CSSProperties = {
   fontFamily: "var(--font-mono, 'IBM Plex Mono', ui-monospace, monospace)",

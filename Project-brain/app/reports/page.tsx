@@ -14,7 +14,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Scheme = { scheme_id: number; scheme_name: string; scheme_type: string };
 type Package = { package_id: number; package_name: string; scheme_id: number };

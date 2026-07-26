@@ -8,7 +8,7 @@ import { motion } from "framer-motion";
 import { TrendingUp, AlertTriangle, Calendar, Target, Activity, Package, Building2 } from "lucide-react";
 import PlanVersionsOverlay from "./PlanVersionsOverlay";
 
-const API = "http://localhost:8000";
+const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 /* Premium light palette — soft pastels, black labels */
 const C = {

@@ -16,7 +16,7 @@ import MosCapexReport from "@/components/furnace/MosCapexReport";
 import { CapexPackPanel } from "@/components/report/RsReports";
 import { exportMosCapex } from "@/lib/export";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type StatusGroup = { label: string; count: number; cost: number };
 type Row = {

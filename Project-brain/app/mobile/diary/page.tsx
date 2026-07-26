@@ -11,7 +11,7 @@ import {
   syncOfflineQueue, showToast,
 } from "@/lib/native";
 
-const API = "http://localhost:8000";
+const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 const USER_ID = 1;
 
 type Pkg = { package_id: number; package_name: string; scheme_name: string; site_location?: string };

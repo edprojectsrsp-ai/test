@@ -20,7 +20,7 @@ import {
 import { motion } from "framer-motion";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Project = {
   package_id: number; scheme_id: number; scheme_name: string; amr_no: string | null;

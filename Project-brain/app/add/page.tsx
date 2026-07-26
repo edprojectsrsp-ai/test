@@ -13,7 +13,7 @@ import {
 import Link from "next/link";
 import { useMos } from "@/components/brain/MosContext";
 
-const API_URL = "http://localhost:8000/api/v1/schemes";
+const API_URL = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/schemes`;
 
 type SchemeType = "corporate" | "plant" | "dummy";
 type SchemeStatus =

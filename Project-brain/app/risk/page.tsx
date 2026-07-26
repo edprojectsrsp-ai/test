@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, CheckCircle2, ShieldQuestion, Flame, TrendingDown, DollarSign, Clock, RefreshCw } from "lucide-react";
 
-const API = "http://localhost:8000";
+const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 type Indicator = { key: string; label: string; level: string; score: number; action: string };
 type HeatmapItem = {

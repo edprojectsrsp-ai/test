@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { BarChart2, Calendar, RefreshCw, Users } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type SummaryRow = {
   id: number | string;

@@ -11,7 +11,7 @@
 import { useMemo, useRef, useState } from "react";
 import { CheckCircle2, FileSpreadsheet, Loader2, Upload, Users } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Candidate = { activity_id: number; activity_name: string; category: string; package: string; confidence: number };
 type ParsedRow = {

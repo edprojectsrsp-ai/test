@@ -19,7 +19,7 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Block = { id: string; type: string; props: Record<string, any> };
 type TemplateMeta = { template_id: number; name: string; block_count: number };

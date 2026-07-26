@@ -10,7 +10,7 @@
 import { useEffect, useState } from "react";
 import { BarChart2, Users } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 const num = (v: any, d = 2) =>
   v == null || isNaN(Number(v)) ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: d });

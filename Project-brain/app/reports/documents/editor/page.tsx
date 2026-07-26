@@ -19,7 +19,7 @@ import {
   Strikethrough, Minus,
 } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1/report-docs";
+const API = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/report-docs`;
 
 type Mode = "view" | "edit";
 

@@ -12,7 +12,7 @@ import {
 } from "recharts";
 import { GitBranch } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 /* Soft premium pastels (readable on white) */
 const COLORS = ["#0891b2", "#7c3aed", "#d97706", "#db2777", "#059669", "#2563eb"];
 

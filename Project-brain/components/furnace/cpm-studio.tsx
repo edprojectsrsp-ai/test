@@ -29,7 +29,7 @@ const MultiBaselinePanel = dynamic(() => import("@/components/furnace/MultiBasel
 
 // Schedule export formats. .mpp is intentionally absent: it is a proprietary
 // binary with no reliable writer — export XML and use MS Project's Save As.
-const SCHED_API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/scheduling").replace(/\/$/, "");
+const SCHED_API = `${(process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000").replace(/\/$/, "")}/api/scheduling`;
 const EXPORT_FORMATS: { fmt: string; label: string }[] = [
   { fmt: "xer", label: "Primavera P6 (.xer)" },
   { fmt: "xml", label: "MS Project (.xml)" },

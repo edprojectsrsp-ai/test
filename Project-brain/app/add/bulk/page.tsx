@@ -5,6 +5,8 @@ import { UploadCloud, FileSpreadsheet, CheckCircle, AlertTriangle, Download, Arr
 import Link from "next/link";
 import { motion } from "framer-motion";
 
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
+
 export default function BulkUploadPage() {
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -14,7 +16,7 @@ export default function BulkUploadPage() {
 
   const handleDownload = async () => {
     try {
-      const res = await fetch("http://localhost:8000/api/v1/schemes/template");
+      const res = await fetch(`${API}/schemes/template`);
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -41,7 +43,7 @@ export default function BulkUploadPage() {
     formData.append("file", file);
 
     try {
-      const res = await fetch("http://localhost:8000/api/v1/schemes/bulk-upload", {
+      const res = await fetch(`${API}/schemes/bulk-upload`, {
         method: "POST",
         body: formData,
       });

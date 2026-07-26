@@ -1,12 +1,13 @@
 import VaultClient from "./VaultClient";
 
 type Params = { id: string };
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 export async function generateStaticParams(): Promise<Params[]> {
   // Required for `output: "export"` (static HTML export).
   // Best-effort: fetch scheme ids from the backend at build time.
   try {
-    const r = await fetch("http://localhost:8000/api/v1/schemes/all", { cache: "no-store" });
+    const r = await fetch(`${API}/schemes/all`, { cache: "no-store" });
     const data = await r.json();
     if (!Array.isArray(data)) return [];
     return data

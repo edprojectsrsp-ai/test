@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { FileText, Users } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Column = { id: number; label: string; category: string; uom: string; scope: number; package?: string };
 type MatrixRow = { date: string; values: Record<string, number> };

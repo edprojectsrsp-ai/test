@@ -18,7 +18,7 @@ import {
 } from "recharts";
 import { Activity, IndianRupee, MessageSquare, TrendingUp, Users } from "lucide-react";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type TrendRow = {
   month: string;

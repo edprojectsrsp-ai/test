@@ -14,7 +14,7 @@ import { useRouter } from "next/navigation";
 import { ArrowLeft, Printer, Loader2, BarChart3, CalendarDays, ListChecks, FolderKanban, Download, FileSpreadsheet } from "lucide-react";
 import { exportPmc } from "@/lib/export";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type SchemeOption = { scheme_id: number; scheme_name: string; scheme_type: string };
 

@@ -14,7 +14,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Download, FileSpreadsheet, Printer, Table2 } from "lucide-react";
 import { exportStatics } from "@/lib/export";
 
-const API = "http://localhost:8000/api/v1";
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Row = {
   id: number | string;
