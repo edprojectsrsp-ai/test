@@ -263,3 +263,131 @@ async def proxy_ai_routes(path: str, request: Request):
 @app.api_route("/api/v1/ai-settings/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_ai_settings_routes(path: str, request: Request):
     return await _proxy_to_ai(request, f"api/v1/ai-settings/{path}")
+
+
+def _ppe_catalog() -> dict:
+    """Lightweight PPE model catalog for production when ML service is separate."""
+    return {
+        "active_key": None,
+        "service_mode": "catalog_only",
+        "models": [
+            {
+                "key": "snehil-demo",
+                "label": "Demo PPE Model (Snehil)",
+                "kind": "pretrained",
+                "classes": ["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"],
+                "url": "https://raw.githubusercontent.com/snehilsanyal/Construction-Site-Safety-PPE-Detection/main/models/best.pt",
+                "license": "see snehilsanyal/Construction-Site-Safety-PPE-Detection (GitHub)",
+                "note": "YOLOv8n construction PPE demo model. Requires the PPE ML service to activate.",
+                "verified": False,
+                "file_ext": ".pt",
+                "downloaded": False,
+                "available": True,
+            },
+            {
+                "key": "voxdroid-enterprise",
+                "label": "Enterprise PPE Model (VoxDroid)",
+                "kind": "pretrained",
+                "classes": ["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"],
+                "url": "https://raw.githubusercontent.com/VoxDroid/Construction-Site-Safety-PPE-Detection/main/Model-Training/Outputs/runs/detect/yolov8s_ppe_css_200_epochs/weights/best.pt",
+                "license": "see VoxDroid/Construction-Site-Safety-PPE-Detection (GitHub)",
+                "note": "YOLOv8s enterprise PPE model. Requires the PPE ML service to activate.",
+                "verified": False,
+                "file_ext": ".pt",
+                "downloaded": False,
+                "available": True,
+            },
+            {
+                "key": "nduka1999",
+                "label": "PPE YOLO11s (nduka1999)",
+                "kind": "pretrained",
+                "classes": ["hardhat", "no-hardhat", "vest", "no-vest", "person"],
+                "url": "https://huggingface.co/nduka1999/nd_ppe_yolo11s/resolve/main/best.onnx?download=true",
+                "license": "MIT - huggingface.co/nduka1999/nd_ppe_yolo11s",
+                "note": "YOLO11s ONNX. Requires the PPE ML service to download and activate.",
+                "verified": False,
+                "file_ext": ".onnx",
+                "downloaded": False,
+                "available": True,
+            },
+            {
+                "key": "hexmon-vyra",
+                "label": "Vyra YOLOv8m (Hexmon)",
+                "kind": "pretrained",
+                "classes": ["Fall-Detected", "Gloves", "Goggles", "Hardhat", "Ladder", "Mask", "NO-Gloves", "NO-Goggles", "NO-Hardhat", "NO-Mask", "NO-Safety Vest", "Person", "Safety Cone", "Safety Vest"],
+                "url": "https://huggingface.co/Hexmon/vyra-yolo-ppe-detection/resolve/main/best.pt?download=true",
+                "license": "CC-BY-4.0 - huggingface.co/Hexmon/vyra-yolo-ppe-detection",
+                "note": "YOLOv8m PPE model. Requires the PPE ML service to download and activate.",
+                "verified": False,
+                "file_ext": ".pt",
+                "downloaded": False,
+                "available": True,
+            },
+            {"key": "custom-path", "label": "Custom Model (.pt path)", "kind": "custom", "classes": [], "url": "", "note": "Requires the PPE ML service.", "available": False},
+            {"key": "upload", "label": "Upload Model (.pt)", "kind": "upload", "classes": [], "url": "", "note": "Requires the PPE ML service.", "available": False},
+        ],
+    }
+
+
+def _ppe_fallback(path: str, method: str) -> Response:
+    normalized = path.strip("/")
+    if method == "GET" and normalized == "health":
+        return Response(
+            content='{"status":"catalog_only","detail":"PPE ML service is not attached to this deployment."}',
+            media_type="application/json",
+        )
+    if method == "GET" and normalized == "api/models/zoo":
+        import json
+        return Response(content=json.dumps(_ppe_catalog()), media_type="application/json")
+    if method == "GET" and normalized == "api/models":
+        return Response(
+            content='{"active":null,"live_weights":"","versions":[],"service_mode":"catalog_only"}',
+            media_type="application/json",
+        )
+    if method == "GET" and normalized == "api/cameras":
+        return Response(content="[]", media_type="application/json")
+    if method == "GET" and normalized == "api/review/pending":
+        return Response(content="[]", media_type="application/json")
+    if method == "GET" and normalized == "api/violations/types":
+        return Response(content='{"total":0,"types":[]}', media_type="application/json")
+    return Response(
+        content='{"detail":"PPE ML service is not deployed. Configure PPE_SERVICE_URL to enable live detection."}',
+        status_code=503,
+        media_type="application/json",
+    )
+
+
+@app.api_route("/ppe/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def proxy_ppe_routes(path: str, request: Request):
+    ppe_base = os.environ.get("PPE_SERVICE_URL", "").rstrip("/")
+    if not ppe_base:
+        return _ppe_fallback(path, request.method)
+
+    import httpx
+
+    target = f"{ppe_base}/{path.lstrip('/')}"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in {"host", "content-length"}
+    }
+    try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            upstream = await client.request(
+                request.method,
+                target,
+                content=await request.body(),
+                headers=headers,
+            )
+    except httpx.HTTPError:
+        return _ppe_fallback(path, request.method)
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={
+            k: v for k, v in upstream.headers.items()
+            if k.lower() not in {"content-encoding", "transfer-encoding", "connection"}
+        },
+        media_type=upstream.headers.get("content-type"),
+    )
