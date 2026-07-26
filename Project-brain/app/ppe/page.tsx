@@ -441,7 +441,7 @@ function ZonesTab() {
           })}
         </select>
       </div>
-      {sel ? <PPEZoneEditor key={sel} cameraId={sel} /> : null}
+      {sel ? <PPEZoneEditor key={sel} cameraId={sel} onClose={() => setSel("")} /> : null}
     </div>
   );
 }

@@ -15,6 +15,7 @@ pdf2image>=1.17.0
 pytesseract>=0.3.10
 Pillow>=10.0.0
 
-# Embeddings (fallback)
-sentence-transformers>=2.7.0
+# Multipart upload support. Local sentence-transformers is intentionally not
+# installed in the Render image because it pulls a very large Torch/CUDA stack.
+# Without Ollama, embedding writes degrade to text/FTS search.
 python-multipart>=0.0.9

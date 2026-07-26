@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: project-brain
+    runtime: docker
+    plan: free
+    dockerContext: .
+    dockerfilePath: ./Dockerfile.render
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: PROJECT_BRAIN_DB_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: PB_AUTH_SECRET
+        sync: false
+      - key: SECRET_KEY
+        sync: false
+      - key: PB_AUTH_ENFORCE
+        value: "1"
+      - key: JWT_EXPIRY_HOURS
+        value: "12"
+      - key: CORS_ORIGINS
+        sync: false
+      - key: AI_SERVICE_URL
+        value: http://127.0.0.1:8002
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: AI_DEFAULT_PROVIDER
+        value: openai
+      - key: UPLOAD_DIR
+        value: /tmp/project_brain/uploads
+      - key: UPLOAD_BACKUP_DIR
+        value: /tmp/project_brain/uploads_backup

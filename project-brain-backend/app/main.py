@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -222,3 +222,44 @@ def scheduling_health():
     if scheduling_router is None:
         return {"status": "unavailable", "module": "scheduling"}
     return {"status": "ok", "module": "scheduling"}
+
+
+async def _proxy_to_ai(request: Request, path: str):
+    """Expose the colocated AI service through the main backend URL."""
+    import httpx
+
+    ai_base = os.environ.get("AI_SERVICE_URL", "http://127.0.0.1:8002").rstrip("/")
+    target = f"{ai_base}/{path.lstrip('/')}"
+    if request.url.query:
+        target = f"{target}?{request.url.query}"
+
+    headers = {
+        k: v for k, v in request.headers.items()
+        if k.lower() not in {"host", "content-length"}
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        upstream = await client.request(
+            request.method,
+            target,
+            content=await request.body(),
+            headers=headers,
+        )
+    return Response(
+        content=upstream.content,
+        status_code=upstream.status_code,
+        headers={
+            k: v for k, v in upstream.headers.items()
+            if k.lower() not in {"content-encoding", "transfer-encoding", "connection"}
+        },
+        media_type=upstream.headers.get("content-type"),
+    )
+
+
+@app.api_route("/ai/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def proxy_ai_routes(path: str, request: Request):
+    return await _proxy_to_ai(request, f"ai/{path}")
+
+
+@app.api_route("/api/v1/ai-settings/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
+async def proxy_ai_settings_routes(path: str, request: Request):
+    return await _proxy_to_ai(request, f"api/v1/ai-settings/{path}")

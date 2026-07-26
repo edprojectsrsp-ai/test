@@ -204,18 +204,21 @@ export default function DelayCausesTab({ schemeId }) {
                     {title}
                   </div>
                   <div className="space-y-2 p-5">
-                    {Object.entries(obj || {}).map(([k, v]) => (
-                      <div key={k} className="flex items-center gap-3">
-                        <span className="w-28 shrink-0 text-xs capitalize text-zinc-400">{k}</span>
-                        <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
-                          <div className={`h-full rounded-full ${GROUP_BAR[k] || "bg-sky-500"}`}
-                            style={{ width: `${(v / (data.total_days_lost || 1)) * 100}%` }} />
+                    {Object.entries(obj || {}).map(([k, raw]) => {
+                      const v = Number(raw) || 0;
+                      return (
+                        <div key={k} className="flex items-center gap-3">
+                          <span className="w-28 shrink-0 text-xs capitalize text-zinc-400">{k}</span>
+                          <div className="h-2 flex-1 overflow-hidden rounded-full bg-zinc-800">
+                            <div className={`h-full rounded-full ${GROUP_BAR[k] || "bg-sky-500"}`}
+                              style={{ width: `${(v / (data.total_days_lost || 1)) * 100}%` }} />
+                          </div>
+                          <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-300">
+                            {v}d
+                          </span>
                         </div>
-                        <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-300">
-                          {v}d
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               ))}
