@@ -54,7 +54,12 @@ class Settings:
     DEVICE: str = _detect_device()
     CONF_THRESHOLD: float = float(os.getenv("PPE_CONF", "0.35"))
     IOU_THRESHOLD: float = float(os.getenv("PPE_IOU", "0.5"))
-    IMG_SIZE: int = int(os.getenv("PPE_IMGSZ", "640"))
+    # Preserve full resolution on accelerated hardware while keeping CPU-only
+    # free instances within memory. PPE_IMGSZ always overrides this default.
+    IMG_SIZE: int = int(os.getenv(
+        "PPE_IMGSZ",
+        "640" if DEVICE in ("cuda", "mps") else "416",
+    ))
     # Tracker: "bytetrack.yaml" (default) or "botsort.yaml" (re-ID, better for
     # crowded scenes / occlusion, slightly heavier).
     TRACKER: str = os.getenv("PPE_TRACKER", "bytetrack.yaml")
@@ -94,4 +99,3 @@ def get_settings() -> Settings:
     s = Settings()
     s.ensure_dirs()
     return s
-

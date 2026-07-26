@@ -2,6 +2,7 @@
 .DS_Store
 **/__pycache__
 **/*.pyc
+**/.venv
 **/.pytest_cache
 **/.mypy_cache
 **/.ruff_cache
@@ -17,3 +18,9 @@
 tmp_reports_zip
 tmp_*
 ProjectBrain_Portable_*.zip*
+**/*.pt
+**/*.onnx
+!ppe-camera/data/weights/zoo/snehil-demo.pt
+!ppe-camera/data/weights/zoo/voxdroid-enterprise.pt
+!ppe-camera/data/weights/zoo/nduka1999.onnx
+!ppe-camera/data/weights/zoo/hexmon-vyra.pt
