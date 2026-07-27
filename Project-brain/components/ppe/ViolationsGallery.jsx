@@ -6,8 +6,9 @@
  * Filter chips by type + status; per-card acknowledge / resolve.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const r = await fetch(`${API_BASE}${path}`, options);

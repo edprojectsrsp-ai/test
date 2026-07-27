@@ -17,8 +17,9 @@ import ViolationsGallery from "../../../components/ppe/ViolationsGallery";
 import PPEAnalytics from "../../../components/ppe/PPEAnalytics";
 import PPEWallRoom from "../../../components/ppe/PPEWallRoom";
 import PPEReports from "../../../components/ppe/PPEReports";
+import { getPpeApiBase } from "../../../lib/ppeApi";
 
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 type Tab = "wall" | "live" | "alerts" | "reports" | "analytics" | "review" | "setup";
 

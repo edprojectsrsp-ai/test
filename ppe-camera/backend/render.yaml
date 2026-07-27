@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: project-brain-ppe-lite
+    env: docker
+    plan: free
+    rootDir: ppe-camera/backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PPE_DEVICE
+        value: cpu
+      - key: PPE_BOOT_MODEL_KEY
+        value: nduka1999
+      - key: PPE_BASE_WEIGHTS
+        value: yolo11n.pt
+      - key: PPE_CORS_ORIGINS
+        sync: false
+      - key: PPE_DATABASE_URL
+        sync: false

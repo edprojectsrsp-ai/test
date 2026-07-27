@@ -21,6 +21,27 @@ python3.12 -m venv .venv
 The service listens on `http://127.0.0.1:8004`; Project Brain exposes its
 review dashboard at `http://127.0.0.1:3000/ppe/`.
 
+## Render Free deployment
+
+For a dedicated low-memory PPE service, deploy `ppe-camera/backend` as its own
+Render web service.
+
+- Runtime: `Docker`
+- Root directory: `ppe-camera/backend`
+- Health check path: `/health`
+- Recommended env:
+  - `PPE_DEVICE=cpu`
+  - `PPE_BOOT_MODEL_KEY=nduka1999`
+  - `PPE_BASE_WEIGHTS=yolo11n.pt`
+  - `PPE_CORS_ORIGINS=https://your-vercel-app.vercel.app`
+
+Why this setup:
+
+- the Dockerfile binds `0.0.0.0:$PORT`, which Render requires
+- `.dockerignore` strips `.venv`, logs, local weights, captures, and datasets
+- `PPE_BOOT_MODEL_KEY=nduka1999` activates one lighter ONNX PPE model in the
+  background after startup, so `/health` can go green before model download
+
 This README is deliberately honest about what has been **verified by automated
 tests** versus what is **written but needs your hardware** (a GPU and real
 camera streams) to prove out. Nothing here is oversold.

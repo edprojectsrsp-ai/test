@@ -30,6 +30,7 @@ async def lifespan(app: FastAPI):
     from app.services.runtime import set_event_loop
 
     set_event_loop(asyncio.get_running_loop())
+    boot_task = None
 
     # Rebuild the fleet from storage. CameraRecord has always carried the
     # docstring "the CameraManager rehydrates these at startup", and
@@ -48,10 +49,23 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - never block startup
         import logging
         logging.getLogger(__name__).warning("fleet restore skipped: %s", exc)
+    boot_model_key = os.getenv("PPE_BOOT_MODEL_KEY", "").strip()
+    if boot_model_key:
+        async def _boot_model() -> None:
+            from app.ml import model_zoo
 
+            try:
+                await asyncio.to_thread(model_zoo.select, boot_model_key)
+                print(f"[ppe] boot model active: {boot_model_key}")
+            except Exception as e:
+                print(f"[ppe] boot model failed ({boot_model_key}): {e}")
+
+        boot_task = asyncio.create_task(_boot_model())
     try:
         yield
     finally:
+        if boot_task is not None and not boot_task.done():
+            boot_task.cancel()
         from app.services.runtime import get_manager
 
         get_manager().stop_all()

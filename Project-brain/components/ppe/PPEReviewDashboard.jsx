@@ -1,5 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect, useCallback } from "react";
+import { getPpeApiBase } from "../../lib/ppeApi";
 
 // PPE Review Dashboard — teach the AI from the frontend.
 // White corporate theme (matches Control Room / Alerts).
@@ -45,7 +46,7 @@ function drawPlaceholder(ctx, w, h) {
 }
 
 const HANDLE = 8;
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const response = await fetch(`${API_BASE}${path}`, options);

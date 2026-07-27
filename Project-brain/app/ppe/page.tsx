@@ -8,8 +8,9 @@ import PPEReports from "../../components/ppe/PPEReports";
 import PPEAlertSettings from "../../components/ppe/PPEAlertSettings";
 import PPEFleetHealth from "../../components/ppe/PPEFleetHealth";
 import PPEZoneEditor from "../../components/ppe/PPEZoneEditor";
+import { getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 type Tab = "live" | "alerts" | "reports" | "analytics" | "review" | "health" | "zones" | "settings";
 
@@ -401,7 +402,7 @@ function MetaChip({
  * single-camera component and can also be opened from the live grid.
  */
 function ZonesTab() {
-  const API = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+  const API = getPpeApiBase();
   const [cams, setCams] = useState<any[]>([]);
   const [sel, setSel] = useState<string>("");
 
