@@ -35,6 +35,8 @@ class ZooModel:
     note: str = ""
     verified: bool = False                # accuracy vetted on plant footage?
     file_ext: str = ".pt"                 # .pt or .onnx
+    tier: str = "standard"                # "light" | "standard" | "heavy"
+    recommended: bool = False             # preferred default for low-RAM deploys
 
 
 # Catalog shown in the AI Model dropdown (order = display order).
@@ -52,6 +54,7 @@ CATALOG: list[ZooModel] = [
         note="YOLOv8n, 10-class construction PPE. Great for the live demo.",
         verified=False,
         file_ext=".pt",
+        tier="standard",
     ),
     ZooModel(
         key="voxdroid-enterprise",
@@ -74,6 +77,7 @@ CATALOG: list[ZooModel] = [
              "accurate than the Snehil demo model.",
         verified=False,
         file_ext=".pt",
+        tier="heavy",
     ),
     ZooModel(
         key="nduka1999",
@@ -90,6 +94,8 @@ CATALOG: list[ZooModel] = [
         note="YOLO11s ONNX (~38 MB). Cap + vest. First select downloads from HF — wait until LIVE before upload video.",
         verified=False,
         file_ext=".onnx",
+        tier="light",
+        recommended=True,
     ),
     ZooModel(
         key="hexmon-vyra",
@@ -109,18 +115,21 @@ CATALOG: list[ZooModel] = [
         note="YOLOv8m (~52 MB), 14 classes incl. gloves/goggles/fall. First select downloads from HF — wait until LIVE before upload video.",
         verified=False,
         file_ext=".pt",
+        tier="heavy",
     ),
     ZooModel(
         key="custom-path",
         label="Custom Model (.pt path)",
         kind="custom",
         note="Point at a local .pt already on the server.",
+        tier="heavy",
     ),
     ZooModel(
         key="upload",
         label="Upload Model (.pt)",
         kind="upload",
         note="Upload your Colab-trained best.pt. Unverified source -- your trust.",
+        tier="heavy",
     ),
 ]
 

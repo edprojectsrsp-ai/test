@@ -124,6 +124,12 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const active = models.find((m) => m.key === activeKey);
+  const orderedModels = [...models].sort((a, b) => {
+    const aRank = a.recommended ? 0 : a.kind === "pretrained" ? 1 : 2;
+    const bRank = b.recommended ? 0 : b.kind === "pretrained" ? 1 : 2;
+    if (aRank !== bRank) return aRank - bRank;
+    return a.label.localeCompare(b.label);
+  });
 
   useEffect(() => {
     if (!open) return undefined;
@@ -193,7 +199,7 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
               No models returned. Is the PPE backend running?
             </div>
           ) : (
-            models.map((m) => {
+            orderedModels.map((m) => {
               const isActive = m.key === activeKey;
               const disabled = !m.available;
               return (
@@ -223,6 +229,9 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontWeight: 800, fontSize: 13.5, flex: 1 }}>{m.label}</span>
+                    {m.recommended ? <Pill tone="brand">default</Pill> : null}
+                    {m.tier === "light" ? <Pill tone="ok">light</Pill> : null}
+                    {m.tier === "heavy" ? <Pill tone="warn">heavy</Pill> : null}
                     {isActive ? <Pill tone="ok">LIVE</Pill> : null}
                     {disabled ? <Pill tone="mute">unavailable</Pill> : null}
                   </div>
@@ -344,7 +353,7 @@ function ModelBar({ say }) {
     if (m.kind === "upload") { uploadRef.current?.click(); return; }
     if (m.kind === "custom") { setShowCustom(true); return; }
     if (!m.url && !m.downloaded) { say(`${m.label} has no download URL set yet`, "warn"); return; }
-    const heavy = !m.downloaded && (key === "nduka1999" || key === "hexmon-vyra");
+    const heavy = !m.downloaded && m.tier === "heavy";
     activateAndVerify(
       () => api(`/api/models/zoo/${encodeURIComponent(key)}/select`, { method: "POST" }),
       m.downloaded
@@ -436,6 +445,12 @@ function ModelBar({ say }) {
       {loadErr ? (
         <div style={{ marginTop: 10, fontSize: 12.5, color: C.danger, background: C.dangerSoft, padding: "8px 10px", borderRadius: 8 }}>
           Model list error: {loadErr}
+        </div>
+      ) : null}
+      {!loadErr ? (
+        <div style={{ marginTop: 10, fontSize: 12, color: "#5b6b7b", lineHeight: 1.45 }}>
+          Default mode uses the <b>lightweight</b> model on the free Render worker. You can still switch to a
+          <b> heavy</b> model whenever you want broader coverage.
         </div>
       ) : null}
       {active?.classes?.length ? (
