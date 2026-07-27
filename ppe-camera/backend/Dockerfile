@@ -19,7 +19,7 @@ RUN pip install --upgrade pip setuptools wheel && \
 
 COPY app ./app
 COPY scripts ./scripts
-COPY data ./data
+RUN mkdir -p ./data
 COPY .env.example ./.env.example
 COPY README.md ./README.md
 
