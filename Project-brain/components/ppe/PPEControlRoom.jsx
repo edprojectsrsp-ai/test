@@ -9,27 +9,47 @@
  *   4. Model versions — self-training history
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
+import TeachCanvas from "./TeachCanvas";
+import BrowserCropSource from "./BrowserCropSource";
 
 const API_BASE = getPpeApiBase();
 
+function formatApiDetail(detail) {
+  if (detail == null) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => {
+      if (typeof d === "string") return d;
+      const loc = Array.isArray(d?.loc) ? d.loc.filter((x) => x !== "body").join(".") : "";
+      const msg = d?.msg || JSON.stringify(d);
+      // Old PPE server without browser support
+      if (String(msg).includes("string_pattern_mismatch") || String(msg).includes("source_kind")) {
+        return "PPE backend is outdated or not restarted — restart the PPE service on :8004 (use the project .venv), then try again.";
+      }
+      return loc ? `${loc}: ${msg}` : msg;
+    }).join(" · ");
+  }
+  if (typeof detail === "object") return detail.msg || detail.message || JSON.stringify(detail);
+  return String(detail);
+}
+
 async function api(path, options) {
+  const url = buildPpeUrl(path);
   let r;
   try {
-    r = await fetch(`${API_BASE}${path}`, options);
+    r = await fetch(url, options);
   } catch (e) {
     const msg = e?.message || String(e);
     throw new Error(
-      `Network error talking to PPE service (${API_BASE}${path}): ${msg}. `
-      + "If you just selected a new model (nduka / Hexmon), wait until it shows LIVE — "
-      + "first download is 40–50 MB from Hugging Face. Keep the PPE service running on :8004.",
+      `Network error talking to PPE service (${url}): ${msg}. `
+      + "Start PPE backend on :8004 (ppe-camera/backend .venv) and keep it running.",
     );
   }
   const t = await r.text();
   let body; try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
   if (!r.ok) {
-    const detail = typeof body.detail === "string" ? body.detail
-      : body.detail ? JSON.stringify(body.detail) : `${r.status} ${r.statusText}`;
+    const detail = formatApiDetail(body.detail) || `${r.status} ${r.statusText}`;
     throw new Error(detail || `HTTP ${r.status} ${path}`);
   }
   return body;
@@ -52,18 +72,64 @@ const MODES = [
 ];
 
 const SOURCE_HELP = {
-  ip: "IP/CCTV by brand — enter IP, login & channel; the RTSP URL is built for you (Hikvision, Dahua, CP Plus, Uniview, Axis…).",
-  onvif: "Auto-resolve the stream over ONVIF, or Discover cameras on the LAN.",
-  webcam: "Use the laptop/USB camera for a quick local test.",
-  rtsp: "Paste a full RTSP/DVR stream URL (rtsp://user:pass@ip:554/…).",
-  screen: "Capture a region of the desktop (e.g. DVR viewer window).",
-  mjpeg: "HTTP MJPEG stream (http://ip/video.cgi). Often the only way in when RTSP is blocked or the vendor RTSP password is unknown.",
-  snapshot: "Polls a still-image URL (http://ip/snapshot.jpg). Every IP camera serves one, and it survives HTTP-only site firewalls that block RTSP.",
-  hls: "HLS or RTMP re-stream (https://host/stream.m3u8) — typical for NVR and cloud gateways.",
-  folder: "Watch a folder of images — drone or handheld stills dropped on a share, or replaying captured evidence through a changed model.",
-  video: "Upload a clip — full pipeline runs without a physical camera.",
+  ip: "Plant CCTV — IP + login. Auto tries RTSP by brand, then common HTTP snapshot paths when RTSP is blocked.",
+  onvif: "Resolve stream over ONVIF, or Discover cameras on the LAN.",
+  webcam: "Laptop / USB camera for a quick local test.",
+  browser: "Share an NVR web page tab and crop only the live video pane — no RTSP required.",
+  rtsp: "Paste a full RTSP URL (rtsp://user:pass@ip:554/…).",
+  screen: "Capture a region of the SERVER desktop. Prefer Browser crop for NVR web UIs.",
+  mjpeg: "HTTP MJPEG stream (http://ip/video.cgi) when RTSP is blocked.",
+  snapshot: "Poll a still URL (http://ip/cgi-bin/snapshot.cgi). Works through HTTP-only firewalls.",
+  hls: "HLS / re-stream (https://host/stream.m3u8).",
+  folder: "Watch a folder of stills on the server.",
+  video: "Upload a clip — full pipeline without a physical camera.",
   fake: "Synthetic frames for wiring checks only.",
 };
+
+/** Sensible defaults per source type (FPS, poll, etc.) */
+const KIND_DEFAULTS = {
+  ip: { fps: "6" },
+  onvif: { fps: "6" },
+  rtsp: { fps: "6" },
+  mjpeg: { fps: "8" },
+  snapshot: { fps: "2", poll: 1 },
+  hls: { fps: "6" },
+  webcam: { fps: "10", webcamFps: "15" },
+  browser: { fps: "6" },
+  video: { fps: "10" },
+  folder: { fps: "4" },
+  screen: { fps: "6" },
+  fake: { fps: "6" },
+};
+
+const PRIMARY_KINDS = [
+  { id: "ip", label: "Plant CCTV", icon: "📡", hint: "IP + user + pass" },
+  { id: "webcam", label: "Webcam", icon: "📷", hint: "Local USB / laptop" },
+  { id: "video", label: "Upload video", icon: "🎬", hint: "Demo clip" },
+  { id: "browser", label: "Browser NVR", icon: "✂", hint: "Share tab + crop" },
+];
+
+const ADVANCED_KINDS = [
+  { id: "rtsp", label: "RTSP URL", icon: "🔗" },
+  { id: "snapshot", label: "HTTP snapshot", icon: "🖼" },
+  { id: "mjpeg", label: "HTTP MJPEG", icon: "🌐" },
+  { id: "hls", label: "HLS", icon: "📶" },
+  { id: "onvif", label: "ONVIF", icon: "🔎" },
+  { id: "folder", label: "Image folder", icon: "📁" },
+  { id: "screen", label: "Server screen", icon: "🖥" },
+  { id: "fake", label: "Fake", icon: "🧪" },
+];
+
+/** Common still endpoints when RTSP is firewalled (plant sites). */
+const SNAPSHOT_PATHS = [
+  "/cgi-bin/snapshot.cgi",
+  "/snapshot.jpg",
+  "/cgi-bin/snapshot.cgi?channel=1",
+  "/ISAPI/Streaming/channels/101/picture",
+  "/onvif-http/snapshot",
+  "/tmpfs/auto.jpg",
+  "/image.jpg",
+];
 
 function Pill({ tone = "brand", children }) {
   const map = {
@@ -120,14 +186,17 @@ function ModePills({ value, onChange, busy }) {
 }
 
 /* ---------------------------------------------------------------- Custom model picker (never clipped) */
-function ModelPicker({ models, activeKey, busy, onPick }) {
+function ModelPicker({ models, activeKey, busy, onPick, emptyMessage = "No models returned. Is the PPE backend running?" }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef(null);
   const active = models.find((m) => m.key === activeKey);
   const orderedModels = [...models].sort((a, b) => {
-    const aRank = a.recommended ? 0 : a.kind === "pretrained" ? 1 : 2;
-    const bRank = b.recommended ? 0 : b.kind === "pretrained" ? 1 : 2;
+    const aRank = a.recommended ? 0 : a.plant_ready ? 1 : a.kind === "pretrained" ? 2 : 3;
+    const bRank = b.recommended ? 0 : b.plant_ready ? 1 : b.kind === "pretrained" ? 2 : 3;
     if (aRank !== bRank) return aRank - bRank;
+    const ae = Number(a.efficacy) || 0;
+    const be = Number(b.efficacy) || 0;
+    if (ae !== be) return be - ae;
     return a.label.localeCompare(b.label);
   });
 
@@ -196,7 +265,7 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
         >
           {!models.length ? (
             <div style={{ padding: "14px 12px", color: C.sub, fontSize: 13 }}>
-              No models returned. Is the PPE backend running?
+              {emptyMessage}
             </div>
           ) : (
             orderedModels.map((m) => {
@@ -229,22 +298,25 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
                 >
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ fontWeight: 800, fontSize: 13.5, flex: 1 }}>{m.label}</span>
-                    {m.recommended ? <Pill tone="brand">default</Pill> : null}
+                    {m.recommended ? <Pill tone="brand">plant default</Pill> : null}
+                    {m.efficacy != null ? <Pill tone="mute">{m.efficacy}/100</Pill> : null}
                     {m.tier === "light" ? <Pill tone="ok">light</Pill> : null}
                     {m.tier === "heavy" ? <Pill tone="warn">heavy</Pill> : null}
                     {isActive ? <Pill tone="ok">LIVE</Pill> : null}
                     {disabled ? <Pill tone="mute">unavailable</Pill> : null}
                   </div>
                   <div style={{ fontSize: 11.5, color: C.sub, marginTop: 3, lineHeight: 1.35 }}>
-                    {m.kind === "pretrained" && !m.downloaded && m.url
-                      ? "Downloads on select"
-                      : m.kind === "upload"
-                        ? "Upload a .pt file"
-                        : m.kind === "custom"
-                          ? "Use a path on the server"
-                          : m.downloaded
-                            ? "Ready on disk"
-                            : (m.kind || "model")}
+                    {m.note
+                      ? String(m.note).slice(0, 140) + (String(m.note).length > 140 ? "…" : "")
+                      : m.kind === "pretrained" && !m.downloaded && m.url
+                        ? "Downloads on select"
+                        : m.kind === "upload"
+                          ? "Upload a .pt file"
+                          : m.kind === "custom"
+                            ? "Use a path on the server"
+                            : m.downloaded
+                              ? "Ready on disk"
+                              : (m.kind || "model")}
                     {!m.available && m.kind === "pretrained" ? " · configure URL first" : ""}
                   </div>
                 </button>
@@ -253,6 +325,92 @@ function ModelPicker({ models, activeKey, busy, onPick }) {
           )}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------- Compact model switch (expanded camera) */
+function CompactModelSwitch({ onSay }) {
+  const say = onSay || (() => {});
+  const [models, setModels] = useState([]);
+  const [activeKey, setActiveKey] = useState(null);
+  const [live, setLive] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [loadErr, setLoadErr] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const z = await api("/api/models/zoo");
+      setModels(z.models || []);
+      setActiveKey(z.active_key || null);
+      setLoadErr("");
+      try {
+        const m = await api("/api/models");
+        setLive((m.live_weights || "").split(/[\\/]/).pop());
+      } catch { /* optional */ }
+    } catch (e) {
+      setLoadErr(e.message || "Could not load models");
+      setModels([]);
+    }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const onPick = async (key) => {
+    const m = models.find((x) => x.key === key);
+    if (!m) return;
+    if (!m.available) { say(`${m.label} is not configured yet`, "warn"); return; }
+    if (m.kind === "upload" || m.kind === "custom") {
+      say("Use Live → Model & train for upload / custom path", "warn");
+      return;
+    }
+    setBusy(true);
+    say(m.downloaded ? "Activating model…" : "Downloading + activating…", "brand");
+    try {
+      await api(`/api/models/zoo/${encodeURIComponent(key)}/select`, { method: "POST" });
+      await load();
+      say(`${m.label} is live on all cameras`, "ok");
+    } catch (e) {
+      say(e.message || "Model switch failed", "danger");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+        Detection model
+      </div>
+      <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.45 }}>
+        Applies to <b style={{ color: C.ink }}>every camera</b> (fleet-wide). Change it here without leaving this view.
+      </div>
+      <ModelPicker
+        models={models}
+        activeKey={activeKey}
+        busy={busy}
+        onPick={onPick}
+        emptyMessage={loadErr || "No models returned. Is the PPE backend running?"}
+      />
+      {activeKey ? <Pill tone="ok">● LIVE fleet-wide</Pill> : <Pill tone="mute">none active</Pill>}
+      {live ? (
+        <div style={{ fontSize: 11, color: C.sub, ...mono, wordBreak: "break-all" }}>
+          weights: {live}
+        </div>
+      ) : null}
+      {loadErr ? (
+        <div style={{ fontSize: 12, color: C.danger }}>{loadErr}</div>
+      ) : null}
+      <button
+        type="button"
+        disabled={busy}
+        onClick={load}
+        style={{
+          border: `1px solid ${C.line}`, background: C.panel, color: C.sub,
+          borderRadius: 8, padding: "8px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer",
+        }}
+      >
+        ↻ Refresh model list
+      </button>
     </div>
   );
 }
@@ -393,7 +551,13 @@ function ModelBar({ say }) {
         <span style={{ fontSize: 11, letterSpacing: 0.8, color: C.sub, fontWeight: 800, textTransform: "uppercase", flexShrink: 0 }}>
           AI Model
         </span>
-        <ModelPicker models={models} activeKey={activeKey} busy={busy} onPick={onPick} />
+        <ModelPicker
+          models={models}
+          activeKey={activeKey}
+          busy={busy}
+          onPick={onPick}
+          emptyMessage={loadErr || "No models returned. Is the PPE backend running?"}
+        />
         {active ? <Pill tone="ok">● LIVE</Pill> : <Pill tone="mute">none active</Pill>}
         {active?.verified === false && active?.kind === "pretrained" ? <Pill tone="warn">unverified</Pill> : null}
         {busy ? <Pill tone="brand">working…</Pill> : null}
@@ -442,8 +606,20 @@ function ModelBar({ say }) {
           ↻
         </button>
       </div>
+
       {loadErr ? (
-        <div style={{ marginTop: 10, fontSize: 12.5, color: C.danger, background: C.dangerSoft, padding: "8px 10px", borderRadius: 8 }}>
+        <div
+          style={{
+            marginTop: 10,
+            padding: "10px 12px",
+            borderRadius: 10,
+            background: C.dangerSoft,
+            color: C.danger,
+            border: "1px solid #f5c2c8",
+            fontSize: 12.5,
+            lineHeight: 1.45,
+          }}
+        >
           Model list error: {loadErr}
         </div>
       ) : null}
@@ -540,7 +716,7 @@ function PpePicker({ catalog, value, onChange, note }) {
 }
 
 /* ---------------------------------------------------------------- Add source */
-function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, defaultPpe }) {
+function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, defaultPpe, onBrowserReady }) {
   const [openLocal, setOpenLocal] = useState(false);
   const open = openProp != null ? openProp : openLocal;
   const setOpen = (v) => {
@@ -559,6 +735,8 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
   const [region, setRegion] = useState("0,0,1280,720");
   const [loop, setLoop] = useState(true);
   const [speed, setSpeed] = useState("normal");
+  const [fpsLimit, setFpsLimit] = useState("10");
+  const [webcamFps, setWebcamFps] = useState("15");
   const [ppe, setPpe] = useState(defaultPpe || ["helmet", "vest"]);
   // IP camera (brand) builder
   const [brands, setBrands] = useState([]);
@@ -576,6 +754,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
   const [testResult, setTestResult] = useState(null);
   const [discovering, setDiscovering] = useState(false);
   const [found, setFound] = useState([]);
+  const [submitting, setSubmitting] = useState(false);
   const videoRef = useRef(null);
 
   useEffect(() => {
@@ -625,7 +804,23 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
       return { source_kind: "folder", display: folderPath,
         source_kwargs: { path: folderPath.trim(), pattern: folderPattern || "*.jpg", loop: folderLoop } };
     }
-    if (kind === "webcam") return { source_kind: "webcam", source_kwargs: { index: Number(index) || 0 } };
+    if (kind === "webcam") {
+      const requestedFps = Number(webcamFps);
+      return {
+        source_kind: "webcam",
+        source_kwargs: {
+          index: Number(index) || 0,
+          ...(requestedFps > 0 ? { fps: requestedFps } : {}),
+        },
+      };
+    }
+    if (kind === "browser") {
+      return {
+        source_kind: "browser",
+        source_kwargs: {},
+        display: "browser-crop (share tab + crop pane)",
+      };
+    }
     if (kind === "rtsp") return { source_kind: "rtsp", source_kwargs: { url: url.trim(), transport } };
     if (kind === "screen") {
       const [l, t, w, h] = region.split(",").map((n) => Number(n) || 0);
@@ -667,18 +862,43 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
 
   const submit = async () => {
     if (kind === "video") { videoRef.current?.click(); return; }
-    const camera_id = id.trim() || `${kind}-${Date.now() % 10000}`;
+    // Sanitize id: only [A-Za-z0-9._-] allowed by the API
+    const rawId = id.trim() || (kind === "browser" ? `nvr-web-${Date.now() % 100000}` : `${kind}-${Date.now() % 10000}`);
+    const camera_id = String(rawId).replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+|-+$/g, "") || `cam-${Date.now() % 10000}`;
+    setSubmitting(true);
+    setTestResult(null);
     try {
       const cfg = await buildConfig();
-      onAdd({ camera_id, source_kind: cfg.source_kind, source_kwargs: cfg.source_kwargs, required_ppe: ppe });
-      setId(""); setTestResult(null);
+      const payload = {
+        camera_id,
+        source_kind: cfg.source_kind,
+        source_kwargs: {
+          ...(cfg.source_kwargs || {}),
+          ...(kind === "browser" ? { camera_id } : {}),
+        },
+        required_ppe: ppe?.length ? ppe : ["helmet", "vest"],
+        fps_limit: Math.max(1, Number(fpsLimit) || 6),
+      };
+      await onAdd(payload);
+      if (kind === "browser") {
+        onBrowserReady?.(camera_id);
+        setTestResult({
+          ok: true,
+          note: `Camera “${camera_id}” created. Use the wizard below: open NVR login → share tab → crop → Start PPE.`,
+        });
+      } else {
+        setTestResult({ ok: true, note: `Camera “${camera_id}” added.` });
+      }
+      setId("");
     } catch (e) {
       setTestResult({ ok: false, error: e.message || String(e) });
+    } finally {
+      setSubmitting(false);
     }
   };
   const onVideo = (e) => {
     const f = e.target.files?.[0];
-    if (f) onAddVideo(f, id.trim() || "demo", loop, speed, ppe);
+    if (f) onAddVideo(f, id.trim() || "demo", loop, speed, ppe, Math.max(1, Number(fpsLimit) || 10));
     e.target.value = "";
     setId("");
   };
@@ -689,13 +909,14 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
   const missingReq =
     (kind === "ip" && !host.trim()) ||
     (kind === "onvif" && !host.trim()) ||
-    (kind === "rtsp" && !url.trim());
-  const canTest = kind !== "video" && kind !== "fake" && !missingReq;
+    (kind === "rtsp" && !url.trim()) ||
+    (kind === "mjpeg" && !url.trim()) ||
+    (kind === "snapshot" && !url.trim()) ||
+    (kind === "hls" && !url.trim()) ||
+    (kind === "folder" && !folderPath.trim());
+  const canTest = kind !== "video" && kind !== "fake" && kind !== "browser" && !missingReq;
 
-  // Mirrors SOURCE_KINDS in the backend. The three HTTP options matter more
-  // than they look: on plenty of sites RTSP is blocked at the firewall or
-  // locked behind vendor credentials, and an MJPEG or snapshot URL is the only
-  // way to reach the camera at all.
+  // Full source matrix — mirrors backend SOURCE_KINDS + IP brand builder.
   const kinds = [
     { id: "ip", label: "IP Camera", icon: "📡" },
     { id: "onvif", label: "ONVIF", icon: "🔎" },
@@ -703,10 +924,11 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
     { id: "mjpeg", label: "HTTP MJPEG", icon: "🌐" },
     { id: "snapshot", label: "HTTP snapshot", icon: "🖼" },
     { id: "hls", label: "HLS / RTMP", icon: "📶" },
+    { id: "browser", label: "Browser crop", icon: "✂" },
     { id: "webcam", label: "Webcam", icon: "📷" },
     { id: "video", label: "Upload video", icon: "🎬" },
     { id: "folder", label: "Image folder", icon: "📁" },
-    { id: "screen", label: "Screen", icon: "🖥" },
+    { id: "screen", label: "Server screen", icon: "🖥" },
     { id: "fake", label: "Fake", icon: "🧪" },
   ];
 
@@ -721,7 +943,7 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
         }}
       >
         <span style={{ fontSize: 11, letterSpacing: 0.8, color: C.sub, fontWeight: 800, textTransform: "uppercase" }}>Add source</span>
-        <span style={{ color: C.sub, fontSize: 12.5 }}>IP/CCTV by brand · ONVIF · webcam · RTSP · video · screen</span>
+        <span style={{ color: C.sub, fontSize: 12.5 }}>IP · ONVIF · RTSP · MJPEG · browser crop · webcam · video · all types</span>
         <span style={{ flex: 1 }} />
         <span style={{
           background: C.brand, color: "#fff", borderRadius: 8, padding: "6px 12px",
@@ -817,6 +1039,77 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
             </div>
           ) : null}
 
+          {kind === "browser" ? (
+            <div style={{
+              fontSize: 12.5, lineHeight: 1.55, color: C.sub,
+              background: C.brandSoft, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px",
+            }}>
+              <b style={{ color: C.brand }}>Yes — browser live camera</b>
+              <ol style={{ margin: "8px 0 0", paddingLeft: 18 }}>
+                <li>Click <b>Add camera</b> — a wizard opens under the form.</li>
+                <li>Enter NVR web URL → <b>Open login page</b> → type <b>username & password on that page</b>.</li>
+                <li><b>Share that tab</b> back into PPE → <b>drag a crop</b> over only the live video.</li>
+                <li><b>Start PPE</b> — that crop is your live camera (detect / alerts / record).</li>
+              </ol>
+              <div style={{ marginTop: 8, fontSize: 12 }}>
+                PPE never stores the NVR password. Login stays on the vendor page (Hikvision, Dahua, etc.).
+              </div>
+            </div>
+          ) : null}
+
+          {kind === "rtsp" || kind === "mjpeg" || kind === "snapshot" || kind === "hls" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 8 }}>
+              {field("URL", <input value={url} onChange={(e) => setUrl(e.target.value)}
+                placeholder={kind === "rtsp" ? "rtsp://user:pass@ip:554/…" : "https://…"}
+                style={{ ...inp, width: "100%", ...mono }} />)}
+              {kind === "rtsp" ? field("Transport", (
+                <select value={transport} onChange={(e) => setTransport(e.target.value)} style={{ ...inp, width: "100%" }}>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                  <option value="">Auto</option>
+                </select>
+              )) : null}
+              {(kind === "mjpeg" || kind === "snapshot") ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  {field("Username", <input value={user} onChange={(e) => setUser(e.target.value)} style={{ ...inp, width: "100%" }} />)}
+                  {field("Password", <input type="password" value={pass} onChange={(e) => setPass(e.target.value)} style={{ ...inp, width: "100%" }} />)}
+                </div>
+              ) : null}
+              {kind === "snapshot" ? field("Poll interval (s)", (
+                <input type="number" min={0.5} step={0.5} value={pollInterval}
+                  onChange={(e) => setPollInterval(e.target.value)} style={{ ...inp, width: 120 }} />
+              )) : null}
+            </div>
+          ) : null}
+
+          {kind === "webcam" ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8 }}>
+              {field("Device index", <input value={index} onChange={(e) => setIndex(e.target.value)} placeholder="0" style={{ ...inp, width: "100%" }} />)}
+              {field("Requested FPS", <input value={webcamFps} onChange={(e) => setWebcamFps(e.target.value)} placeholder="15" style={{ ...inp, width: "100%" }} />)}
+            </div>
+          ) : null}
+
+          {kind === "folder" ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {field("Folder path (server)", <input value={folderPath} onChange={(e) => setFolderPath(e.target.value)} placeholder="D:\\stills\\gate" style={{ ...inp, width: "100%", ...mono }} />)}
+              {field("Pattern", <input value={folderPattern} onChange={(e) => setFolderPattern(e.target.value)} placeholder="*.jpg" style={{ ...inp, width: "100%" }} />)}
+              <label style={{ fontSize: 12.5, display: "inline-flex", gap: 8, alignItems: "center" }}>
+                <input type="checkbox" checked={folderLoop} onChange={(e) => setFolderLoop(e.target.checked)} /> Loop folder
+              </label>
+            </div>
+          ) : null}
+
+          {kind === "screen" ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {field("Region left,top,width,height (server pixels)", (
+                <input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="0,0,1280,720" style={{ ...inp, width: "100%", ...mono }} />
+              ))}
+              <div style={{ fontSize: 12, color: C.sub }}>
+                Captures the <b>server</b> display. For a browser NVR login on your PC, use <b>Browser crop</b> instead.
+              </div>
+            </div>
+          ) : null}
+
           <div>
             <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 6 }}>
               Required PPE on this camera
@@ -899,11 +1192,27 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
               </>
             ) : null}
             {kind === "webcam" ? (
-              <label style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}>
-                Device index
-                <input value={index} onChange={(e) => setIndex(e.target.value)} style={{ ...inp, width: 56 }} />
-              </label>
+              <>
+                <label style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Device index
+                  <input value={index} onChange={(e) => setIndex(e.target.value)} style={{ ...inp, width: 56 }} />
+                </label>
+                <label
+                  title="Requested camera capture rate for the local webcam. Actual hardware support varies."
+                  style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}
+                >
+                  Camera FPS
+                  <input value={webcamFps} onChange={(e) => setWebcamFps(e.target.value)} style={{ ...inp, width: 64 }} />
+                </label>
+              </>
             ) : null}
+            <label
+              title="Maximum frames per second sent through PPE inference for this camera. Applies to RTSP and the other source types too."
+              style={{ fontSize: 12, color: C.sub, display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              PPE FPS
+              <input value={fpsLimit} onChange={(e) => setFpsLimit(e.target.value)} style={{ ...inp, width: 64 }} />
+            </label>
             {kind === "screen" ? (
               <input
                 placeholder="left,top,width,height"
@@ -938,10 +1247,10 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
             <button
               type="button"
               onClick={submit}
-              disabled={missingReq}
+              disabled={missingReq || submitting}
               style={{
                 border: "none",
-                background: missingReq ? "#9bb6e8" : C.brand,
+                background: missingReq || submitting ? "#9bb6e8" : C.brand,
                 color: "#fff",
                 borderRadius: 9,
                 padding: "9px 18px",
@@ -950,7 +1259,13 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
                 cursor: missingReq ? "not-allowed" : "pointer",
               }}
             >
-              {kind === "video" ? "Choose & run" : "Add & start"}
+              {submitting
+                ? "Adding…"
+                : kind === "video"
+                  ? "Choose & run"
+                  : kind === "browser"
+                    ? "Add NVR browser camera"
+                    : "Add & start"}
             </button>
           </div>
 
@@ -960,9 +1275,16 @@ function AddSource({ onAdd, onAddVideo, open: openProp, onOpenChange, catalog, d
               background: testResult.ok ? C.okSoft : C.dangerSoft,
               color: testResult.ok ? C.ok : C.danger,
               border: `1px solid ${testResult.ok ? "#b8e6d0" : "#f5c2c8"}`,
+              lineHeight: 1.45,
             }}>
               {testResult.ok ? (
-                <span>✓ Connected — {testResult.width}×{testResult.height}, first frame in {testResult.latency_ms} ms.{testResult.display ? <span style={{ ...mono, color: C.sub }}> {testResult.display}</span> : null}</span>
+                <span>
+                  ✓ {testResult.note
+                    || (testResult.width
+                      ? `Connected — ${testResult.width}×${testResult.height}, first frame in ${testResult.latency_ms} ms.`
+                      : "OK")}
+                  {testResult.display ? <span style={{ ...mono, color: C.sub }}> {testResult.display}</span> : null}
+                </span>
               ) : (
                 <span>✕ {testResult.error || "Could not connect"}</span>
               )}
@@ -1085,13 +1407,39 @@ function FullscreenViewer({ cam, onClose }) {
 }
 
 /* ---------------------------------------------------------------- Camera card */
-function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog, large = false }) {
+function CameraCard({
+  cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog,
+  large = false, layout = "card", onOpen, onBack,
+}) {
+  const isTile = layout === "tile";
+  const isCanvas = layout === "canvas";
   const [fs, setFs] = useState(false);
+  const [panelTab, setPanelTab] = useState("live"); // live | mode | ppe | teach | manage
   const [streamKey, setStreamKey] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [imgOk, setImgOk] = useState(true);
   const [flagging, setFlagging] = useState(false);
+  /* Live Teach: hover a box → see Flip option; click → confirm; then save.
+     Labels bank into training data (Train & go live is still a separate step). */
+  const [teachOn, setTeachOn] = useState(false);
+  const [liveBoxes, setLiveBoxes] = useState(null);   // /live-labels payload
+  const [teachMsg, setTeachMsg] = useState("");
+  const [teachRect, setTeachRect] = useState(null);   // where the video sits (contain fit)
+  const [hoverBoxI, setHoverBoxI] = useState(null);   // box under cursor
+  const [teachAsk, setTeachAsk] = useState(null);     // { box, frame_id, boxes } frozen for confirm
+  const [teachSaving, setTeachSaving] = useState(false);
+  /* Freeze & label: the full editor. Quick-flip above handles the common case
+     in one click; this handles the two corrections flipping cannot express —
+     a box the model MISSED (nothing to click) and one it INVENTED (nothing an
+     edit can remove). The frame is pinned server-side so it cannot move on
+     while the operator is drawing. */
+  const [frozen, setFrozen] = useState(null);         // teach-freeze payload
+  const [frozenBoxes, setFrozenBoxes] = useState([]);
+  const [frozenSaving, setFrozenSaving] = useState(false);
+  const [clipping, setClipping] = useState(false);
+  const videoWrapRef = useRef(null);
+  const freezePollRef = useRef(false);                // don't refresh labels while ask is open
   const drag = useRef(null);
   const running = cam.state === "running";
   const stateColor = running ? C.ok : cam.state === "error" ? C.danger : C.sub;
@@ -1112,7 +1460,7 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
     e.preventDefault();
     setZ(zoom + (e.deltaY < 0 ? 0.3 : -0.3));
   };
-  const onDown = (e) => { if (zoom <= 1) return; drag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y }; };
+  const onDown = (e) => { if (zoom <= 1 || teachOn) return; drag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y }; };
   const onMove = (e) => {
     if (!drag.current) return;
     setPan(clampPan({
@@ -1134,6 +1482,234 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
     finally { setFlagging(false); }
   };
 
+  /* ---- Live Teach ------------------------------------------------------ */
+  // Poll the model's boxes for the newest frame while teach mode is on.
+  // Freeze polling while a confirm dialog is open so the box doesn't jump away.
+  useEffect(() => {
+    freezePollRef.current = Boolean(teachAsk);
+  }, [teachAsk]);
+
+  useEffect(() => {
+    if (!teachOn || !running) return undefined;
+    let alive = true;
+    const tick = async () => {
+      if (freezePollRef.current) return;
+      try {
+        const r = await fetch(
+          `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/live-labels`);
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        if (alive && !freezePollRef.current) setLiveBoxes(j);
+      } catch {
+        if (alive && !freezePollRef.current) setLiveBoxes(null);
+      }
+    };
+    tick();
+    const t = setInterval(tick, 800);
+    return () => { alive = false; clearInterval(t); };
+  }, [teachOn, running, cam.camera_id]);
+
+  // Where does the video actually sit inside the wrapper? objectFit:contain
+  // letterboxes, so box coordinates must be mapped into that inner rect.
+  useEffect(() => {
+    if (!teachOn) return undefined;
+    const measure = () => {
+      const el = videoWrapRef.current;
+      const fw = liveBoxes?.width, fh = liveBoxes?.height;
+      if (!el || !fw || !fh) { setTeachRect(null); return; }
+      const { width: cw, height: ch } = el.getBoundingClientRect();
+      const scale = Math.min(cw / fw, ch / fh);
+      const w = fw * scale, h = fh * scale;
+      setTeachRect({ x: (cw - w) / 2, y: (ch - h) / 2, w, h, scale });
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [teachOn, liveBoxes]);
+
+  const toggleTeach = () => {
+    setTeachOn((v) => {
+      const next = !v;
+      if (next) { setZ(1); }             // overlay math assumes no zoom/pan
+      else {
+        setLiveBoxes(null);
+        setTeachMsg("");
+        setHoverBoxI(null);
+        setTeachAsk(null);
+      }
+      return next;
+    });
+  };
+
+  const flash = (msg) => {
+    setTeachMsg(msg);
+    setTimeout(() => setTeachMsg((m) => (m === msg ? "" : m)), 2800);
+  };
+
+  const flipTargetLabel = (box) => {
+    if (!box) return "";
+    if (box.kind === "violation") return `${box.label} worn (green)`;
+    return `${box.label} missing (red)`;
+  };
+
+  // Click only opens the confirm card — does not save yet.
+  const askFlip = (box) => {
+    if (!box?.counterpart || !liveBoxes) return;
+    setTeachAsk({
+      box,
+      frame_id: liveBoxes.frame_id,
+      boxes: liveBoxes.boxes,
+    });
+    setHoverBoxI(box.i);
+  };
+
+  const cancelFlip = () => {
+    setTeachAsk(null);
+    setTeachSaving(false);
+  };
+
+  // Confirm: flip class and bank the frozen frame as labeled training data.
+  const confirmFlip = async () => {
+    if (!teachAsk || teachSaving) return;
+    const { box, frame_id, boxes: snap } = teachAsk;
+    if (!box.counterpart) return;
+    const payloadBoxes = snap
+      .filter((b) => b.known)
+      .map((b) => ({ cls: b.i === box.i ? box.counterpart : b.cls, xyxy: b.xyxy }));
+    setTeachSaving(true);
+    // optimistic flip on the frozen overlay
+    setLiveBoxes((p) => p && ({
+      ...p,
+      boxes: (p.boxes || snap).map((b) => (b.i === box.i
+        ? {
+          ...b,
+          cls: box.counterpart,
+          kind: b.kind === "violation" ? "gear" : "violation",
+          label: b.label,
+        }
+        : b)),
+    }));
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ frame_id, boxes: payloadBoxes }),
+        });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `${r.status}`);
+      flash(`✓ saved — mark more boxes, then Train & go live`);
+      setTeachAsk(null);
+    } catch (e) {
+      flash(`✗ ${String(e.message || e)}`);
+    } finally {
+      setTeachSaving(false);
+    }
+  };
+
+  /* ---- Freeze & label -------------------------------------------------- */
+  const startFreeze = async () => {
+    setFrozenSaving(true);
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-freeze`,
+        { method: "POST" });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      setFrozen(j);
+      setFrozenBoxes((j.boxes || []).filter((b) => b.known));
+      setTeachOn(false);
+      setTeachAsk(null);
+    } catch (e) {
+      flash(`✗ ${String(e.message || e)}`);
+    } finally {
+      setFrozenSaving(false);
+    }
+  };
+
+  const closeFreeze = useCallback(async () => {
+    const fid = frozen?.frame_id;
+    setFrozen(null);
+    setFrozenBoxes([]);
+    setFrozenSaving(false);
+    // Release the server-side pin. Best effort: it also expires on its own, so
+    // a failed release costs a little memory, never a stuck frame.
+    if (fid != null) {
+      try {
+        await fetch(
+          `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}`
+          + `/teach-release?frame_id=${fid}`, { method: "POST" });
+      } catch { /* the pin's TTL will collect it */ }
+    }
+  }, [frozen, cam.camera_id]);
+
+  const saveFreeze = async () => {
+    if (!frozen || frozenSaving) return;
+    setFrozenSaving(true);
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            frame_id: frozen.frame_id,
+            boxes: frozenBoxes.map((b) => ({ cls: b.cls, xyxy: b.xyxy })),
+            note: "freeze & label from control room",
+          }),
+        });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      flash(`✓ ${j.labels} label(s) saved — fold them in with Train & go live`);
+      setFrozen(null);
+      setFrozenBoxes([]);
+    } catch (e) {
+      flash(`✗ ${String(e.message || e)}`);
+    } finally {
+      setFrozenSaving(false);
+    }
+  };
+
+  const [posing, setPosing] = useState(false);
+  const togglePose = async () => {
+    setPosing(true);
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/pose`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: !cam.pose_enabled }),
+        });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      flash(j.pose_enabled
+        ? "✓ keypoints on — gear is matched to the body, not the box"
+        : "keypoints off");
+    } catch (e) {
+      flash(`✗ ${String(e.message || e)}`);
+    } finally {
+      setPosing(false);
+    }
+  };
+
+  const clipNow = async () => {
+    setClipping(true);
+    try {
+      const r = await fetch(
+        `${API_BASE}/api/nvr/cameras/${encodeURIComponent(cam.camera_id)}/record-now`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ seconds: 30 }),
+        });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
+      flash("✓ recording 30s — find it in Recorder");
+    } catch (e) {
+      flash(`✗ ${String(e.message || e)}`);
+    } finally {
+      setClipping(false);
+    }
+  };
+
   const actionBtn = {
     border: `1px solid ${C.line}`,
     background: C.panel,
@@ -1146,33 +1722,216 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
     flexShrink: 0,
   };
 
+  /* ---- Compact grid tile: click → full-page canvas ---- */
+  if (isTile) {
+    return (
+      <button
+        type="button"
+        onClick={() => onOpen?.(cam.camera_id)}
+        title={`Open ${cam.camera_id} full canvas`}
+        style={{
+          display: "block",
+          width: "100%",
+          padding: 0,
+          margin: 0,
+          border: `1px solid ${cam.state === "error" ? "#f5c2c8" : C.line}`,
+          borderRadius: 14,
+          overflow: "hidden",
+          background: C.panel,
+          boxShadow: C.shadow,
+          cursor: "pointer",
+          textAlign: "left",
+          fontFamily: "inherit",
+          color: "inherit",
+        }}
+      >
+        <div style={{ position: "relative", width: "100%", aspectRatio: "16 / 10", background: "#0b0f14" }}>
+          {running && imgOk ? (
+            <img
+              key={streamKey}
+              alt=""
+              draggable={false}
+              src={`${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=6&k=${streamKey}`}
+              style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
+              onError={() => {
+                setImgOk(false);
+                setTimeout(() => { setImgOk(true); setStreamKey((k) => k + 1); }, 2000);
+              }}
+            />
+          ) : (
+            <div style={{
+              position: "absolute", inset: 0, display: "grid", placeItems: "center",
+              color: cam.state === "error" ? "#f5a5ad" : "#6d8296", fontSize: 12.5, padding: 16, textAlign: "center",
+            }}>
+              {cam.state === "error" ? (st.last_error || "Error") : running ? "Connecting…" : "Stopped"}
+            </div>
+          )}
+          <div style={{
+            position: "absolute", top: 8, left: 8, right: 8,
+            display: "flex", alignItems: "center", gap: 6, pointerEvents: "none",
+          }}>
+            <span style={{
+              display: "inline-flex", alignItems: "center", gap: 6,
+              background: "rgba(5,8,12,.78)", color: "#e7eef6",
+              fontSize: 11.5, fontWeight: 700, padding: "4px 9px", borderRadius: 8, ...mono,
+              maxWidth: "70%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }}>
+              <span style={{
+                width: 7, height: 7, borderRadius: 4, background: stateColor, flexShrink: 0,
+                boxShadow: running ? `0 0 0 3px ${stateColor}33` : "none",
+              }} />
+              {cam.camera_id}
+            </span>
+            <span style={{ flex: 1 }} />
+            <span style={{
+              background: "rgba(5,8,12,.78)", color: modeMeta.color === C.sub ? "#c5d0db" : modeMeta.color,
+              fontSize: 10, fontWeight: 800, padding: "4px 8px", borderRadius: 7, textTransform: "uppercase",
+            }}>
+              {modeMeta.label}
+            </span>
+          </div>
+          {running && imgOk ? (
+            <span style={{
+              position: "absolute", bottom: 8, left: 8,
+              background: "rgba(192,43,60,.9)", color: "#fff", fontSize: 10, fontWeight: 800,
+              padding: "3px 8px", borderRadius: 5, letterSpacing: 0.5,
+            }}>
+              LIVE
+            </span>
+          ) : null}
+          <span style={{
+            position: "absolute", bottom: 8, right: 8,
+            background: "rgba(37,99,235,.92)", color: "#fff", fontSize: 11, fontWeight: 800,
+            padding: "5px 10px", borderRadius: 8,
+          }}>
+            Open canvas →
+          </span>
+        </div>
+        <div style={{
+          display: "flex", gap: 10, padding: "8px 12px", fontSize: 11, color: C.sub, ...mono,
+          borderTop: `1px solid ${C.line}`, flexWrap: "wrap",
+        }}>
+          <span>viol {(st.violations_fired ?? 0)}</span>
+          <span>inf {(st.frames_inferred ?? 0)}</span>
+          <span style={{ marginLeft: "auto", color: C.brand, fontWeight: 700, fontFamily: "inherit" }}>Click to expand</span>
+        </div>
+      </button>
+    );
+  }
+
+  const panelTabs = [
+    { id: "live", label: "Live" },
+    { id: "model", label: "Model" },
+    { id: "mode", label: "Mode" },
+    { id: "ppe", label: "PPE" },
+    { id: "teach", label: "Teach" },
+    { id: "manage", label: "Manage" },
+  ];
+
+  const videoShellStyle = isCanvas
+    ? {
+        position: "relative",
+        width: "100%",
+        flex: "1 1 auto",
+        minHeight: 0,
+        height: "100%",
+        background: "#0b0f14",
+        overflow: "hidden",
+        borderRadius: 12,
+      }
+    : {
+        position: "relative",
+        width: "100%",
+        minHeight: large ? "min(68vh, 720px)" : "min(42vh, 420px)",
+        height: large ? "min(68vh, 720px)" : undefined,
+        aspectRatio: large ? undefined : "16 / 10",
+        background: "#0b0f14",
+        overflow: "hidden",
+        borderRadius: "14px 14px 0 0",
+      };
+
   return (
     <article
       style={{
-        background: C.panel,
-        border: `1px solid ${cam.state === "error" ? "#f5c2c8" : C.line}`,
-        borderRadius: 14,
+        background: isCanvas ? "transparent" : C.panel,
+        border: isCanvas ? "none" : `1px solid ${cam.state === "error" ? "#f5c2c8" : C.line}`,
+        borderRadius: isCanvas ? 0 : 14,
         overflow: "visible",
-        boxShadow: C.shadow,
+        boxShadow: isCanvas ? "none" : C.shadow,
         display: "flex",
-        flexDirection: "column",
+        flexDirection: isCanvas ? "row" : "column",
+        flexWrap: isCanvas ? "wrap" : undefined,
         minWidth: 0,
+        height: isCanvas ? "100%" : undefined,
+        minHeight: isCanvas ? "calc(100vh - 160px)" : undefined,
+        gap: isCanvas ? 12 : 0,
+        alignItems: isCanvas ? "stretch" : undefined,
       }}
     >
-      {/* video only clips; controls stay fully visible below */}
+      <div style={{
+        display: "flex",
+        flexDirection: "column",
+        flex: isCanvas ? "1 1 480px" : undefined,
+        minWidth: isCanvas ? 280 : 0,
+        minHeight: isCanvas ? 360 : undefined,
+        gap: isCanvas ? 10 : 0,
+        width: isCanvas ? undefined : "100%",
+      }}>
+      {isCanvas ? (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "2px 2px 0",
+        }}>
+          <button
+            type="button"
+            onClick={() => onBack?.()}
+            style={{
+              border: `1px solid ${C.line}`, background: C.panel, color: C.ink,
+              borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer",
+            }}
+          >
+            ← Grid
+          </button>
+          <div style={{
+            display: "inline-flex", alignItems: "center", gap: 8,
+            background: C.panel, border: `1px solid ${C.line}`, borderRadius: 10,
+            padding: "6px 12px", ...mono, fontSize: 13, fontWeight: 700,
+          }}>
+            <span style={{
+              width: 8, height: 8, borderRadius: 4, background: stateColor,
+              boxShadow: running ? `0 0 0 3px ${stateColor}33` : "none",
+            }} />
+            {cam.camera_id}
+            <span style={{ color: C.sub, fontWeight: 600 }}>· {cam.source}</span>
+          </div>
+          <Pill tone={running ? "ok" : cam.state === "error" ? "danger" : "mute"}>
+            {cam.state}
+          </Pill>
+          <span style={{ flex: 1 }} />
+          <button
+            type="button"
+            onClick={() => onStartStop(cam.camera_id, running)}
+            style={{
+              ...actionBtn,
+              border: `1px solid ${running ? "#f5c2c8" : "#b8e6d0"}`,
+              background: running ? C.dangerSoft : C.okSoft,
+              color: running ? C.danger : C.ok,
+            }}
+          >
+            {running ? "Stop" : "Start"}
+          </button>
+          {running ? (
+            <button type="button" onClick={() => setFs(true)} style={actionBtn}>
+              ⛶ Fullscreen
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {/* video canvas */}
       <div
-        style={{
-          position: "relative",
-          width: "100%",
-          /* large single-monitor view */
-          minHeight: large ? "min(68vh, 720px)" : "min(42vh, 420px)",
-          height: large ? "min(68vh, 720px)" : undefined,
-          aspectRatio: large ? undefined : "16 / 10",
-          background: "#0b0f14",
-          overflow: "hidden",
-          borderRadius: "14px 14px 0 0",
-        }}
-        onWheel={onWheel}
+        style={videoShellStyle}
+        ref={videoWrapRef}
+        onWheel={teachOn ? undefined : onWheel}
       >
         {running && imgOk ? (
           <img
@@ -1206,6 +1965,171 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
           </div>
         )}
 
+        {/* Live Teach overlay: hover → Flip chip; click → confirm; save on Yes. */}
+        {teachOn && running && teachRect && liveBoxes ? (
+          <div style={{ position: "absolute", inset: 0, zIndex: 5 }}>
+            {/* Hint bar while teaching */}
+            <div style={{
+              position: "absolute", top: 10, left: "50%", transform: "translateX(-50%)",
+              zIndex: 7, maxWidth: "92%",
+              background: "rgba(5,8,12,.88)", color: "#e7eef6",
+              fontSize: 12, fontWeight: 700, padding: "7px 12px", borderRadius: 9,
+              border: "1px solid rgba(61,214,140,.45)", textAlign: "center", lineHeight: 1.35,
+              pointerEvents: "none",
+            }}>
+              {teachAsk
+                ? "Confirm below — video labels are frozen while you decide"
+                : "Hover a red/green box · click Flip · confirm to teach"}
+            </div>
+
+            {liveBoxes.boxes.filter((b) => b.kind !== "other").map((b) => {
+              const [x1, y1, x2, y2] = b.xyxy;
+              const s = teachRect.scale;
+              const flippable = Boolean(b.counterpart);
+              const col = b.kind === "violation" ? "#e5484d"
+                : b.kind === "person" ? "#4c9ffe" : "#30a46c";
+              const hovered = hoverBoxI === b.i;
+              const asking = teachAsk?.box?.i === b.i;
+              const left = teachRect.x + x1 * s;
+              const top = teachRect.y + y1 * s;
+              const bw = Math.max(8, (x2 - x1) * s);
+              const bh = Math.max(8, (y2 - y1) * s);
+              const flipToGreen = b.kind === "violation";
+              const flipCol = flipToGreen ? "#30a46c" : "#e5484d";
+              return (
+                <div
+                  key={b.i}
+                  role={flippable ? "button" : undefined}
+                  tabIndex={flippable ? 0 : undefined}
+                  onMouseEnter={() => flippable && setHoverBoxI(b.i)}
+                  onMouseLeave={() => setHoverBoxI((cur) => (cur === b.i && !teachAsk ? null : cur))}
+                  onClick={flippable ? (e) => { e.stopPropagation(); askFlip(b); } : undefined}
+                  onKeyDown={flippable ? (e) => {
+                    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); askFlip(b); }
+                  } : undefined}
+                  style={{
+                    position: "absolute",
+                    left, top, width: bw, height: bh,
+                    border: `${asking || hovered ? 3 : 2}px solid ${asking ? flipCol : col}`,
+                    borderRadius: 4,
+                    cursor: flippable ? "pointer" : "default",
+                    background: hovered || asking ? `${col}22` : "transparent",
+                    boxShadow: flippable
+                      ? (hovered || asking
+                        ? `0 0 0 2px ${flipCol}, 0 4px 16px rgba(0,0,0,.35)`
+                        : "0 0 0 1px rgba(255,255,255,.35)")
+                      : "none",
+                    transition: "box-shadow .12s ease, background .12s ease",
+                  }}
+                >
+                  <span style={{
+                    position: "absolute", top: -22, left: -2, whiteSpace: "nowrap",
+                    background: col, color: "#fff", fontSize: 10.5, fontWeight: 800,
+                    padding: "2px 6px", borderRadius: 4, ...mono,
+                    pointerEvents: "none",
+                  }}>
+                    {b.kind === "violation" ? `${b.label} ✕` : b.kind === "person" ? "Person" : `${b.label} ✓`}
+                  </span>
+
+                  {/* Hover chip: clear Flip action without saving yet */}
+                  {flippable && (hovered || asking) && !asking ? (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); askFlip(b); }}
+                      style={{
+                        position: "absolute",
+                        left: "50%", bottom: -34, transform: "translateX(-50%)",
+                        whiteSpace: "nowrap", zIndex: 8,
+                        border: "none", borderRadius: 8, cursor: "pointer",
+                        padding: "6px 10px", fontSize: 11.5, fontWeight: 800,
+                        background: flipCol, color: "#fff",
+                        boxShadow: "0 4px 14px rgba(0,0,0,.4)",
+                      }}
+                    >
+                      {flipToGreen ? "↗ Mark worn (green)" : "↘ Mark missing (red)"}
+                    </button>
+                  ) : null}
+                </div>
+              );
+            })}
+
+            {/* Confirm card after click */}
+            {teachAsk ? (
+              <div
+                role="dialog"
+                aria-label="Confirm teach flip"
+                style={{
+                  position: "absolute", left: "50%", bottom: 52, transform: "translateX(-50%)",
+                  zIndex: 9, width: "min(340px, 92%)",
+                  background: "rgba(8,12,18,.96)", color: "#e7eef6",
+                  borderRadius: 12, padding: "14px 14px 12px",
+                  border: "1px solid rgba(255,255,255,.14)",
+                  boxShadow: "0 12px 40px rgba(0,0,0,.5)",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.6, color: "#9bb0c3", marginBottom: 6, textTransform: "uppercase" }}>
+                  Teach this box?
+                </div>
+                <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10, lineHeight: 1.35 }}>
+                  <span style={{
+                    color: teachAsk.box.kind === "violation" ? "#ff8a95" : "#6ddea8",
+                  }}>
+                    {teachAsk.box.kind === "violation" ? `${teachAsk.box.label} ✕` : `${teachAsk.box.label} ✓`}
+                  </span>
+                  <span style={{ color: "#7a8fa3", margin: "0 8px" }}>→</span>
+                  <span style={{
+                    color: teachAsk.box.kind === "violation" ? "#6ddea8" : "#ff8a95",
+                  }}>
+                    {flipTargetLabel(teachAsk.box)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11.5, color: "#9bb0c3", marginBottom: 12, lineHeight: 1.4 }}>
+                  Saves this frame as training data. Model updates only after <b style={{ color: "#c5d0db" }}>Train &amp; go live</b>.
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    type="button"
+                    onClick={confirmFlip}
+                    disabled={teachSaving}
+                    style={{
+                      flex: 1, border: "none", borderRadius: 9, padding: "10px 12px",
+                      fontSize: 13, fontWeight: 800, cursor: teachSaving ? "wait" : "pointer",
+                      background: teachAsk.box.kind === "violation" ? "#30a46c" : "#e5484d",
+                      color: "#fff", opacity: teachSaving ? 0.75 : 1,
+                    }}
+                  >
+                    {teachSaving ? "Saving…" : "Yes, flip & save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelFlip}
+                    disabled={teachSaving}
+                    style={{
+                      border: "1px solid rgba(255,255,255,.2)", borderRadius: 9,
+                      padding: "10px 14px", fontSize: 13, fontWeight: 700,
+                      background: "transparent", color: "#c5d0db", cursor: "pointer",
+                    }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+          </div>
+        ) : null}
+        {teachMsg ? (
+          <div style={{
+            position: "absolute", bottom: 44, left: "50%", transform: "translateX(-50%)", zIndex: 10,
+            background: teachMsg.startsWith("✓") ? "rgba(24,110,68,.95)" : "rgba(140,30,36,.95)",
+            color: "#fff", fontSize: 12.5, fontWeight: 700, padding: "7px 14px", borderRadius: 9,
+            maxWidth: "90%", textAlign: "center",
+          }}>
+            {teachMsg}
+          </div>
+        ) : null}
+
         {/* top-left identity */}
         <div style={{
           position: "absolute", top: 10, left: 10, display: "inline-flex", alignItems: "center", gap: 6,
@@ -1221,8 +2145,8 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
           </span>
         </div>
 
-        {/* top-right actions — always visible, not overlapping mode label */}
-        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: "55%" }}>
+        {/* top-right — minimal on canvas (options live in side tabs); full tools on card */}
+        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", maxWidth: isCanvas ? "40%" : "55%" }}>
           <span style={{
             background: "rgba(5,8,12,.78)", color: modeMeta.color === C.sub ? "#c5d0db" : modeMeta.color,
             fontSize: 11, fontWeight: 800, padding: "6px 10px", borderRadius: 8, textTransform: "uppercase",
@@ -1230,7 +2154,7 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
           }} title={modeMeta.hint}>
             {modeMeta.label}
           </span>
-          {running ? (
+          {running && !isCanvas ? (
             <>
               <button
                 type="button"
@@ -1245,18 +2169,67 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
               </button>
               <button
                 type="button"
+                onClick={toggleTeach}
+                title="Quick flip: hover a box → Flip → confirm."
+                style={{
+                  border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5,
+                  fontWeight: 800, cursor: "pointer",
+                  background: teachOn ? C.ok : "rgba(5,8,12,.78)",
+                  color: teachOn ? "#fff" : "#8ee6b8",
+                }}
+              >
+                {teachOn ? "◉ Teaching…" : "🎯 Quick flip"}
+              </button>
+              <button
+                type="button"
+                onClick={startFreeze}
+                disabled={frozenSaving || Boolean(frozen)}
+                title="Freeze this frame and label it"
+                style={{
+                  border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5,
+                  fontWeight: 800, cursor: frozenSaving ? "wait" : "pointer",
+                  background: "rgba(5,8,12,.78)", color: "#9ecbff",
+                  opacity: frozenSaving ? 0.7 : 1,
+                }}
+              >
+                {frozenSaving && !frozen ? "…" : "❄ Freeze"}
+              </button>
+              <button
+                type="button"
+                onClick={clipNow}
+                disabled={clipping}
+                title="Record a 30s clip"
+                style={{
+                  border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12.5,
+                  fontWeight: 800, cursor: clipping ? "wait" : "pointer",
+                  background: "rgba(5,8,12,.78)", color: "#ff9aa4",
+                  opacity: clipping ? 0.7 : 1,
+                }}
+              >
+                {clipping ? "…" : "● Clip"}
+              </button>
+              <button
+                type="button"
                 onClick={handleFlag}
                 disabled={flagging}
-                title="Send this frame to the Review & Teach queue"
+                title="Send this frame to Review"
                 style={{
                   border: "none", background: "rgba(255,255,255,.96)", color: C.warn, borderRadius: 8,
                   padding: "7px 12px", fontSize: 12.5, fontWeight: 800, cursor: flagging ? "wait" : "pointer",
                   opacity: flagging ? 0.7 : 1,
                 }}
               >
-                {flagging ? "…" : "⚑ Teach"}
+                {flagging ? "…" : "⚑ Flag"}
               </button>
             </>
+          ) : null}
+          {running && isCanvas && teachOn ? (
+            <span style={{
+              background: C.ok, color: "#fff", fontSize: 11, fontWeight: 800,
+              padding: "6px 10px", borderRadius: 8,
+            }}>
+              Teaching on — hover boxes
+            </span>
           ) : null}
         </div>
 
@@ -1288,54 +2261,385 @@ function CameraCard({ cam, onMode, onFlag, onStartStop, onRemove, onPpe, catalog
           </span>
         ) : null}
       </div>
+      </div>{/* end video column */}
 
       {fs ? <FullscreenViewer cam={cam} onClose={() => setFs(false)} /> : null}
 
-      {/* controls — full width, never clipped */}
-      <div style={{ padding: "12px 14px 14px", display: "grid", gap: 10, background: C.panel, borderRadius: "0 0 14px 14px", borderTop: `1px solid ${C.line}` }}>
-        <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap" }}>
-          <ModePills value={cam.mode || "monitor"} onChange={(m) => onMode(cam.camera_id, m)} />
-          <button
-            type="button"
-            onClick={() => onStartStop(cam.camera_id, running)}
+      {/* controls: side tab panel on canvas, stacked strip on card */}
+      {isCanvas ? (
+        <aside
+          style={{
+            width: "min(340px, 100%)",
+            flex: "0 0 min(340px, 100%)",
+            background: C.panel,
+            border: `1px solid ${C.line}`,
+            borderRadius: 14,
+            boxShadow: C.shadow,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+            maxHeight: "100%",
+            overflow: "hidden",
+          }}
+        >
+          <div
+            role="tablist"
+            aria-label="Camera options"
             style={{
-              ...actionBtn,
-              border: `1px solid ${running ? "#f5c2c8" : "#b8e6d0"}`,
-              background: running ? C.dangerSoft : C.okSoft,
-              color: running ? C.danger : C.ok,
-              minWidth: 88,
+              display: "flex", flexWrap: "wrap", gap: 4, padding: 8,
+              borderBottom: `1px solid ${C.line}`, background: C.panel2,
             }}
           >
-            {running ? "Stop" : "Start"}
-          </button>
-          <button
-            type="button"
-            onClick={() => onRemove(cam.camera_id)}
-            title="Remove camera"
-            style={{ ...actionBtn, color: C.sub, minWidth: 44 }}
-          >
-            ✕
-          </button>
-        </div>
-        <div>
-          <div style={{ fontSize: 10.5, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 5 }}>
-            Required PPE · live Found / Not found
+            {panelTabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                aria-selected={panelTab === t.id}
+                onClick={() => setPanelTab(t.id)}
+                style={{
+                  border: "none",
+                  background: panelTab === t.id ? C.panel : "transparent",
+                  color: panelTab === t.id ? C.brand : C.sub,
+                  boxShadow: panelTab === t.id ? C.shadow : "none",
+                  borderRadius: 8,
+                  padding: "7px 11px",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
-          <PpePicker
-            catalog={catalog}
-            value={cam.required_ppe || ["helmet", "vest"]}
-            onChange={(items) => onPpe?.(cam.camera_id, items)}
-          />
+          <div style={{ padding: 14, display: "grid", gap: 12, overflowY: "auto", flex: 1 }}>
+            {panelTab === "live" ? (
+              <>
+                <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.45 }}>
+                  Full-page canvas. Use tabs for model, mode, PPE, and teach — the video stays clear.
+                </div>
+                <div style={{ display: "flex", gap: 12, fontSize: 12, color: C.sub, ...mono, flexWrap: "wrap" }}>
+                  <Stat label="frames" value={st.frames_read ?? 0} />
+                  <Stat label="inferred" value={st.frames_inferred ?? 0} />
+                  <Stat label="violations" value={st.violations_fired ?? 0} hot={(st.violations_fired ?? 0) > 0} />
+                  <Stat label="harvested" value={st.captures_made ?? 0} good={(st.captures_made ?? 0) > 0} />
+                  <Stat label="alerts" value={st.alerts_sent ?? 0} />
+                </div>
+                {teachMsg ? (
+                  <div style={{ fontSize: 12.5, fontWeight: 700, color: teachMsg.startsWith("✓") ? C.ok : C.danger }}>
+                    {teachMsg}
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+
+            {panelTab === "model" ? (
+              <CompactModelSwitch
+                onSay={(m, tone) => {
+                  // surface on canvas side panel + keep brief
+                  flash(tone === "danger" ? `✗ ${m}` : `✓ ${m}`);
+                }}
+              />
+            ) : null}
+
+            {panelTab === "mode" ? (
+              <>
+                <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                  Detection mode
+                </div>
+                <ModePills value={cam.mode || "monitor"} onChange={(m) => onMode(cam.camera_id, m)} />
+                <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.45 }}>
+                  Monitor = detect + alert. Collect = also harvest frames for training. Strict = audit + eager alerts.
+                </div>
+              </>
+            ) : null}
+
+            {panelTab === "ppe" ? (
+              <>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Required PPE
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <button
+                    type="button"
+                    onClick={togglePose}
+                    disabled={posing}
+                    title="Match gear to body keypoints instead of a fixed box slice"
+                    style={{
+                      border: `1px solid ${cam.pose_enabled ? C.ok : C.line}`,
+                      background: cam.pose_enabled ? "#e6f6ef" : C.panel,
+                      color: cam.pose_enabled ? C.ok : C.sub,
+                      borderRadius: 8, padding: "4px 10px", fontSize: 11,
+                      fontWeight: 800, cursor: posing ? "wait" : "pointer",
+                    }}
+                  >
+                    {posing ? "…" : cam.pose_enabled ? "◉ Keypoints on" : "○ Keypoints off"}
+                  </button>
+                </div>
+                <PpePicker
+                  catalog={catalog}
+                  value={cam.required_ppe || ["helmet", "vest"]}
+                  onChange={(items) => onPpe?.(cam.camera_id, items)}
+                />
+              </>
+            ) : null}
+
+            {panelTab === "teach" ? (
+              <>
+                <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.45 }}>
+                  Correct the model on this canvas. Saved labels train later via <b>Train &amp; go live</b>.
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <button
+                    type="button"
+                    disabled={!running}
+                    onClick={toggleTeach}
+                    style={{
+                      ...actionBtn,
+                      background: teachOn ? C.okSoft : C.panel,
+                      border: `1px solid ${teachOn ? C.ok : C.line}`,
+                      color: teachOn ? C.ok : C.ink,
+                      width: "100%",
+                    }}
+                  >
+                    {teachOn ? "◉ Teaching on — click boxes on canvas" : "🎯 Quick flip on canvas"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!running || frozenSaving || Boolean(frozen)}
+                    onClick={startFreeze}
+                    style={{ ...actionBtn, width: "100%", color: C.brand }}
+                  >
+                    {frozenSaving && !frozen ? "…" : "❄ Freeze & label"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!running || flagging}
+                    onClick={handleFlag}
+                    style={{ ...actionBtn, width: "100%", color: C.warn }}
+                  >
+                    {flagging ? "…" : "⚑ Flag frame to Review"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={!running || clipping}
+                    onClick={clipNow}
+                    style={{ ...actionBtn, width: "100%", color: C.danger }}
+                  >
+                    {clipping ? "…" : "● Record 30s clip"}
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {panelTab === "manage" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onStartStop(cam.camera_id, running)}
+                  style={{
+                    ...actionBtn,
+                    width: "100%",
+                    border: `1px solid ${running ? "#f5c2c8" : "#b8e6d0"}`,
+                    background: running ? C.dangerSoft : C.okSoft,
+                    color: running ? C.danger : C.ok,
+                  }}
+                >
+                  {running ? "Stop stream" : "Start stream"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onRemove(cam.camera_id); onBack?.(); }}
+                  style={{ ...actionBtn, width: "100%", color: C.danger, border: `1px solid #f5c2c8` }}
+                >
+                  ✕ Remove camera
+                </button>
+                <div style={{ fontSize: 11.5, color: C.sub, ...mono, wordBreak: "break-all" }}>
+                  id: {cam.camera_id}<br />
+                  source: {cam.source}<br />
+                  state: {cam.state}
+                </div>
+              </>
+            ) : null}
+          </div>
+        </aside>
+      ) : (
+        <div style={{ padding: "12px 14px 14px", display: "grid", gap: 10, background: C.panel, borderRadius: "0 0 14px 14px", borderTop: `1px solid ${C.line}` }}>
+          <div style={{ display: "flex", alignItems: "stretch", gap: 8, flexWrap: "wrap" }}>
+            <ModePills value={cam.mode || "monitor"} onChange={(m) => onMode(cam.camera_id, m)} />
+            <button
+              type="button"
+              onClick={() => onStartStop(cam.camera_id, running)}
+              style={{
+                ...actionBtn,
+                border: `1px solid ${running ? "#f5c2c8" : "#b8e6d0"}`,
+                background: running ? C.dangerSoft : C.okSoft,
+                color: running ? C.danger : C.ok,
+                minWidth: 88,
+              }}
+            >
+              {running ? "Stop" : "Start"}
+            </button>
+            <button
+              type="button"
+              onClick={() => onRemove(cam.camera_id)}
+              title="Remove camera"
+              style={{ ...actionBtn, color: C.sub, minWidth: 44 }}
+            >
+              ✕
+            </button>
+          </div>
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10.5, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                Required PPE · live Found / Not found
+              </span>
+              <span style={{ flex: 1 }} />
+              <button
+                type="button"
+                onClick={togglePose}
+                disabled={posing}
+                title="Keypoints matching for body parts"
+                style={{
+                  border: `1px solid ${cam.pose_enabled ? C.ok : C.line}`,
+                  background: cam.pose_enabled ? "#e6f6ef" : C.panel,
+                  color: cam.pose_enabled ? C.ok : C.sub,
+                  borderRadius: 8, padding: "4px 10px", fontSize: 11,
+                  fontWeight: 800, cursor: posing ? "wait" : "pointer",
+                  opacity: posing ? 0.6 : 1, whiteSpace: "nowrap",
+                }}
+              >
+                {posing ? "…" : cam.pose_enabled ? "◉ Keypoints on" : "○ Keypoints off"}
+              </button>
+            </div>
+            <PpePicker
+              catalog={catalog}
+              value={cam.required_ppe || ["helmet", "vest"]}
+              onChange={(items) => onPpe?.(cam.camera_id, items)}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: C.sub, ...mono, flexWrap: "wrap" }}>
+            <Stat label="frames" value={st.frames_read ?? 0} />
+            <Stat label="inferred" value={st.frames_inferred ?? 0} />
+            <Stat label="violations" value={st.violations_fired ?? 0} hot={(st.violations_fired ?? 0) > 0} />
+            <Stat label="harvested" value={st.captures_made ?? 0} good={(st.captures_made ?? 0) > 0} />
+            <Stat label="alerts" value={st.alerts_sent ?? 0} />
+          </div>
         </div>
-        <div style={{ display: "flex", gap: 14, fontSize: 11.5, color: C.sub, ...mono, flexWrap: "wrap" }}>
-          <Stat label="frames" value={st.frames_read ?? 0} />
-          <Stat label="inferred" value={st.frames_inferred ?? 0} />
-          <Stat label="violations" value={st.violations_fired ?? 0} hot={(st.violations_fired ?? 0) > 0} />
-          <Stat label="harvested" value={st.captures_made ?? 0} good={(st.captures_made ?? 0) > 0} />
-          <Stat label="alerts" value={st.alerts_sent ?? 0} />
+      )}
+
+      {frozen ? (
+        <FreezeTeachModal
+          cameraId={cam.camera_id}
+          frozen={frozen}
+          boxes={frozenBoxes}
+          setBoxes={setFrozenBoxes}
+          saving={frozenSaving}
+          onSave={saveFreeze}
+          onClose={closeFreeze}
+        />
+      ) : null}
+    </article>
+  );
+}
+
+/* --------------------------------------------------- freeze & label editor */
+/**
+ * The full teach editor over one held frame.
+ *
+ * Rendered as a fixed overlay rather than inside the camera card because
+ * labelling needs room: drawing a glove box on a 300 px thumbnail is a
+ * coordinate guess, and a guessed box is worse training data than no box.
+ */
+function FreezeTeachModal({ cameraId, frozen, boxes, setBoxes, saving, onSave, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const original = (frozen.boxes || []).filter((b) => b.known).length;
+  const added = boxes.filter((b) => b.added).length;
+  const changed = boxes.filter((b) => b.edited && !b.added).length;
+  const deleted = Math.max(0, original - boxes.filter((b) => !b.added).length);
+
+  return (
+    <div
+      role="dialog"
+      aria-label={`Freeze and label ${cameraId}`}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+      style={{
+        position: "fixed", inset: 0, zIndex: 200, background: "rgba(4,7,11,.86)",
+        display: "grid", placeItems: "center", padding: 20,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "min(1100px, 96vw)", maxHeight: "94vh", overflowY: "auto",
+          background: "#0e141b", border: "1px solid #24313f", borderRadius: 14,
+          padding: 16, boxShadow: "0 24px 70px rgba(0,0,0,.6)", color: "#e7eef6",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 11 }}>
+          <span style={{ fontSize: 14, fontWeight: 800 }}>
+            ❄ Freeze &amp; label — <span style={mono}>{cameraId}</span>
+          </span>
+          <span style={{ fontSize: 11, color: "#7a8fa3", ...mono }}>
+            frame #{frozen.frame_id} · {frozen.width}×{frozen.height}
+          </span>
+          <span style={{ flex: 1 }} />
+          <button type="button" onClick={onClose} style={{
+            border: "1px solid rgba(255,255,255,.18)", background: "transparent",
+            color: "#c5d0db", borderRadius: 8, padding: "6px 12px",
+            fontSize: 12.5, fontWeight: 800, cursor: "pointer",
+          }}>
+            ✕ Close (Esc)
+          </button>
+        </div>
+
+        <p style={{ margin: "0 0 11px", fontSize: 12.5, color: "#9bb0c3", lineHeight: 1.55 }}>
+          This frame is held on the server, so the camera can keep running
+          without the picture moving under you. Fix everything that is wrong,
+          then save once — what you leave on the image <i>is</i> the label, so a
+          box you delete teaches the model there is nothing there.
+        </p>
+
+        <TeachCanvas
+          onVideoOverlay
+          imgUrl={`${API_BASE}${frozen.image_url}`}
+          width={frozen.width}
+          height={frozen.height}
+          boxes={boxes}
+          setBoxes={setBoxes}
+          palette={frozen.display_names || {}}
+          classes={frozen.classes || []}
+        />
+
+        <div style={{ display: "flex", gap: 9, marginTop: 13, alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            type="button" onClick={onSave} disabled={saving || !boxes.length}
+            style={{
+              border: "none", borderRadius: 9, padding: "10px 16px", fontSize: 13,
+              fontWeight: 800, background: "#1256d1", color: "#fff",
+              cursor: saving || !boxes.length ? "not-allowed" : "pointer",
+              opacity: saving || !boxes.length ? 0.6 : 1,
+            }}
+          >
+            {saving ? "Saving…" : `✓ Save ${boxes.length} label${boxes.length === 1 ? "" : "s"}`}
+          </button>
+          <span style={{ fontSize: 11.5, color: "#7a8fa3" }}>
+            {added} added · {changed} changed · {deleted} deleted
+          </span>
+          <span style={{ flex: 1 }} />
+          <span style={{ fontSize: 11.5, color: "#7a8fa3" }}>
+            Saved labels train the model only when you run <b style={{ color: "#c5d0db" }}>Train &amp; go live</b> in Review.
+          </span>
         </div>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -1354,6 +2658,175 @@ function Stat({ label, value, hot, good }) {
   );
 }
 
+/* ------------------------------------------------------------ Train now
+   Closes the loop the CLI used to break: export -> fine-tune -> evaluate ->
+   activate, in-process. On success the backend copies the checkpoint over
+   ppe_active.pt and hot-reloads the shared detector, so running cameras use
+   the new model on their next frame — no restart, no file copying. */
+function TrainPanel({ onTrained }) {
+  const [status, setStatus] = useState(null);
+  const [epochs, setEpochs] = useState(40);
+  const [starting, setStarting] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(
+    () => api("/api/training/status").then(setStatus).catch(() => setStatus(null)),
+    [],
+  );
+  useEffect(() => { load(); }, [load]);
+
+  const job = status?.job;
+  const running = Boolean(status?.busy);
+
+  // Poll only while a job is live; training runs for minutes, and a idle
+  // dashboard hammering the API buys nothing.
+  useEffect(() => {
+    if (!running) return undefined;
+    const t = setInterval(load, 3000);
+    return () => clearInterval(t);
+  }, [running, load]);
+
+  // One refresh of the model list when a run finishes, so the new version and
+  // its ACTIVE badge appear without the operator reloading the page.
+  const doneRef = useRef(null);
+  useEffect(() => {
+    if (!job || running) return;
+    if (job.state === "done" && doneRef.current !== job.job_id) {
+      doneRef.current = job.job_id;
+      onTrained?.();
+    }
+  }, [job, running, onTrained]);
+
+  const data = status?.data;
+  const start = async () => {
+    setStarting(true);
+    setErr("");
+    try {
+      await api("/api/training/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ epochs: Number(epochs) || 40 }),
+      });
+      await load();
+    } catch (e) {
+      setErr(String(e.message || e));
+    } finally {
+      setStarting(false);
+    }
+  };
+
+  const cancel = async () => {
+    try { await api("/api/training/cancel", { method: "POST" }); await load(); }
+    catch (e) { setErr(String(e.message || e)); }
+  };
+
+  const pct = Math.round(((job?.progress || 0) * 100));
+  const tone = job?.state === "failed" ? C.danger
+    : job?.state === "done" ? C.ok : C.brand;
+
+  return (
+    <section style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, boxShadow: C.shadow }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 11, letterSpacing: 0.8, color: C.sub, fontWeight: 800, textTransform: "uppercase" }}>
+          Train on your labels
+        </span>
+        {data ? <Pill tone={data.ready ? "ok" : "mute"}>{data.trainable_images} frames</Pill> : null}
+        <span style={{ flex: 1 }} />
+        {running ? <Pill tone="brand">{job?.state}</Pill> : null}
+      </div>
+
+      {!running ? (
+        <>
+          <div style={{ fontSize: 12, color: C.sub, lineHeight: 1.5, marginBottom: 10 }}>
+            {data?.hint || "Checking labeled data…"}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <label style={{ fontSize: 12, color: C.sub }}>
+              Epochs{" "}
+              <input
+                type="number"
+                min={1}
+                max={500}
+                value={epochs}
+                onChange={(e) => setEpochs(e.target.value)}
+                style={{
+                  width: 68, padding: "5px 7px", borderRadius: 7, fontSize: 12,
+                  border: `1px solid ${C.line}`, background: C.panel2, color: C.ink,
+                }}
+              />
+            </label>
+            <button
+              type="button"
+              onClick={start}
+              disabled={starting || !data?.ready}
+              style={{
+                border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12.5,
+                fontWeight: 800, color: "#fff", background: C.brand,
+                cursor: starting || !data?.ready ? "not-allowed" : "pointer",
+                opacity: starting || !data?.ready ? 0.5 : 1,
+              }}
+            >
+              {starting ? "Starting…" : "Train & go live"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: C.ink, marginBottom: 8 }}>
+            {job?.step || "working…"}
+          </div>
+          <div style={{ height: 7, borderRadius: 999, background: C.panel2, overflow: "hidden", marginBottom: 8 }}>
+            <div style={{ width: `${pct}%`, height: "100%", background: tone, transition: "width .4s ease" }} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ ...mono, fontSize: 11, color: C.sub }}>
+              {pct}% · {job?.elapsed_s ?? 0}s elapsed
+            </span>
+            <span style={{ flex: 1 }} />
+            <button
+              type="button"
+              onClick={cancel}
+              style={{
+                border: `1px solid ${C.line}`, background: C.panel, color: C.danger,
+                borderRadius: 7, padding: "4px 12px", fontSize: 11, fontWeight: 700, cursor: "pointer",
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
+
+      {job && !running && job.state !== "queued" ? (
+        <div style={{
+          marginTop: 10, padding: "8px 10px", borderRadius: 9, fontSize: 12,
+          background: job.state === "failed" ? C.dangerSoft : C.panel2,
+          border: `1px solid ${C.line}`, color: job.state === "failed" ? C.danger : C.ink,
+          lineHeight: 1.5,
+        }}>
+          {job.state === "failed" ? (
+            job.error
+          ) : (
+            <>
+              <b>{job.activated ? "Live now" : "Trained"}</b>
+              {job.registered_version ? ` — model v${job.registered_version}` : ""}
+              {job.metrics?.map50 != null ? ` · mAP50 ${job.metrics.map50}` : ""}
+              {job.metrics?.recall != null ? ` · recall ${job.metrics.recall}` : ""}
+              {job.promoted_reason ? (
+                <div style={{ color: C.sub, marginTop: 3 }}>{job.promoted_reason}</div>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {err ? (
+        <div style={{ marginTop: 8, fontSize: 12, color: C.danger }}>{err}</div>
+      ) : null}
+    </section>
+  );
+}
+
 /* ---------------------------------------------------------------- Versions */
 function ModelsPanel() {
   const [data, setData] = useState(null);
@@ -1369,6 +2842,8 @@ function ModelsPanel() {
   };
   const n = data?.versions?.length || 0;
   return (
+    <div style={{ display: "grid", gap: 12 }}>
+    <TrainPanel onTrained={load} />
     <section style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14, padding: 14, boxShadow: C.shadow }}>
       <button
         type="button"
@@ -1420,13 +2895,14 @@ function ModelsPanel() {
           ))}
           {!n ? (
             <div style={{ color: C.sub, fontSize: 12, padding: "6px 2px", lineHeight: 1.5 }}>
-              No trained versions yet. Put cameras in <b>Collect</b> mode, label frames in Review & Teach, then run{" "}
-              <span style={mono}>build-dataset → train → register</span>.
+              No trained versions yet. Put cameras in <b>Collect</b> mode, correct the frames in{" "}
+              <b>Review &amp; Teach</b>, then press <b>Train &amp; go live</b> above.
             </div>
           ) : null}
         </div>
       ) : null}
     </section>
+    </div>
   );
 }
 
@@ -1437,11 +2913,13 @@ function KpiStrip({ cams, onNavigate }) {
   const violations = cams.reduce((s, c) => s + (c.stats?.violations_fired || 0), 0);
   const harvested = cams.reduce((s, c) => s + (c.stats?.captures_made || 0), 0);
   const collect = cams.filter((c) => c.mode === "collect" || c.mode === "strict").length;
+  const inferred = cams.reduce((s, c) => s + (c.stats?.frames_inferred || 0), 0);
 
   const cards = [
     { label: "Running", value: `${running}/${cams.length}`, tone: running ? "ok" : "mute" },
     { label: "Errors", value: String(errors), tone: errors ? "danger" : "mute" },
     { label: "Violations", value: String(violations), tone: violations ? "danger" : "mute", go: "alerts" },
+    { label: "Inferred", value: String(inferred), tone: inferred ? "brand" : "mute" },
     { label: "Harvested", value: String(harvested), tone: harvested ? "ok" : "mute", go: "review" },
     { label: "Self-train", value: collect ? `${collect} cam` : "off", tone: collect ? "ok" : "mute" },
   ];
@@ -1449,11 +2927,12 @@ function KpiStrip({ cams, onNavigate }) {
   const toneMap = {
     ok: { fg: C.ok, bg: C.okSoft },
     danger: { fg: C.danger, bg: C.dangerSoft },
+    brand: { fg: C.brand, bg: C.brandSoft },
     mute: { fg: C.ink, bg: C.panel },
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(118px, 1fr))", gap: 10 }}>
       {cards.map((c) => {
         const t = toneMap[c.tone] || toneMap.mute;
         return (
@@ -1465,17 +2944,21 @@ function KpiStrip({ cams, onNavigate }) {
             style={{
               background: t.bg,
               border: `1px solid ${C.line}`,
-              borderRadius: 12,
+              borderRadius: 11,
               padding: "12px 14px",
               textAlign: "left",
               cursor: c.go ? "pointer" : "default",
               boxShadow: C.shadow,
+              fontFamily: "inherit",
             }}
           >
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: C.sub, textTransform: "uppercase", letterSpacing: 0.55 }}>
               {c.label}{c.go ? " →" : ""}
             </div>
-            <div style={{ fontSize: 22, fontWeight: 800, color: t.fg, marginTop: 2, fontVariantNumeric: "tabular-nums" }}>
+            <div style={{
+              fontSize: 22, fontWeight: 800, color: t.fg, marginTop: 3,
+              fontVariantNumeric: "tabular-nums", fontFamily: "'IBM Plex Mono', ui-monospace, monospace",
+            }}>
               {c.value}
             </div>
           </button>
@@ -1550,10 +3033,13 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
   const [loaded, setLoaded] = useState(false);
   const [toast, setToast] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
-  const [density, setDensity] = useState("large"); // large | comfortable | compact
+  const [setupOpen, setSetupOpen] = useState(false); // model / train / notes drawer
+  const [focusId, setFocusId] = useState(null); // full-page canvas for one camera
+  const [density, setDensity] = useState("comfortable"); // large | comfortable | compact
   const [catalog, setCatalog] = useState([]);
   const [defaultPpe, setDefaultPpe] = useState(["helmet", "vest"]);
   const [stockNote, setStockNote] = useState("");
+  const [browserCropId, setBrowserCropId] = useState(null);
   const timer = useRef(null);
   const videoQuickRef = useRef(null);
 
@@ -1600,14 +3086,25 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
         }),
       });
       await api(`/api/cameras/${encodeURIComponent(payload.camera_id)}/start`, { method: "POST" });
-      say(`Camera ${payload.camera_id} started`, "ok");
+      say(
+        payload.source_kind === "browser"
+          ? `Camera ${payload.camera_id} ready — share tab & crop below`
+          : `Camera ${payload.camera_id} started`,
+        "ok",
+      );
+      setAddOpen(false);
+      if (payload.source_kind !== "browser") {
+        setFocusId(payload.camera_id);
+      }
       refresh();
+      return true;
     } catch (e) {
       say(`Add failed: ${e.message}`, "danger");
+      throw e;
     }
   };
 
-  const onAddVideo = async (file, camera_id, loop, speed, ppeList) => {
+  const onAddVideo = async (file, camera_id, loop, speed, ppeList, fpsLimit = 10) => {
     say("Uploading clip & starting the pipeline…", "brand");
     try {
       const fd = new FormData();
@@ -1616,8 +3113,9 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
       fd.append("loop", String(loop));
       fd.append("speed", speed || "normal");
       fd.append("required_ppe", (ppeList || defaultPpe).join(","));
+      fd.append("fps_limit", String(Math.max(1, Number(fpsLimit) || 10)));
       // Long timeout path: large clips; use raw fetch so we can show better errors
-      const r = await fetch(`${API_BASE}/api/cameras/upload-video`, { method: "POST", body: fd });
+      const r = await fetch(buildPpeUrl("/api/cameras/upload-video"), { method: "POST", body: fd });
       const t = await r.text();
       let body; try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
       if (!r.ok) throw new Error(body.detail || `Upload HTTP ${r.status}`);
@@ -1697,17 +3195,34 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
   const quickWebcam = () => onAdd({
     camera_id: `webcam-${Date.now() % 10000}`,
     source_kind: "webcam",
-    source_kwargs: { index: 0 },
+    source_kwargs: { index: 0, fps: 15 },
     required_ppe: defaultPpe,
+    fps_limit: 10,
   });
 
-  // Prefer one large monitor; multi-cam still roomy
-  const single = cams.length === 1;
-  const gridMin = density === "compact" ? 320 : density === "comfortable" ? 480 : 640;
-  const useLargeCard = density === "large" || single;
+  // Grid density for camera tiles (click → full canvas)
+  const gridMin = density === "compact" ? 240 : density === "comfortable" ? 300 : 420;
   const toastTone = {
     brand: C.brand, ok: C.ok, warn: C.warn, danger: C.danger,
   };
+  const focusCam = focusId ? cams.find((c) => c.camera_id === focusId) : null;
+
+  // Drop focus if the camera was removed
+  useEffect(() => {
+    if (focusId && loaded && cams.length && !cams.some((c) => c.camera_id === focusId)) {
+      setFocusId(null);
+    }
+  }, [focusId, cams, loaded]);
+
+  // Esc from canvas → grid
+  useEffect(() => {
+    if (!focusId) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape" && !e.defaultPrevented) setFocusId(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focusId]);
 
   return (
     <div
@@ -1715,121 +3230,194 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
         background: embedded ? "transparent" : C.bg,
         minHeight: embedded ? undefined : "100vh",
         color: C.ink,
-        padding: embedded ? "14px 20px 48px" : "20px 24px 60px",
+        padding: focusCam ? (embedded ? "10px 14px 24px" : "12px 16px 28px") : (embedded ? "14px 20px 48px" : "20px 24px 60px"),
         fontFamily: "'Inter', system-ui, -apple-system, Segoe UI, sans-serif",
         overflow: "visible",
       }}
     >
-      {!embedded ? (
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 14 }}>
-          <h1 style={{ margin: 0, fontSize: 21, letterSpacing: -0.3, fontWeight: 800 }}>PPE Control Room</h1>
-          <span style={{ color: C.sub, fontSize: 13 }}>select the AI model, add any source, watch it run live</span>
-        </div>
-      ) : (
-        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
-          <div>
-            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Live control</h2>
-            <p style={{ margin: "2px 0 0", fontSize: 12.5, color: C.sub }}>
-              Model · sources · detection modes · teach frames
-            </p>
-          </div>
-          <span style={{ flex: 1 }} />
-          {cams.length > 0 ? (
-            <div style={{ display: "inline-flex", background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, padding: 2, flexWrap: "wrap" }}>
-              {[
-                { id: "large", label: "Large" },
-                { id: "comfortable", label: "Grid" },
-                { id: "compact", label: "Compact" },
-              ].map((d) => (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => setDensity(d.id)}
-                  style={{
-                    border: "none",
-                    background: density === d.id ? C.brandSoft : "transparent",
-                    color: density === d.id ? C.brand : C.sub,
-                    borderRadius: 6,
-                    padding: "6px 12px",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  {d.label}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gap: 14, overflow: "visible" }}>
-        {loaded && cams.length > 0 ? <KpiStrip cams={cams} onNavigate={onNavigate} /> : null}
-        <ModelBar say={say} />
-        <AddSource
-          open={addOpen}
-          onOpenChange={setAddOpen}
-          onAdd={onAdd}
-          onAddVideo={onAddVideo}
+      {/* -------- Full-page canvas for one camera -------- */}
+      {focusCam ? (
+        <CameraCard
+          key={`focus-${focusCam.camera_id}`}
+          cam={focusCam}
+          layout="canvas"
           catalog={catalog}
-          defaultPpe={defaultPpe}
+          onMode={onMode}
+          onFlag={onFlag}
+          onStartStop={onStartStop}
+          onRemove={onRemove}
+          onPpe={onPpe}
+          onBack={() => setFocusId(null)}
         />
-        {stockNote ? (
-          <div style={{
-            fontSize: 12, color: C.sub, background: C.warnSoft, border: `1px solid #f0d4a8`,
-            borderRadius: 10, padding: "8px 12px", lineHeight: 1.45,
-          }}>
-            <b style={{ color: C.warn }}>PPE dataset:</b> {stockNote}
+      ) : (
+        <>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+            <div>
+              <h2 style={{ margin: 0, fontSize: embedded ? 15 : 18, fontWeight: 800, letterSpacing: -0.2 }}>
+                {embedded ? "Live cameras" : "PPE Control Room"}
+              </h2>
+              <p style={{ margin: "2px 0 0", fontSize: 12.5, color: C.sub }}>
+                Click a camera for full-page canvas · options in tabs
+              </p>
+            </div>
+            <span style={{ flex: 1 }} />
+            {cams.length > 0 ? (
+              <div
+                role="group"
+                aria-label="Grid density"
+                style={{
+                  display: "inline-flex",
+                  background: C.panel,
+                  border: `1px solid ${C.line}`,
+                  borderRadius: 9,
+                  padding: 3,
+                  boxShadow: C.shadow,
+                }}
+              >
+                {[
+                  { id: "large", label: "Large" },
+                  { id: "comfortable", label: "Grid" },
+                  { id: "compact", label: "Wall" },
+                ].map((d) => (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => setDensity(d.id)}
+                    style={{
+                      border: "none",
+                      background: density === d.id ? C.brandSoft : "transparent",
+                      color: density === d.id ? C.brand : C.sub,
+                      borderRadius: 6,
+                      padding: "6px 12px",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                      boxShadow: density === d.id ? `inset 0 0 0 1px ${C.brand}` : "none",
+                    }}
+                  >
+                    {d.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setAddOpen((o) => !o)}
+              style={{
+                border: "none",
+                background: C.brand,
+                color: "#fff",
+                borderRadius: 9,
+                padding: "8px 14px",
+                fontSize: 12.5,
+                fontWeight: 800,
+                cursor: "pointer",
+              }}
+            >
+              {addOpen ? "Close add" : "+ Add camera"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setSetupOpen((o) => !o)}
+              style={{
+                border: `1px solid ${C.line}`,
+                background: setupOpen ? C.brandSoft : C.panel,
+                color: setupOpen ? C.brand : C.sub,
+                borderRadius: 9,
+                padding: "8px 14px",
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: "pointer",
+              }}
+            >
+              {setupOpen ? "Hide setup" : "Model & train"}
+            </button>
           </div>
-        ) : null}
 
-        {!loaded ? (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: single || density === "large" ? "1fr" : `repeat(auto-fill, minmax(${gridMin}px, 1fr))`,
-            gap: 14,
-          }}>
-            <div style={{
-              background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14,
-              minHeight: 360, animation: "ppe-shimmer 1.4s ease infinite",
-              backgroundImage: "linear-gradient(90deg, #f4f6f9 0%, #eef1f5 50%, #f4f6f9 100%)",
-              backgroundSize: "200% 100%",
-            }} />
-          </div>
-        ) : cams.length ? (
-          <div style={{
-            display: "grid",
-            gridTemplateColumns: useLargeCard && cams.length <= 2
-              ? (cams.length === 1 ? "1fr" : "repeat(2, minmax(0, 1fr))")
-              : `repeat(auto-fill, minmax(min(100%, ${gridMin}px), 1fr))`,
-            gap: 16,
-            overflow: "visible",
-          }}>
-            {cams.map((cam) => (
-              <CameraCard
-                key={cam.camera_id}
-                cam={cam}
-                large={useLargeCard && cams.length <= 2}
+          <div style={{ display: "grid", gap: 12, overflow: "visible" }}>
+            {addOpen || !cams.length ? (
+              <AddSource
+                open={addOpen || !cams.length}
+                onOpenChange={setAddOpen}
+                onAdd={onAdd}
+                onAddVideo={onAddVideo}
                 catalog={catalog}
-                onMode={onMode}
-                onFlag={onFlag}
-                onStartStop={onStartStop}
-                onRemove={onRemove}
-                onPpe={onPpe}
+                defaultPpe={defaultPpe}
+                onBrowserReady={(camId) => {
+                  setBrowserCropId(camId);
+                  setFocusId(camId);
+                }}
               />
-            ))}
-          </div>
-        ) : (
-          <EmptyState
-            onQuickWebcam={quickWebcam}
-            onQuickVideo={() => videoQuickRef.current?.click()}
-            onOpenAdd={() => setAddOpen(true)}
-          />
-        )}
+            ) : null}
 
-        <ModelsPanel />
-      </div>
+            {browserCropId ? (
+              <BrowserCropSource
+                cameraId={browserCropId}
+                fps={6}
+                onClose={() => setBrowserCropId(null)}
+                onLive={() => refresh()}
+              />
+            ) : null}
+
+            {setupOpen ? (
+              <div style={{ display: "grid", gap: 12 }}>
+                <ModelBar say={say} />
+                {stockNote ? (
+                  <div style={{
+                    fontSize: 12, color: C.sub, background: C.warnSoft, border: "1px solid #f0d4a8",
+                    borderRadius: 10, padding: "8px 12px", lineHeight: 1.45,
+                  }}>
+                    <b style={{ color: C.warn }}>PPE dataset:</b> {stockNote}
+                  </div>
+                ) : null}
+                <ModelsPanel />
+              </div>
+            ) : null}
+
+            {!loaded ? (
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${gridMin}px), 1fr))`,
+                gap: 14,
+              }}>
+                <div style={{
+                  background: C.panel, border: `1px solid ${C.line}`, borderRadius: 14,
+                  minHeight: 200, animation: "ppe-shimmer 1.4s ease infinite",
+                  backgroundImage: "linear-gradient(90deg, #f4f6f9 0%, #eef1f5 50%, #f4f6f9 100%)",
+                  backgroundSize: "200% 100%",
+                }} />
+              </div>
+            ) : cams.length ? (
+              <div style={{
+                display: "grid",
+                gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${gridMin}px), 1fr))`,
+                gap: 14,
+              }}>
+                {cams.map((cam) => (
+                  <CameraCard
+                    key={cam.camera_id}
+                    cam={cam}
+                    layout="tile"
+                    catalog={catalog}
+                    onMode={onMode}
+                    onFlag={onFlag}
+                    onStartStop={onStartStop}
+                    onRemove={onRemove}
+                    onPpe={onPpe}
+                    onOpen={(id) => setFocusId(id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyState
+                onQuickWebcam={quickWebcam}
+                onQuickVideo={() => videoQuickRef.current?.click()}
+                onOpenAdd={() => setAddOpen(true)}
+              />
+            )}
+          </div>
+        </>
+      )}
 
       <input
         ref={videoQuickRef}
@@ -1871,6 +3459,9 @@ export default function PPEControlRoom({ embedded = false, onNavigate }) {
         @keyframes ppe-shimmer {
           0% { background-position: 200% 0; }
           100% { background-position: -200% 0; }
+        }
+        @media (max-width: 900px) {
+          /* stack canvas + tabs on narrow screens */
         }
       `}</style>
     </div>

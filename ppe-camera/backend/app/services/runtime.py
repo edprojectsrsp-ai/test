@@ -71,6 +71,7 @@ def _capture_sink(camera_id: str, frame, result: FrameResult, fired) -> dict:
                     rule_type=getattr(fired, "rule_type", "ppe"),
                     gear=getattr(fired, "gear", "ppe"),
                     track_id=getattr(fired, "track_id", None),
+                    person_key=getattr(fired, "identity", "") or "",
                     confidence=getattr(fired, "confidence", 0.0),
                     person_box=getattr(fired, "person_box", None),
                     capture_id=getattr(item, "id", None),

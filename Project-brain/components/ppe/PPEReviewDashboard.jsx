@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useRef, useEffect, useCallback } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
 // PPE Review Dashboard — teach the AI from the frontend.
 // White corporate theme (matches Control Room / Alerts).
@@ -19,10 +19,31 @@ const CLASSES = [
   "goggles", "no_goggles", "boots", "no_boots", "harness", "no_harness",
   "mask", "no_mask",
 ];
-const VIOLATION = new Set(CLASSES.filter((c) => c.startsWith("no_")));
+// The plant says "Cap", the datasets say "helmet"/"Hardhat"/"head". The backend
+// (/api/review/classes) returns both, so an operator picks the word they use
+// while training still stores the canonical id. This local table is only the
+// fallback for when that call hasn't landed yet.
+const FALLBACK_GEAR_NAMES = {
+  helmet: "Cap", vest: "Safety Jacket", gloves: "Gloves", goggles: "Goggles",
+  boots: "Boots", harness: "Harness", mask: "Mask",
+};
 
-const clsColor = (c) =>
-  VIOLATION.has(c) ? C.danger : c === "person" ? C.brand : C.ok;
+function fallbackOptions() {
+  return CLASSES.map((id) => {
+    const negative = id.startsWith("no_");
+    const group = negative ? id.slice(3) : id;
+    const short = FALLBACK_GEAR_NAMES[group] || group.replace(/_/g, " ");
+    if (!FALLBACK_GEAR_NAMES[group]) {
+      return { id, short, label: short, group, polarity: "neutral", counterpart: null };
+    }
+    return {
+      id, short, group,
+      label: negative ? `${short} Not found` : `${short} Found`,
+      polarity: negative ? "negative" : "positive",
+      counterpart: negative ? group : `no_${group}`,
+    };
+  });
+}
 
 const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, monospace" };
 
@@ -49,7 +70,7 @@ const HANDLE = 8;
 const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  const response = await fetch(buildPpeUrl(path), options);
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -64,7 +85,7 @@ async function api(path, options) {
 export default function PPEReviewDashboard({ embedded = false }) {
   const [queue, setQueue] = useState([]);
   const [activeId, setActiveId] = useState("");
-  const [classes, setClasses] = useState(CLASSES);
+  const [classOptions, setClassOptions] = useState(fallbackOptions);
   const [serviceStatus, setServiceStatus] = useState("connecting");
   const [loading, setLoading] = useState(true);
   const [boxes, setBoxes] = useState([]);
@@ -74,6 +95,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
   const [toast, setToast] = useState(null);
   const [reviewed, setReviewed] = useState({});
   const [saving, setSaving] = useState(false);
+  const [flipAskId, setFlipAskId] = useState(null); // box id waiting for confirm
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
 
@@ -102,6 +124,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
     setActiveId(capture?.id || "");
     setBoxes(boxesFor(capture));
     setSelected(null);
+    setFlipAskId(null);
   }, [boxesFor]);
 
   const loadQueue = useCallback(async () => {
@@ -119,13 +142,56 @@ export default function PPEReviewDashboard({ embedded = false }) {
     }
   }, [flash, selectCapture]);
 
+  /* ---- class lookups -------------------------------------------------- */
+  const optionIndex = React.useMemo(() => {
+    const map = new Map();
+    classOptions.forEach((o) => map.set(o.id, o));
+    return map;
+  }, [classOptions]);
+
+  const optionFor = useCallback(
+    (id) => optionIndex.get(id) || { id, short: id, label: id, group: id, polarity: "neutral", counterpart: null },
+    [optionIndex],
+  );
+  const labelOf = useCallback((id) => optionFor(id).label, [optionFor]);
+  const isViolation = useCallback(
+    (id) => optionFor(id).polarity === "negative" || optionFor(id).polarity === "hazard",
+    [optionFor],
+  );
+  const colorOf = useCallback(
+    (id) => (isViolation(id) ? C.danger : id === "person" ? C.brand : C.ok),
+    [isViolation],
+  );
+
+  /* Gear pairs, so the palette can show one row per item with its green and
+     red state side by side instead of an undifferentiated wall of chips. */
+  const gearRows = React.useMemo(() => {
+    const rows = new Map();
+    classOptions.forEach((o) => {
+      if (o.polarity !== "positive" && o.polarity !== "negative") return;
+      const row = rows.get(o.group) || { group: o.group, short: o.short };
+      row[o.polarity] = o;
+      rows.set(o.group, row);
+    });
+    return [...rows.values()].filter((r) => r.positive && r.negative);
+  }, [classOptions]);
+
+  const otherOptions = React.useMemo(
+    () => classOptions.filter((o) => o.polarity !== "positive" && o.polarity !== "negative"),
+    [classOptions],
+  );
+
   useEffect(() => {
     let mounted = true;
     Promise.all([
       api("/health"),
       api("/api/review/classes"),
     ]).then(([, payload]) => {
-      if (mounted) setClasses(payload.classes || CLASSES);
+      if (!mounted) return;
+      // Older backends return only `classes` (bare ids) — keep working there.
+      setClassOptions(Array.isArray(payload.options) && payload.options.length
+        ? payload.options
+        : fallbackOptions());
     }).catch(() => {
       if (mounted) setServiceStatus("offline");
     });
@@ -142,12 +208,13 @@ export default function PPEReviewDashboard({ embedded = false }) {
 
     const paintBoxes = () => {
       boxes.forEach((b) => {
-        const col = clsColor(b.cls);
+        const col = colorOf(b.cls);
         const sel = b.id === selected;
         ctx.lineWidth = sel ? 3 : 2;
         ctx.strokeStyle = col;
         ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
-        const text = b.conf != null ? `${b.cls} ${b.conf.toFixed(2)}` : b.cls;
+        const name = labelOf(b.cls);
+        const text = b.conf != null ? `${name} ${b.conf.toFixed(2)}` : name;
         ctx.font = "12px 'IBM Plex Mono', monospace";
         const tw = ctx.measureText(text).width + 10;
         ctx.fillStyle = col;
@@ -186,7 +253,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
       paintBoxes();
     }
     return () => { cancelled = true; };
-  }, [active, boxes, selected, drawing, activeId, CW, CH]);
+  }, [active, boxes, selected, drawing, activeId, CW, CH, colorOf, labelOf]);
 
   const toCanvas = (e) => {
     const r = canvasRef.current.getBoundingClientRect();
@@ -209,21 +276,45 @@ export default function PPEReviewDashboard({ embedded = false }) {
   const inside = (b, x, y) =>
     x >= b.x1 && x <= b.x2 && y >= b.y1 && y <= b.y2;
 
+  /* Flip missing (red) ↔ worn (green). Canvas click asks first; F / Yes confirm. */
+  const flipBox = useCallback((boxId) => {
+    const box = boxes.find((b) => b.id === boxId);
+    const twin = box && optionFor(box.cls).counterpart;
+    if (!twin) return false;
+    setBoxes((p) => p.map((b) => (b.id === boxId ? { ...b, cls: twin } : b)));
+    flash(`${labelOf(twin)} — corrected`, isViolation(twin) ? C.danger : C.ok);
+    setFlipAskId(null);
+    return true;
+  }, [boxes, optionFor, labelOf, isViolation, flash]);
+
+  // Click vs drag: movement under this (canvas px) = select + ask flip (not move).
+  const CLICK_SLOP = 6;
+
   const onDown = (e) => {
     const { x, y } = toCanvas(e);
     if (selected) {
       const b = boxes.find((bb) => bb.id === selected);
       const h = b && handleAt(b, x, y);
-      if (h) { setDrag({ mode: "resize", handle: h, id: b.id }); return; }
+      if (h) { setDrag({ mode: "resize", handle: h, id: b.id }); setFlipAskId(null); return; }
     }
     for (let i = boxes.length - 1; i >= 0; i--) {
       if (inside(boxes[i], x, y)) {
-        setSelected(boxes[i].id);
-        setDrag({ mode: "move", id: boxes[i].id, ox: x, oy: y });
+        const id = boxes[i].id;
+        setSelected(id);
+        setDrag({
+          mode: "pending",
+          id,
+          ox: x,
+          oy: y,
+          sx: x,
+          sy: y,
+          moved: false,
+        });
         return;
       }
     }
     setSelected(null);
+    setFlipAskId(null);
     setDrawing({ x1: x, y1: y, x2: x, y2: y });
   };
 
@@ -231,6 +322,15 @@ export default function PPEReviewDashboard({ embedded = false }) {
     const { x, y } = toCanvas(e);
     if (drawing) { setDrawing((d) => ({ ...d, x2: x, y2: y })); return; }
     if (!drag) return;
+
+    if (drag.mode === "pending") {
+      const dist = Math.hypot(x - drag.sx, y - drag.sy);
+      if (dist < CLICK_SLOP) return;
+      setFlipAskId(null);
+      setDrag((d) => (d ? { ...d, mode: "move", ox: x, oy: y, moved: true } : d));
+      return;
+    }
+
     setBoxes((prev) =>
       prev.map((b) => {
         if (b.id !== drag.id) return b;
@@ -262,6 +362,13 @@ export default function PPEReviewDashboard({ embedded = false }) {
         setSelected(nb.id);
       }
       setDrawing(null);
+      setDrag(null);
+      return;
+    }
+    // Pure click → select + ask to flip (if it has a worn/missing twin).
+    if (drag?.mode === "pending" && drag.id && !drag.moved) {
+      const twin = optionFor(boxes.find((b) => b.id === drag.id)?.cls).counterpart;
+      setFlipAskId(twin ? drag.id : null);
     }
     setDrag(null);
   };
@@ -269,7 +376,20 @@ export default function PPEReviewDashboard({ embedded = false }) {
   const relabel = (cls) => {
     if (!selected) return;
     setBoxes((p) => p.map((b) => (b.id === selected ? { ...b, cls } : b)));
+    setFlipAskId(null);
   };
+
+  const selectedOption = selected
+    ? optionFor(boxes.find((b) => b.id === selected)?.cls)
+    : null;
+
+  const flipAskBox = flipAskId ? boxes.find((b) => b.id === flipAskId) : null;
+  const flipAskOption = flipAskBox ? optionFor(flipAskBox.cls) : null;
+
+  const flipSelected = useCallback(() => {
+    if (!selected) return;
+    flipBox(selected);
+  }, [selected, flipBox]);
   const delBox = useCallback(() => {
     if (!selected) return;
     setBoxes((p) => p.filter((b) => b.id !== selected));
@@ -345,10 +465,16 @@ export default function PPEReviewDashboard({ embedded = false }) {
       if (tag === "input" || tag === "textarea" || tag === "select") return;
       if (e.key === "s" || e.key === "S") { e.preventDefault(); submit(); }
       if (e.key === "i" || e.key === "I") { e.preventDefault(); ignore(); }
+      // F = flip the selected box between worn and missing. The single most
+      // repeated correction, so it gets the cheapest possible gesture.
+      if ((e.key === "f" || e.key === "F") && selected) {
+        e.preventDefault();
+        flipSelected();
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         if (selected) { e.preventDefault(); delBox(); }
       }
-      if (e.key === "Escape") setSelected(null);
+      if (e.key === "Escape") { setSelected(null); setFlipAskId(null); }
       if ((e.key === "j" || e.key === "J" || e.key === "ArrowDown") && queue.length) {
         e.preventDefault();
         const idx = queue.findIndex((q) => q.id === activeId);
@@ -364,7 +490,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [submit, ignore, delBox, selected, queue, activeId, selectCapture]);
+  }, [submit, ignore, delBox, flipSelected, selected, queue, activeId, selectCapture]);
 
   const pendingCount = queue.filter((q) => !reviewed[q.id]).length;
   const labeledCount = Object.values(reviewed).filter((s) => s === "labeled").length;
@@ -382,9 +508,9 @@ export default function PPEReviewDashboard({ embedded = false }) {
       {!embedded ? null : (
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
           <div>
-            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>Review & Teach</h2>
+            <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, letterSpacing: -0.2 }}>Review & Teach</h2>
             <p style={{ margin: "2px 0 0", fontSize: 12.5, color: C.sub }}>
-              Correct boxes · save labels · export training sets
+              Priority queue · click boxes Found↔Missing · save labels · export
             </p>
           </div>
           <span style={{ flex: 1 }} />
@@ -444,7 +570,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
             <span style={{ fontWeight: 700, color: C.ok }}>{labeledCount}</span> labeled this session
             <span style={{ flex: 1 }} />
             <span style={{ fontSize: 11, color: "#8595a5" }}>
-              <kbd style={kbd}>S</kbd> save · <kbd style={kbd}>I</kbd> ignore · <kbd style={kbd}>Del</kbd> box · <kbd style={kbd}>J</kbd>/<kbd style={kbd}>K</kbd> queue
+              <kbd style={kbd}>click</kbd> box → confirm flip · <kbd style={kbd}>F</kbd> flip · <kbd style={kbd}>S</kbd> save · <kbd style={kbd}>I</kbd> ignore · <kbd style={kbd}>Del</kbd> box · <kbd style={kbd}>J</kbd>/<kbd style={kbd}>K</kbd> queue
             </span>
           </div>
         )}
@@ -553,15 +679,58 @@ export default function PPEReviewDashboard({ embedded = false }) {
                     onMouseLeave={onUp}
                     style={{
                       display: "block", width: "100%", height: "auto",
-                      cursor: drawing ? "crosshair" : "default", touchAction: "none",
+                      cursor: drawing ? "crosshair" : "pointer",
+                      touchAction: "none",
                     }}
                   />
                 </div>
-                <div style={{
-                  marginTop: 12, fontSize: 12, color: C.sub, maxWidth: 520, textAlign: "center", lineHeight: 1.45,
-                }}>
-                  Drag empty space to draw · click a box to select · drag corners to resize · pick a class on the right
-                </div>
+                {flipAskBox && flipAskOption?.counterpart ? (
+                  <div
+                    role="dialog"
+                    aria-label="Confirm flip"
+                    style={{
+                      marginTop: 12, width: "min(380px, 100%)",
+                      background: C.panel, border: `1px solid ${C.line}`,
+                      borderRadius: 12, padding: "12px 14px", boxShadow: C.shadow,
+                    }}
+                  >
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, letterSpacing: 0.5, textTransform: "uppercase", marginBottom: 6 }}>
+                      Flip this label?
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 10, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <span style={{ color: colorOf(flipAskBox.cls) }}>{labelOf(flipAskBox.cls)}</span>
+                      <span style={{ color: C.sub }}>→</span>
+                      <span style={{ color: colorOf(flipAskOption.counterpart) }}>{labelOf(flipAskOption.counterpart)}</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => flipBox(flipAskBox.id)}
+                        style={{
+                          flex: 1, border: "none", borderRadius: 9, padding: "9px 12px",
+                          fontSize: 13, fontWeight: 800, cursor: "pointer", color: "#fff",
+                          background: colorOf(flipAskOption.counterpart),
+                        }}
+                      >
+                        Yes, flip
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setFlipAskId(null)}
+                        style={btnSecondary}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{
+                    marginTop: 12, fontSize: 12, color: C.sub, maxWidth: 560, textAlign: "center", lineHeight: 1.45,
+                  }}>
+                    <b style={{ color: C.ink }}>Click a box</b> → confirm flip red↔green
+                    · drag to move · corners resize · empty space draws
+                  </div>
+                )}
               </>
             ) : (
               <div style={{
@@ -595,26 +764,105 @@ export default function PPEReviewDashboard({ embedded = false }) {
             }}>
               {selected ? "Class for selected box" : "Select a box to relabel"}
             </div>
+
+            {selectedOption?.counterpart ? (
+              <button
+                type="button"
+                onClick={flipSelected}
+                title="Flip selected box (or press F)"
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  gap: 8, width: "100%", padding: "10px 12px", borderRadius: 9,
+                  marginBottom: 12, cursor: "pointer", fontSize: 12.5, fontWeight: 800,
+                  color: "#fff", border: "none",
+                  background: colorOf(selectedOption.counterpart),
+                  boxShadow: C.shadow,
+                }}
+              >
+                <span style={{ opacity: 0.9 }}>🎯</span>
+                <span style={{ opacity: 0.75 }}>{selectedOption.label}</span>
+                <span style={{ fontSize: 15 }}>→</span>
+                <span>{labelOf(selectedOption.counterpart)}</span>
+              </button>
+            ) : selected ? (
+              <div style={{
+                fontSize: 11.5, color: C.sub, marginBottom: 12, lineHeight: 1.4,
+                padding: "8px 10px", borderRadius: 8, background: C.panel2,
+              }}>
+                This class has no worn/missing twin — pick a class below.
+              </div>
+            ) : (
+              <div style={{
+                fontSize: 11.5, color: C.sub, marginBottom: 12, lineHeight: 1.4,
+                padding: "8px 10px", borderRadius: 8, background: C.panel2, border: `1px dashed ${C.line}`,
+              }}>
+                <b style={{ color: C.ink }}>Teach:</b> click a box → confirm flip. Then <b>Save labels</b>.
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
+              {gearRows.map((row) => {
+                const current = selected && boxes.find((b) => b.id === selected)?.cls;
+                return (
+                  <div key={row.group} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{
+                      ...mono, fontSize: 10.5, color: C.sub, width: 74,
+                      flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {row.short}
+                    </div>
+                    {[row.positive, row.negative].map((o) => {
+                      const cur = current === o.id;
+                      const col = colorOf(o.id);
+                      return (
+                        <button
+                          key={o.id}
+                          type="button"
+                          title={o.label}
+                          onClick={() => relabel(o.id)}
+                          disabled={!selected}
+                          style={{
+                            flex: 1, fontSize: 11, padding: "5px 6px", borderRadius: 6,
+                            cursor: selected ? "pointer" : "not-allowed",
+                            background: cur ? col : C.panel2,
+                            color: cur ? "#fff" : selected ? C.ink : C.sub,
+                            border: `1px solid ${cur ? col : C.line}`,
+                            opacity: selected ? 1 : 0.55,
+                            fontWeight: cur ? 800 : 500,
+                          }}
+                        >
+                          {o.polarity === "positive" ? "✓ worn" : "✕ missing"}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-              {classes.map((c) => {
-                const cur = selected && boxes.find((b) => b.id === selected)?.cls === c;
+              {otherOptions.map((o) => {
+                const cur = selected && boxes.find((b) => b.id === selected)?.cls === o.id;
+                const col = colorOf(o.id);
                 return (
                   <button
-                    key={c}
+                    key={o.id}
                     type="button"
-                    onClick={() => relabel(c)}
+                    title={o.aliases?.length ? `also: ${o.aliases.join(", ")}` : o.label}
+                    onClick={() => relabel(o.id)}
                     disabled={!selected}
                     style={{
                       ...mono, fontSize: 11, padding: "5px 8px", borderRadius: 6,
                       cursor: selected ? "pointer" : "not-allowed",
-                      background: cur ? clsColor(c) : C.panel2,
+                      background: cur ? col : C.panel2,
                       color: cur ? "#fff" : selected ? C.ink : C.sub,
-                      border: `1px solid ${cur ? clsColor(c) : C.line}`,
+                      border: `1px solid ${cur ? col : C.line}`,
                       opacity: selected ? 1 : 0.55,
                       fontWeight: cur ? 700 : 500,
                     }}
                   >
-                    {c}
+                    {o.label}
                   </button>
                 );
               })}

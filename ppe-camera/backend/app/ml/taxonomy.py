@@ -102,12 +102,13 @@ PPE_CATALOG: list[dict] = [
      "default": False, "in_stock_models": True, "zone_hint": "face"},
     {"id": "gloves", "label": "Gloves", "display": "Gloves",
      "default": False, "in_stock_models": True, "zone_hint": "hands",
-     "note": "Best with Hexmon/Vyra"},
+     "note": "Best with SH17 or Hexmon/Vyra"},
     {"id": "goggles", "label": "Safety Goggles", "display": "Goggles",
      "default": False, "in_stock_models": True, "zone_hint": "face",
-     "note": "Best with Hexmon/Vyra"},
+     "note": "Best with SH17 or Hexmon/Vyra"},
     {"id": "boots", "label": "Safety Boots", "display": "Boots",
-     "default": False, "in_stock_models": False, "zone_hint": "feet"},
+     "default": False, "in_stock_models": True, "zone_hint": "feet",
+     "note": "Needs SH17 — the css-data models have no footwear class"},
     {"id": "harness", "label": "Safety Harness", "display": "Harness",
      "default": False, "in_stock_models": False, "zone_hint": "torso"},
 ]
@@ -134,7 +135,12 @@ ALIASES: dict[str, str] = {
     "hard_hat": "helmet", "safety-helmet": "helmet",
     "no-helmet": "no_helmet", "no-hardhat": "no_helmet",
     "nohardhat": "no_helmet", "no_hardhat": "no_helmet",
-    "head": "no_helmet",  # bare head = no helmet
+    # Bare head = no helmet. This is how SH17 and the Hard-Hat-Workers sets
+    # express the violation — they have no NO-Hardhat class at all. Datasets
+    # that box the head on EVERY worker (helmeted or not) are still handled
+    # correctly, because ViolationEngine._person_wears lets a positive helmet
+    # detection win over a competing negative one on the same person.
+    "head": "no_helmet",
     # vest
     "vest": "vest", "safety-vest": "vest", "safety vest": "vest",
     "reflective-vest": "vest",
@@ -142,13 +148,15 @@ ALIASES: dict[str, str] = {
     # gloves
     "gloves": "gloves", "glove": "gloves", "hand-gloves": "gloves",
     "no-gloves": "no_gloves", "no-glove": "no_gloves",
+    "hands": "no_gloves",  # SH17: a bare hand is annotated 'hands'
     # goggles / glasses
     "goggles": "goggles", "glasses": "goggles", "safety-glasses": "goggles",
-    "eye-wear": "goggles",
+    "eye-wear": "goggles", "face-guard": "goggles",  # SH17 face shield
     "no-goggles": "no_goggles", "no-glasses": "no_goggles",
     # boots
     "boots": "boots", "boot": "boots", "safety-boots": "boots", "shoes": "boots",
     "no-boots": "no_boots", "no-shoes": "no_boots",
+    "foot": "no_boots",  # SH17: a bare/unprotected foot
     # harness
     "harness": "harness", "safety-harness": "harness",
     "no-harness": "no_harness",

@@ -135,9 +135,16 @@ class ReviewService:
                 labels/*.txt      (YOLO: "<cls_id> cx cy w h" per line)
                 data.yaml
         """
+        # Golden frames are excluded here and nowhere else. This single filter is
+        # what makes evaluation mean anything: it is the guarantee that no model
+        # has ever seen the frames it will be scored on. If a golden frame ever
+        # reaches a training set, every metric measured afterwards silently
+        # becomes a training-set score, and the promotion gate starts approving
+        # regressions. Do not "temporarily" relax this.
         res = await session.execute(
             select(CaptureItem)
             .where(CaptureItem.status == CaptureStatus.labeled)
+            .where(CaptureItem.is_golden.is_(False))
             .options(selectinload(CaptureItem.labels))
         )
         items = list(res.scalars().all())

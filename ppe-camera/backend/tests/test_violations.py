@@ -217,6 +217,55 @@ class TestAssessability:
         assert any(a.state == "unassessable" for a in e.last_assessments)
 
 
+# ---- 4b. absence = missing (match live overlay) ----------------------------
+
+class TestInferMissingFromAbsence:
+    """Live HUD shows Cap/Safety Jacket Not found when gear is simply not
+    detected. The engine must fire the same way when the model has no no_*
+    class (SH17, etc.)."""
+
+    def test_person_without_gear_boxes_fires_when_enabled(self):
+        e = ViolationEngine(ZoneRule(
+            required={"helmet"}, min_frames=3, window=10,
+            infer_missing_from_absence=True,
+        ))
+        # Person only — no helmet box and no no_helmet box (SH17-style).
+        fr = frame(P(100, 100, 200, 300, tid=1))
+        fired = run(e, fr, 6)
+        assert fired, "assessable person with no helmet detection must fire"
+        assert fired[0].gear == "helmet"
+        assert any(
+            a.state == "missing" and "not detected" in a.reason
+            for a in e.last_assessments
+        )
+
+    def test_person_with_positive_gear_does_not_fire(self):
+        e = ViolationEngine(ZoneRule(
+            required={"helmet"}, min_frames=3, window=10,
+            infer_missing_from_absence=True,
+        ))
+        fr = frame(P(100, 100, 200, 300, tid=1), G("helmet", 120, 105, 160, 145))
+        assert run(e, fr, 6) == []
+
+    def test_disabled_absence_stays_unknown_and_does_not_fire(self):
+        e = ViolationEngine(ZoneRule(
+            required={"helmet"}, min_frames=3, window=10,
+            infer_missing_from_absence=False,
+        ))
+        fr = frame(P(100, 100, 200, 300, tid=1))
+        assert run(e, fr, 6) == []
+        assert any(a.state == "unknown" for a in e.last_assessments)
+
+    def test_tiny_person_still_unassessable_even_with_absence(self):
+        e = ViolationEngine(ZoneRule(
+            required={"helmet"}, min_frames=3, window=10,
+            min_person_px=64, infer_missing_from_absence=True,
+        ))
+        fr = frame(P(100, 100, 110, 130, tid=1))
+        assert run(e, fr, 6) == []
+        assert any(a.state == "unassessable" for a in e.last_assessments)
+
+
 # ---- 5. confidence weighting -----------------------------------------------
 
 class TestConfidenceWeighting:

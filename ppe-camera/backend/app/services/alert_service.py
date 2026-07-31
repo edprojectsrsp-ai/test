@@ -49,6 +49,7 @@ class AlertService:
 
     # ---- public ------------------------------------------------------------
     def fire(self, camera_id: str, gear: str, snapshot_path: str | None = None,
+             clip_path: str | None = None,
              meta: dict | None = None, now: float | None = None,
              person: str | None = None) -> dict:
         """Queue an alert if policy allows.
@@ -73,11 +74,22 @@ class AlertService:
                      "occurrence": decision.occurrence,
                      "escalation": decision.escalation_level})
         prefix = "ESCALATION — " if decision.kind == "escalation" else ""
+        # Uppercase so the wire value matches the gear names the Settings UI
+        # shows and stores ("NO_HELMET"); the engine hands us canonical
+        # lowercase ("helmet"). Filtering is normalised either way, but an
+        # operator reading the log should not see two spellings of one thing.
+        token = gear if gear.upper().startswith("NO_") else f"NO_{gear}"
+        try:
+            from app.ml.taxonomy import display_name
+            meta.setdefault("gear_label", display_name(gear))
+        except Exception:
+            pass
         payload = {
             "event": "ppe_violation",
             "camera": camera_id,
-            "violation": prefix + (f"NO_{gear}" if not gear.startswith("NO_") else gear),
+            "violation": prefix + token.upper(),
             "snapshot": snapshot_path,
+            "clip": clip_path,
             "at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
             "meta": meta,
         }
@@ -90,6 +102,38 @@ class AlertService:
             except queue.Empty:
                 pass
         return decision.as_dict()
+
+    @staticmethod
+    def _passes_gear_filter(payload: dict, gear_filter) -> bool:
+        """Does this alert match the operator's gear filter?
+
+        The filter is compared case- and separator-insensitively against the
+        bare violation name. Everything here exists because a naive
+        `violation not in gear_filter` silently discarded every real alert:
+
+          * the engine emits canonical lowercase gear, so the payload reads
+            "NO_helmet", while the Settings UI stores "NO_HELMET";
+          * escalations are prefixed "ESCALATION — NO_helmet", so even an
+            exactly-cased filter dropped the follow-ups that matter most;
+          * digests are not gear-scoped at all and must never be filtered out.
+
+        Failure was invisible: /api/alerts/test writes to Telegram directly and
+        bypasses this path, so the test button kept saying delivery worked.
+        """
+        if not gear_filter:
+            return True
+        if (payload.get("meta") or {}).get("digest"):
+            return True
+
+        def norm(v: str) -> str:
+            v = str(v or "")
+            _, _, tail = v.rpartition("—")   # strip "ESCALATION — "
+            return (tail or v).strip().lower().replace("-", "_").replace(" ", "_")
+
+        wanted = {norm(g) for g in gear_filter}
+        violation = norm(payload.get("violation"))
+        # "no_helmet" must also match a filter written as plain "helmet"
+        return violation in wanted or violation.removeprefix("no_") in wanted
 
     def _maybe_send_digest(self, now: float) -> None:
         """Flush the suppressed-alert digest when its window closes.
@@ -142,8 +186,11 @@ class AlertService:
     def format_message(payload: dict) -> str:
         """Human-readable alert text, shared by live alerts and the test button."""
         meta = payload.get("meta") or {}
+        headline = payload.get("violation", "UNKNOWN")
+        if meta.get("gear_label"):
+            headline = f"{headline} ({meta['gear_label']} not worn)"
         lines = [
-            f"\u26a0\ufe0f *PPE VIOLATION* \u2014 {payload.get('violation', 'UNKNOWN')}",
+            f"\u26a0\ufe0f *PPE VIOLATION* \u2014 {headline}",
             f"Camera: {payload.get('camera', '-')}",
             f"Time: {payload.get('at', '-')}",
         ]
@@ -175,8 +222,8 @@ class AlertService:
 
         if not alert_config.telegram_ready():
             return
-        gear_filter = alert_config.get("telegram_gear_filter") or []
-        if gear_filter and payload.get("violation") not in gear_filter:
+        if not self._passes_gear_filter(
+                payload, alert_config.get("telegram_gear_filter") or []):
             return
 
         token = str(alert_config.get("telegram_bot_token"))
@@ -184,10 +231,20 @@ class AlertService:
         snapshot = payload.get("snapshot")
         want_photo = bool(alert_config.get("telegram_send_photo"))
         has_photo = bool(snapshot and os.path.exists(snapshot)) and want_photo
+        # An animated clip when one exists, because ten seconds answers the
+        # question a still cannot: was he bare-headed for the whole approach, or
+        # caught halfway through putting a helmet on. Telegram plays a GIF
+        # inline via sendAnimation, so this costs the recipient nothing.
+        clip = payload.get("clip")
+        has_clip = bool(clip and os.path.exists(clip)) and want_photo
 
         for chat_id in alert_config.chat_ids():
             try:
-                if has_photo:
+                if has_clip:
+                    self._telegram_photo(token, chat_id, text, clip,
+                                         endpoint="sendAnimation",
+                                         field="animation")
+                elif has_photo:
                     self._telegram_photo(token, chat_id, text, snapshot)
                 else:
                     self._telegram_text(token, chat_id, text)
@@ -212,8 +269,14 @@ class AlertService:
             return json.loads(resp.read().decode() or "{}")
 
     @staticmethod
-    def _telegram_photo(token: str, chat_id: str, caption: str, path: str) -> dict:
-        """multipart/form-data upload -- stdlib only, no requests dependency."""
+    def _telegram_photo(token: str, chat_id: str, caption: str, path: str,
+                        endpoint: str = "sendPhoto", field: str = "photo") -> dict:
+        """multipart/form-data upload -- stdlib only, no requests dependency.
+
+        `endpoint`/`field` let the same uploader post a still (sendPhoto) or an
+        animated evidence clip (sendAnimation); Telegram is otherwise identical
+        between the two.
+        """
         import mimetypes
         import urllib.request
         import uuid
@@ -225,20 +288,23 @@ class AlertService:
         mime = mimetypes.guess_type(filename)[0] or "image/jpeg"
 
         parts: list[bytes] = []
-        for field, value in (("chat_id", chat_id), ("caption", caption[:1024]),
-                             ("parse_mode", "Markdown")):
+        # `name` rather than `field` for the loop variable: reusing the
+        # parameter name here shadowed it, so the file part below always saw
+        # the last text field instead of the caller's choice.
+        for name, value in (("chat_id", chat_id), ("caption", caption[:1024]),
+                            ("parse_mode", "Markdown")):
             parts.append(
-                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"\r\n\r\n"
+                f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n"
                 f"{value}\r\n".encode())
         parts.append(
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; "
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{field}\"; "
             f"filename=\"{filename}\"\r\nContent-Type: {mime}\r\n\r\n".encode())
         parts.append(image)
         parts.append(f"\r\n--{boundary}--\r\n".encode())
         body = b"".join(parts)
 
         req = urllib.request.Request(
-            f"https://api.telegram.org/bot{token}/sendPhoto",
+            f"https://api.telegram.org/bot{token}/{endpoint}",
             data=body,
             headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
             method="POST")
@@ -269,8 +335,8 @@ class AlertService:
 
         if not alert_config.whatsapp_ready():
             return
-        gear_filter = alert_config.get("whatsapp_gear_filter") or []
-        if gear_filter and payload.get("violation") not in gear_filter:
+        if not self._passes_gear_filter(
+                payload, alert_config.get("whatsapp_gear_filter") or []):
             return
 
         token = str(alert_config.get("whatsapp_token"))

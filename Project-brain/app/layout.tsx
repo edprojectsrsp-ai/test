@@ -5,6 +5,7 @@ import "./globals.css";
 import "../theme/tokens.css";
 import "../theme/presets.css";
 import "../theme/advanced-ui.css";
+import "../theme/ppe-industrial.css";
 import AppSidebar from "../components/layout/AppSidebar";
 import ContextBar from "../components/layout/ContextBar";
 import AmbientFx from "../components/layout/AmbientFx";

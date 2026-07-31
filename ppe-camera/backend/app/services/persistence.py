@@ -50,6 +50,7 @@ class PersistenceService:
             rule_type=rule_type,
             gear=gear,
             track_id=track_id,
+            person_key=person_key or "",
             confidence=float(confidence or 0.0),
             person_box=list(person_box) if person_box else [],
             capture_id=capture_id,
@@ -132,6 +133,28 @@ class PersistenceService:
     async def all_cameras(self, session: AsyncSession) -> list[CameraRecord]:
         res = await session.execute(select(CameraRecord).where(CameraRecord.enabled))
         return list(res.scalars().all())
+
+    async def delete_camera(self, session: AsyncSession, camera_id: str) -> bool:
+        """Hard-delete a camera row so it does not reappear after restart."""
+        row = await session.get(CameraRecord, camera_id)
+        if row is None:
+            return False
+        await session.delete(row)
+        await session.commit()
+        return True
+
+    async def disable_camera(self, session: AsyncSession, camera_id: str) -> bool:
+        """Soft-remove: keep the row but mark disabled so restore_fleet skips it.
+
+        Prefer this over hard-delete when an operator removes a camera from the
+        UI — detection rules and zones stay in the DB if they re-add later.
+        """
+        row = await session.get(CameraRecord, camera_id)
+        if row is None:
+            return False
+        row.enabled = False
+        await session.commit()
+        return True
 
 
 _service: PersistenceService | None = None

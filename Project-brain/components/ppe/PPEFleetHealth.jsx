@@ -13,14 +13,15 @@
  * detector can keep up with the fleet.
  */
 import React, { useCallback, useEffect, useState } from "react";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 async function api(path) {
-  const r = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const r = await fetch(buildPpeUrl(path), { cache: "no-store" });
   const t = await r.text();
   let b; try { b = t ? JSON.parse(t) : {}; } catch { b = { detail: t }; }
-  if (!r.ok) throw new Error(b.detail || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(typeof b.detail === "string" ? b.detail : (b.detail ? JSON.stringify(b.detail) : `HTTP ${r.status}`));
   return b;
 }
 
@@ -31,13 +32,13 @@ const C = {
 const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, monospace", fontVariantNumeric: "tabular-nums" };
 
 const HEALTH = {
-  healthy:      { label: "Healthy",      color: "#0a8f5b", bg: "#e6f6ef" },
-  degraded:     { label: "Degraded",     color: "#b25e00", bg: "#fdf1e3" },
-  reconnecting: { label: "Reconnecting", color: "#b25e00", bg: "#fdf1e3" },
-  frozen:       { label: "Frozen feed",  color: "#c02b3c", bg: "#fdecee" },
-  offline:      { label: "Offline",      color: "#c02b3c", bg: "#fdecee" },
-  starting:     { label: "Starting",     color: "#4a6b8a", bg: "#eef4fb" },
-  stopped:      { label: "Stopped",      color: "#7c8798", bg: "#f1f3f5" },
+  healthy:      { label: "Healthy",      color: "var(--verdigris)", bg: "var(--verdigris-soft)" },
+  degraded:     { label: "Degraded",     color: "var(--slag)", bg: "var(--slag-soft)" },
+  reconnecting: { label: "Reconnecting", color: "var(--slag)", bg: "var(--slag-soft)" },
+  frozen:       { label: "Frozen feed",  color: "var(--molten)", bg: "var(--molten-soft)" },
+  offline:      { label: "Offline",      color: "var(--molten)", bg: "var(--molten-soft)" },
+  starting:     { label: "Starting",     color: "var(--steel)", bg: "var(--steel-soft)" },
+  stopped:      { label: "Stopped",      color: "var(--ink-3)", bg: "var(--panel-3)" },
 };
 
 const EXPLAIN = {
@@ -74,7 +75,7 @@ function Stat({ label, value, tone, hint }) {
 
 function Bar({ pct, tone }) {
   return (
-    <div style={{ height: 6, borderRadius: 999, background: "#eef1f5", overflow: "hidden" }}>
+    <div style={{ height: 6, borderRadius: 999, background: "var(--panel-3)", overflow: "hidden" }}>
       <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: "100%", background: tone }} />
     </div>
   );
@@ -98,11 +99,17 @@ export default function PPEFleetHealth() {
   }, [load, auto]);
 
   if (error) {
-    return <div style={{ padding: 16, fontSize: 13, color: "#c02b3c" }}>
-      Could not reach the PPE service: {error}
-    </div>;
+    return (
+      <div className="ppe-banner ppe-banner--danger" style={{ margin: 18 }}>
+        Could not reach the PPE service: {error}
+      </div>
+    );
   }
-  if (!data) return <div style={{ padding: 16, fontSize: 13, color: C.sub }}>Loading fleet health…</div>;
+  if (!data) {
+    return (
+      <div style={{ padding: 18, fontSize: 13, color: C.sub }}>Loading fleet health…</div>
+    );
+  }
 
   const cams = data.cameras || [];
   const inf = data.inference || {};
@@ -110,21 +117,21 @@ export default function PPEFleetHealth() {
   const availPct = data.fleet_availability == null ? null : data.fleet_availability * 100;
 
   return (
-    <div>
+    <div style={{ padding: "14px 18px 40px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 800 }}>Fleet health</div>
-          <div style={{ fontSize: 11.5, color: C.sub }}>
-            Whether the system is actually watching — not just whether it is running.
+          <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: -0.2 }}>Fleet health</div>
+          <div style={{ fontSize: 12, color: C.sub }}>
+            Stream freshness · freezes · detector capacity — not just “running”.
           </div>
         </div>
         <span style={{ flex: 1 }} />
-        <button onClick={() => setAuto((a) => !a)} style={{
+        <button type="button" onClick={() => setAuto((a) => !a)} style={{
           padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer",
           background: auto ? "var(--steel)" : C.panel, color: auto ? "#fff" : C.ink,
           border: `1px solid ${auto ? "var(--steel)" : C.line}`,
         }}>{auto ? "Live" : "Paused"}</button>
-        <button onClick={load} style={{
+        <button type="button" onClick={load} style={{
           padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
           cursor: "pointer", background: C.panel, color: C.ink, border: `1px solid ${C.line}`,
         }}>Refresh</button>
@@ -133,14 +140,14 @@ export default function PPEFleetHealth() {
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 14 }}>
         <Stat label="Cameras" value={data.total ?? 0} />
         <Stat label="Not healthy" value={data.degraded ?? 0}
-          tone={data.degraded ? "#c02b3c" : "#0a8f5b"}
+          tone={data.degraded ? "var(--molten)" : "var(--verdigris)"}
           hint="Frozen, reconnecting or offline." />
         <Stat label="Fleet uptime" value={availPct == null ? "—" : `${availPct.toFixed(1)}%`}
-          tone={availPct != null && availPct < 95 ? "#b25e00" : "#0a8f5b"}
+          tone={availPct != null && availPct < 95 ? "var(--slag)" : "var(--verdigris)"}
           hint="Share of wall time cameras have been delivering frames." />
         <Stat label="Detector load"
           value={inf.oversubscription ? `${inf.oversubscription}x` : "—"}
-          tone={saturated ? "#c02b3c" : "#0a8f5b"}
+          tone={saturated ? "var(--molten)" : "var(--verdigris)"}
           hint="Requested inference rate divided by what the model can sustain." />
         <Stat label="Inference time"
           value={inf.measured_latency_ms ? `${inf.measured_latency_ms} ms` : "—"}

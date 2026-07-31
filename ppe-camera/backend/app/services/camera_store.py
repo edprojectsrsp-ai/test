@@ -39,6 +39,8 @@ def config_to_row(config) -> dict[str, Any]:
         "monitoring_zones": list(config.monitoring_zones or []),
         "fps_limit": float(config.fps_limit or 0.0),
         "priority": getattr(config, "priority", "normal"),
+        "pose_enabled": bool(getattr(config, "pose_enabled", False)),
+        "calibration": dict(getattr(config, "calibration", None) or {}),
     }
 
 
@@ -55,6 +57,8 @@ def row_to_config(row) -> "CameraConfig":
         monitoring_zones=list(getattr(row, "monitoring_zones", None) or []),
         fps_limit=float(row.fps_limit or 6.0),
         priority=getattr(row, "priority", None) or "normal",
+        pose_enabled=bool(getattr(row, "pose_enabled", False)),
+        calibration=dict(getattr(row, "calibration", None) or {}),
     )
 
 
@@ -99,6 +103,32 @@ def save_camera_sync(camera_id: str, config, detection_rule: dict | None = None,
             save_camera(camera_id, config, detection_rule, mode), loop)
     except Exception as exc:  # noqa: BLE001
         log.warning("could not schedule save for camera %s: %s", camera_id, exc)
+
+
+async def delete_camera(camera_id: str) -> bool:
+    """Hard-delete a camera from durable storage. Never raises."""
+    try:
+        from app.core.db import SessionLocal
+        from app.services.persistence import get_persistence_service
+
+        async with SessionLocal() as session:
+            return await get_persistence_service().delete_camera(session, camera_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not delete stored camera %s: %s", camera_id, exc)
+        return False
+
+
+async def disable_camera(camera_id: str) -> bool:
+    """Soft-remove: leave the row, mark disabled. Never raises."""
+    try:
+        from app.core.db import SessionLocal
+        from app.services.persistence import get_persistence_service
+
+        async with SessionLocal() as session:
+            return await get_persistence_service().disable_camera(session, camera_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("could not disable stored camera %s: %s", camera_id, exc)
+        return False
 
 
 async def restore_fleet(manager) -> dict:

@@ -11,16 +11,29 @@
  * "leave unchanged".
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
+function formatDetail(detail) {
+  if (detail == null) return "";
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d) => {
+      if (typeof d === "string") return d;
+      const loc = Array.isArray(d?.loc) ? d.loc.filter((x) => x !== "body").join(".") : "";
+      const msg = d?.msg || JSON.stringify(d);
+      return loc ? `${loc}: ${msg}` : msg;
+    }).join(" · ");
+  }
+  if (typeof detail === "object") return detail.msg || detail.message || JSON.stringify(detail);
+  return String(detail);
+}
 
 async function api(path, options = {}) {
-  const r = await fetch(`${API_BASE}${path}`, { cache: "no-store", ...options });
+  const r = await fetch(buildPpeUrl(path), { cache: "no-store", ...options });
   const t = await r.text();
   let body;
   try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
-  if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(formatDetail(body.detail) || `HTTP ${r.status}`);
   return body;
 }
 
@@ -78,6 +91,7 @@ function Section({ title, hint, children }) {
 
 export default function PPEAlertSettings() {
   const [cfg, setCfg] = useState(null);
+  const [cfgError, setCfgError] = useState(null);
   const [token, setToken] = useState("");
   const [chatIds, setChatIds] = useState("");
   const [enabled, setEnabled] = useState(false);
@@ -106,8 +120,10 @@ export default function PPEAlertSettings() {
   // Detection tuning — the settings that decide whether a violation is even
   // assessable. min_person_px is the one that most affects false negatives.
   const [cameras, setCameras] = useState([]);
+  const [camsError, setCamsError] = useState(null);
   const [camId, setCamId] = useState("");
   const [rule, setRule] = useState(null);
+  const [ruleError, setRuleError] = useState(null);
   const [ruleBusy, setRuleBusy] = useState("");
   const [discovered, setDiscovered] = useState([]);
   const [busy, setBusy] = useState("");
@@ -122,6 +138,7 @@ export default function PPEAlertSettings() {
     try {
       const c = await api("/api/alerts/config");
       setCfg(c);
+      setCfgError(null);
       setEnabled(!!c.telegram_enabled);
       setSendPhoto(c.telegram_send_photo !== false);
       setChatIds(typeof c.telegram_chat_ids === "string" ? c.telegram_chat_ids : "");
@@ -143,27 +160,58 @@ export default function PPEAlertSettings() {
       setQuietFrom(Number(c.quiet_from) ?? -1);
       setQuietTo(Number(c.quiet_to) ?? -1);
     } catch (e) {
-      flash("danger", `Could not load settings: ${e.message}`);
+      setCfgError(e.message || String(e));
+      // Keep partial UI usable (camera rules) even if alert config fails
+      setCfg((prev) => prev || {
+        telegram_enabled: false,
+        telegram_ready: false,
+        telegram_bot_token_set: false,
+        telegram_bot_token: "",
+        whatsapp_ready: false,
+        whatsapp_token_set: false,
+      });
+      flash("danger", `Could not load alert settings: ${e.message}`);
+    }
+  }, []);
+
+  const loadCameras = useCallback(async () => {
+    try {
+      const d = await api("/api/cameras");
+      const list = Array.isArray(d) ? d : (d.cameras || []);
+      setCameras(list);
+      setCamsError(null);
+      setCamId((prev) => {
+        if (prev && list.some((c) => (c.camera_id || c.id) === prev)) return prev;
+        return list.length ? (list[0].camera_id || list[0].id) : "";
+      });
+    } catch (e) {
+      setCameras([]);
+      setCamsError(e.message || String(e));
     }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
-    api("/api/cameras")
-      .then((d) => {
-        const list = Array.isArray(d) ? d : (d.cameras || []);
-        setCameras(list);
-        if (list.length && !camId) setCamId(list[0].camera_id || list[0].id);
-      })
-      .catch(() => setCameras([]));
-  }, []);
+    loadCameras();
+    const t = setInterval(loadCameras, 8000);
+    return () => clearInterval(t);
+  }, [loadCameras]);
 
   useEffect(() => {
-    if (!camId) { setRule(null); return; }
+    if (!camId) { setRule(null); setRuleError(null); return; }
+    let cancelled = false;
+    setRule(null);
+    setRuleError(null);
     api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`)
-      .then(setRule)
-      .catch(() => setRule(null));
+      .then((r) => { if (!cancelled) { setRule(r); setRuleError(null); } })
+      .catch((e) => {
+        if (!cancelled) {
+          setRule(null);
+          setRuleError(e.message || String(e));
+        }
+      });
+    return () => { cancelled = true; };
   }, [camId]);
 
   const save = async () => {
@@ -272,9 +320,12 @@ export default function PPEAlertSettings() {
   }
 
   const ready = cfg.telegram_ready;
+  const camActive = cameras.filter((c) => c.state === "running").length;
+  const camError = cameras.filter((c) => c.state === "error").length;
+  const camTotal = cameras.length;
 
   return (
-    <div style={{ maxWidth: 760 }}>
+    <div style={{ maxWidth: 860 }}>
       {msg && (
         <div style={{
           marginBottom: 14, padding: "10px 14px", borderRadius: 9, fontSize: 12.5, fontWeight: 700,
@@ -283,6 +334,43 @@ export default function PPEAlertSettings() {
           border: `1px solid ${msg.tone === "ok" ? "#b8e6d0" : msg.tone === "warn" ? "#f0d4a8" : "#f5c2c8"}`,
         }}>{msg.text}</div>
       )}
+
+      {cfgError ? (
+        <div style={{
+          marginBottom: 14, padding: "10px 14px", borderRadius: 9, fontSize: 12.5,
+          background: "#fdecee", color: "#c02b3c", border: "1px solid #f5c2c8",
+        }}>
+          Alert config error: {cfgError}. Camera detection rules below may still work.{" "}
+          <button type="button" onClick={load} style={{
+            border: "1px solid #f5c2c8", background: "#fff", color: "#c02b3c",
+            borderRadius: 7, padding: "4px 10px", fontWeight: 700, cursor: "pointer", marginLeft: 6,
+          }}>Retry</button>
+        </div>
+      ) : null}
+
+      {/* Fleet strip — always visible so active count is clear before deep settings */}
+      <div style={{
+        display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center",
+        marginBottom: 16, padding: "12px 14px", borderRadius: 12,
+        background: C.panel, border: `1px solid ${C.line}`, boxShadow: C.shadow,
+      }}>
+        <div>
+          <div style={{ fontSize: 11, fontWeight: 800, color: C.sub, textTransform: "uppercase", letterSpacing: 0.5 }}>
+            Active cameras
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, color: camActive ? C.ok : C.ink, ...mono }}>
+            {camActive}<span style={{ fontSize: 14, color: C.sub, fontWeight: 600 }}>/{camTotal}</span>
+          </div>
+        </div>
+        <div style={{ width: 1, height: 36, background: C.line }} />
+        <div style={{ fontSize: 12.5, color: C.sub, lineHeight: 1.45 }}>
+          {camTotal === 0
+            ? "No cameras yet — add one in Live, then edit detection rules here."
+            : `${camActive} running${camError ? ` · ${camError} error` : ""} · pick a camera below to edit settings`}
+        </div>
+        <span style={{ flex: 1 }} />
+        <Btn onClick={loadCameras}>Refresh fleet</Btn>
+      </div>
 
       <Section
         title="Telegram alerts"
@@ -653,35 +741,106 @@ export default function PPEAlertSettings() {
       </Section>
 
       <Section
-        title="Detection tuning"
-        hint="Per camera. These decide whether a person can be judged at all — a 20-pixel figure at the back of a yard cannot be, and guessing would be worse than declining."
+        title="Detection tuning · edit camera settings"
+        hint="Active camera count is above. Select a camera to edit rules that decide whether a person can be judged at all."
       >
-        {cameras.length === 0 ? (
+        {camsError ? (
+          <div style={{
+            marginBottom: 12, padding: "10px 12px", borderRadius: 9, fontSize: 12.5,
+            background: "#fdecee", color: "#c02b3c", border: "1px solid #f5c2c8",
+          }}>
+            Could not load cameras: {camsError}{" "}
+            <button type="button" onClick={loadCameras} style={{
+              border: "1px solid #f5c2c8", background: "#fff", color: "#c02b3c",
+              borderRadius: 7, padding: "3px 8px", fontWeight: 700, cursor: "pointer",
+            }}>Retry</button>
+          </div>
+        ) : null}
+
+        {cameras.length === 0 && !camsError ? (
           <div style={{ fontSize: 12.5, color: C.sub }}>
             No cameras configured yet. Add one in the Live tab first.
           </div>
-        ) : (
+        ) : null}
+
+        {cameras.length > 0 ? (
           <>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.sub }}>Camera</span>
-              <select value={camId} onChange={(e) => setCamId(e.target.value)}
-                style={{ ...inputStyle, ...mono, width: "auto", minWidth: 190 }}>
-                {cameras.map((c) => {
-                  const id = c.camera_id || c.id;
-                  return <option key={id} value={id}>{id}{c.location ? ` — ${c.location}` : ""}</option>;
-                })}
-              </select>
-              {rule?.priority && (
-                <span style={{ fontSize: 11, color: C.sub }}>
-                  priority <strong>{rule.priority}</strong> — decides its share of
-                  detector capacity when the fleet is oversubscribed
-                </span>
-              )}
+            {/* Per-camera cards with active status + Edit */}
+            <div style={{ display: "grid", gap: 8, marginBottom: 16 }}>
+              {cameras.map((c) => {
+                const id = c.camera_id || c.id;
+                const running = c.state === "running";
+                const isErr = c.state === "error";
+                const selected = camId === id;
+                const ppe = (c.required_ppe || []).join(", ") || "—";
+                return (
+                  <div
+                    key={id}
+                    style={{
+                      display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10,
+                      padding: "10px 12px", borderRadius: 10,
+                      border: `1.5px solid ${selected ? C.brand : isErr ? "#f5c2c8" : C.line}`,
+                      background: selected ? "#eff6ff" : C.panel2,
+                    }}
+                  >
+                    <span style={{
+                      width: 9, height: 9, borderRadius: 5, flexShrink: 0,
+                      background: running ? C.ok : isErr ? C.danger : C.sub,
+                      boxShadow: running ? `0 0 0 3px ${C.ok}22` : "none",
+                    }} />
+                    <div style={{ minWidth: 0, flex: "1 1 160px" }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, ...mono }}>{id}</div>
+                      <div style={{ fontSize: 11.5, color: C.sub, marginTop: 2 }}>
+                        {c.state} · {c.source || "—"} · PPE: {ppe}
+                        {c.stats?.last_error ? ` · ${c.stats.last_error}` : ""}
+                      </div>
+                    </div>
+                    <span style={{
+                      fontSize: 10.5, fontWeight: 800, padding: "3px 8px", borderRadius: 999,
+                      background: running ? "#e6f6ef" : isErr ? "#fdecee" : C.panel,
+                      color: running ? C.ok : isErr ? C.danger : C.sub,
+                      textTransform: "uppercase",
+                    }}>
+                      {running ? "Active" : c.state || "—"}
+                    </span>
+                    <Btn
+                      tone={selected ? "primary" : "mute"}
+                      onClick={() => setCamId(id)}
+                      style={{ flexShrink: 0 }}
+                    >
+                      {selected ? "Editing…" : "Edit settings"}
+                    </Btn>
+                  </div>
+                );
+              })}
             </div>
 
-            {!rule ? (
+            <div style={{
+              fontSize: 12, fontWeight: 800, color: C.sub, textTransform: "uppercase",
+              letterSpacing: 0.5, marginBottom: 10,
+            }}>
+              Rules for <span style={{ ...mono, color: C.ink, textTransform: "none" }}>{camId || "—"}</span>
+              {rule?.priority ? (
+                <span style={{ fontWeight: 600, marginLeft: 8, textTransform: "none" }}>
+                  · priority {rule.priority}
+                </span>
+              ) : null}
+            </div>
+
+            {ruleError ? (
+              <div style={{
+                padding: "10px 12px", borderRadius: 9, fontSize: 12.5, marginBottom: 10,
+                background: "#fdecee", color: "#c02b3c", border: "1px solid #f5c2c8",
+              }}>
+                Failed to load rules: {ruleError}
+              </div>
+            ) : null}
+
+            {!rule && !ruleError ? (
               <div style={{ fontSize: 12.5, color: C.sub }}>Loading camera rules…</div>
-            ) : (
+            ) : null}
+
+            {rule ? (
               <>
                 <div style={{ marginBottom: 14 }}>
                   <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 5 }}>
@@ -689,7 +848,7 @@ export default function PPEAlertSettings() {
                   </div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {["critical", "high", "normal", "low"].map((p) => (
-                      <button key={p} onClick={() => setRule((r) => ({ ...r, priority: p }))}
+                      <button key={p} type="button" onClick={() => setRule((r) => ({ ...r, priority: p }))}
                         style={{
                           padding: "5px 12px", borderRadius: 999, fontSize: 11.5, fontWeight: 700,
                           cursor: "pointer",
@@ -707,17 +866,19 @@ export default function PPEAlertSettings() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(215px,1fr))", gap: 12 }}>
                   {[
                     ["min_person_px", "Min person height (px)",
-                     "Below this, PPE is not judged. 64 suits 1080p; a gantry camera down a long yard needs it lower. This setting most affects missed violations."],
+                     "Below this, PPE is not judged. 64 suits 1080p; a gantry camera down a long yard needs it lower."],
                     ["always_assess_frac", "Always assess above (frame %)",
-                     "A person filling this much of the frame is judged even on a low-resolution or analogue feed, where an absolute pixel floor would gate out everyone."],
+                     "A person filling this much of the frame is judged even on a low-resolution feed."],
                     ["min_frames", "Frames before firing",
-                     "Evidence needed within the window. One frame of 'no helmet' is noise, not a violation."],
+                     "Evidence needed within the window. One frame of 'no helmet' is noise."],
                     ["window_frames", "Evidence window (frames)",
                      "How far back supporting frames are counted."],
                     ["occlusion_grace_frames", "Occlusion grace (frames)",
-                     "How long a person keeps their identity while hidden. Too low and a crowded site resets evidence constantly."],
+                     "How long a person keeps identity while hidden."],
                     ["min_evidence_conf", "Min detection confidence",
                      "Below this a 'no helmet' box is too weak to count as evidence."],
+                    ["cooldown_s", "Per-person cooldown (s)",
+                     "Minimum seconds between alerts for the same person on this camera."],
                   ].map(([key, label, hint]) => (
                     <label key={key} style={{ display: "block" }}>
                       <div style={{ fontSize: 12, fontWeight: 700, color: C.sub, marginBottom: 4 }}>{label}</div>
@@ -738,28 +899,49 @@ export default function PPEAlertSettings() {
                   </span>
                 </label>
                 <div style={{ fontSize: 10.5, color: C.sub, marginTop: 4, marginLeft: 24 }}>
-                  Stops a helmet lying on the ground at a worker's feet from counting as worn.
-                  Turn off only if your model's boxes are unreliable.
+                  Stops a helmet on the ground at a worker&apos;s feet from counting as worn.
                 </div>
 
-                <div style={{ display: "flex", gap: 10, marginTop: 16 }}>
+                <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
                   <Btn tone="primary" disabled={ruleBusy === "save"} onClick={async () => {
                     setRuleBusy("save");
                     try {
-                      await api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`, {
+                      // Only send known fields — avoid PUT body validation noise
+                      const body = {
+                        min_person_px: rule.min_person_px,
+                        min_person_frac: rule.min_person_frac,
+                        always_assess_frac: rule.always_assess_frac,
+                        min_frames: rule.min_frames,
+                        window_frames: rule.window_frames,
+                        occlusion_grace_frames: rule.occlusion_grace_frames,
+                        min_evidence_conf: rule.min_evidence_conf,
+                        require_band: rule.require_band,
+                        cooldown_s: rule.cooldown_s,
+                        priority: rule.priority,
+                      };
+                      const saved = await api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`, {
                         method: "PUT",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify(rule),
+                        body: JSON.stringify(body),
                       });
+                      setRule(saved);
                       flash("ok", `Detection rules saved for ${camId}. Applied live.`);
+                      loadCameras();
                     } catch (e) { flash("danger", e.message); }
                     finally { setRuleBusy(""); }
-                  }}>{ruleBusy === "save" ? "Saving…" : "Save camera rules"}</Btn>
+                  }}>{ruleBusy === "save" ? "Saving…" : `Save settings · ${camId}`}</Btn>
+                  <Btn onClick={() => {
+                    setRule(null);
+                    setRuleError(null);
+                    api(`/api/cameras/${encodeURIComponent(camId)}/detection-rule`)
+                      .then(setRule)
+                      .catch((e) => setRuleError(e.message));
+                  }}>Reload</Btn>
                 </div>
               </>
-            )}
+            ) : null}
           </>
-        )}
+        ) : null}
       </Section>
     </div>
   );

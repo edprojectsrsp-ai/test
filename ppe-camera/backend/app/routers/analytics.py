@@ -85,21 +85,72 @@ async def timeseries(days: int = 30, session: AsyncSession = Depends(get_session
 
 @router.get("/repeat-offenders")
 async def repeat_offenders(limit: int = 20, session: AsyncSession = Depends(get_session)) -> dict:
-    """Rank by track_id where an employee isn't matched, else by employee_id."""
+    """Who offends repeatedly — grouped by person, not by tracker fragment.
+
+    This used to group by (employee_id, track_id, camera_id). Since employee_id
+    is never populated and a ByteTrack id resets every time somebody walks
+    behind a column or crosses to another camera, it was counting track
+    fragments: one worker with six violations in a shift appeared as six
+    separate one-time offenders, and the table's whole purpose — spotting the
+    person who keeps doing it — was defeated.
+
+    Anonymous re-ID gives a stable per-person key that survives occlusion and
+    crosses cameras (see app/ml/reid.py), stored on the violation as
+    `person_key`. Rows still carrying only a track id are reported separately
+    rather than blended in, so the number is never quietly half-wrong.
+    """
     rows = await session.execute(
-        select(ViolationEvent.employee_id, ViolationEvent.track_id,
-               ViolationEvent.camera_id, func.count().label("n"))
-        .group_by(ViolationEvent.employee_id, ViolationEvent.track_id, ViolationEvent.camera_id)
-        .order_by(func.count().desc())
-        .limit(limit)
+        select(ViolationEvent.employee_id, ViolationEvent.person_key,
+               ViolationEvent.track_id, ViolationEvent.camera_id,
+               ViolationEvent.gear, ViolationEvent.occurred_at)
     )
-    out = []
-    for emp, track, cam, n in rows.all():
-        out.append({
-            "identity": emp or (f"track:{track}" if track is not None else "unknown"),
-            "employee_id": emp, "track_id": track, "camera_id": cam, "count": n,
-        })
-    return {"offenders": out}
+    from collections import defaultdict
+
+    groups: dict = defaultdict(lambda: {"count": 0, "cameras": set(),
+                                        "gears": defaultdict(int),
+                                        "first": None, "last": None,
+                                        "basis": "track"})
+    unresolved = 0
+    for emp, pkey, track, cam, gear, at in rows.all():
+        if emp:
+            key, basis = f"emp:{emp}", "employee"
+        elif pkey:
+            key, basis = f"person:{pkey}", "appearance"
+        elif track is not None:
+            key, basis = f"track:{cam}:{track}", "track"
+            unresolved += 1
+        else:
+            key, basis = "unknown", "none"
+            unresolved += 1
+        g = groups[key]
+        g["count"] += 1
+        g["basis"] = basis
+        g["cameras"].add(cam)
+        g["gears"][gear or "?"] += 1
+        if at and (g["first"] is None or at < g["first"]):
+            g["first"] = at
+        if at and (g["last"] is None or at > g["last"]):
+            g["last"] = at
+
+    out = [{
+        "identity": k,
+        "count": v["count"],
+        "basis": v["basis"],
+        "cameras": sorted(v["cameras"]),
+        "cross_camera": len(v["cameras"]) > 1,
+        "by_gear": dict(v["gears"]),
+        "first_seen": v["first"].isoformat() if v["first"] else None,
+        "last_seen": v["last"].isoformat() if v["last"] else None,
+    } for k, v in groups.items()]
+    out.sort(key=lambda r: -r["count"])
+    return {
+        "offenders": out[:limit],
+        "grouped_by_appearance": sum(1 for r in out if r["basis"] == "appearance"),
+        "unresolved_events": unresolved,
+        "note": ("Rows with basis 'track' could not be resolved to a person — "
+                 "they are tracker fragments and undercount. Enable re-ID "
+                 "(PPE_REID=1) so violations carry a stable person key."),
+    }
 
 
 async def _group_count(session: AsyncSession, column) -> dict:

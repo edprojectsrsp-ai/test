@@ -222,7 +222,217 @@
         "Safety Cone",
         "Safety Vest"
       ]
+    },
+    {
+      "version": 12,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\nduka1999.onnx",
+      "note": "PPE YOLO11s (nduka1999)",
+      "metrics": {},
+      "ts": 1785153032.9005277,
+      "zoo_key": "nduka1999",
+      "classes": [
+        "hardhat",
+        "no-hardhat",
+        "vest",
+        "no-vest",
+        "person"
+      ]
+    },
+    {
+      "version": 13,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\voxdroid-enterprise.pt",
+      "note": "Enterprise PPE Model (VoxDroid)",
+      "metrics": {},
+      "ts": 1785210897.1264644,
+      "zoo_key": "voxdroid-enterprise",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 14,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\hexmon-vyra.pt",
+      "note": "Vyra YOLOv8m (Hexmon)",
+      "metrics": {},
+      "ts": 1785210992.2651997,
+      "zoo_key": "hexmon-vyra",
+      "classes": [
+        "Fall-Detected",
+        "Gloves",
+        "Goggles",
+        "Hardhat",
+        "Ladder",
+        "Mask",
+        "NO-Gloves",
+        "NO-Goggles",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest"
+      ]
+    },
+    {
+      "version": 15,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\nduka1999.onnx",
+      "note": "PPE YOLO11s (nduka1999)",
+      "metrics": {},
+      "ts": 1785211082.9492877,
+      "zoo_key": "nduka1999",
+      "classes": [
+        "hardhat",
+        "no-hardhat",
+        "vest",
+        "no-vest",
+        "person"
+      ]
+    },
+    {
+      "version": 16,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\snehil-demo.pt",
+      "note": "Demo PPE Model (Snehil)",
+      "metrics": {},
+      "ts": 1785211144.012275,
+      "zoo_key": "snehil-demo",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 17,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\voxdroid-enterprise.pt",
+      "note": "Enterprise PPE Model (VoxDroid)",
+      "metrics": {},
+      "ts": 1785211328.1897895,
+      "zoo_key": "voxdroid-enterprise",
+      "classes": [
+        "Hardhat",
+        "Mask",
+        "NO-Hardhat",
+        "NO-Mask",
+        "NO-Safety Vest",
+        "Person",
+        "Safety Cone",
+        "Safety Vest",
+        "machinery",
+        "vehicle"
+      ]
+    },
+    {
+      "version": 18,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\sh17-yolo9m.pt",
+      "note": "SH17 Industrial PPE \u2014 YOLOv9-m",
+      "metrics": {},
+      "ts": 1785213184.0751035,
+      "zoo_key": "sh17-yolo9m",
+      "classes": [
+        "person",
+        "ear",
+        "ear-mufs",
+        "face",
+        "face-guard",
+        "face-mask",
+        "foot",
+        "tool",
+        "glasses",
+        "gloves",
+        "helmet",
+        "hands",
+        "head",
+        "medical-suit",
+        "shoes",
+        "safety-suit",
+        "safety-vest"
+      ]
+    },
+    {
+      "version": 19,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\sh17-yolo9e.pt",
+      "note": "SH17 Industrial PPE \u2014 YOLOv9-e (most accurate)",
+      "metrics": {},
+      "ts": 1785233668.2481866,
+      "zoo_key": "sh17-yolo9e",
+      "classes": [
+        "person",
+        "ear",
+        "ear-mufs",
+        "face",
+        "face-guard",
+        "face-mask",
+        "foot",
+        "tool",
+        "glasses",
+        "gloves",
+        "helmet",
+        "hands",
+        "head",
+        "medical-suit",
+        "shoes",
+        "safety-suit",
+        "safety-vest"
+      ]
+    },
+    {
+      "version": 20,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\nduka1999.onnx",
+      "note": "PPE YOLO11s (nduka1999)",
+      "metrics": {},
+      "ts": 1785488262.1299744,
+      "zoo_key": "nduka1999",
+      "classes": [
+        "hardhat",
+        "no-hardhat",
+        "vest",
+        "no-vest",
+        "person"
+      ]
+    },
+    {
+      "version": 21,
+      "weights": "C:\\Users\\USER-1\\Downloads\\pkntest\\ppe-camera\\data\\weights\\zoo\\sh17-yolo9m.pt",
+      "note": "\u2605 SH17 Industrial \u2014 YOLOv9-m (recommended)",
+      "metrics": {},
+      "ts": 1785507245.956109,
+      "zoo_key": "sh17-yolo9m",
+      "classes": [
+        "person",
+        "ear",
+        "ear-mufs",
+        "face",
+        "face-guard",
+        "face-mask",
+        "foot",
+        "tool",
+        "glasses",
+        "gloves",
+        "helmet",
+        "hands",
+        "head",
+        "medical-suit",
+        "shoes",
+        "safety-suit",
+        "safety-vest"
+      ]
     }
   ],
-  "active": 11
+  "active": 21
 }

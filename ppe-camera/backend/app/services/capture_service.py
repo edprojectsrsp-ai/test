@@ -113,6 +113,15 @@ class CaptureService:
         session.add(item)
         await session.commit()
         await session.refresh(item)
+        # Animated evidence spanning the event. Deferred and best effort: half
+        # the footage it needs has not happened yet, and a failure to decorate
+        # a violation must never lose the violation.
+        try:
+            from app.services.evidence import schedule_for_capture
+
+            schedule_for_capture(camera_id, item.id, centre_ts=now)
+        except Exception:
+            pass
         return item
 
     async def capture_uncertain(

@@ -26,14 +26,23 @@ from app.services.camera_manager import CameraConfig
 router = APIRouter(prefix="/api/cameras", tags=["cameras"])
 
 
+_SOURCE_KIND_RE = (
+    r"^(rtsp|webcam|screen|video|onvif|fake|mjpeg|snapshot|hls|folder|browser)$"
+)
+
+
 class CameraIn(BaseModel):
     camera_id: str = Field(..., pattern=r"^[A-Za-z0-9._-]+$")
-    source_kind: str = Field(..., pattern=r"^(rtsp|webcam|screen|video|onvif|fake)$")
+    source_kind: str = Field(
+        ...,
+        pattern=_SOURCE_KIND_RE,
+    )
     source_kwargs: dict = Field(default_factory=dict)
     required_ppe: list[str] = Field(default_factory=lambda: ["helmet", "vest"])
     fps_limit: float = 6.0
     restricted_zones: list = Field(default_factory=list)
     hazards_enabled: bool = True
+    pose_enabled: bool = False
 
 
 def _manager():
@@ -55,6 +64,10 @@ class DetectionRuleIn(BaseModel):
     min_evidence_conf: float | None = None
     require_band: bool | None = None
     cooldown_s: float | None = None
+    # When True (default), assessable person + no positive gear = missing PPE.
+    # Matches live "Cap / Safety Jacket Not found" overlay for models without
+    # explicit no_* classes (e.g. SH17).
+    infer_missing_from_absence: bool | None = None
     priority: str | None = None
 
 
@@ -186,7 +199,10 @@ async def camera_brands() -> dict:
     from app.services.camera_connect import brand_catalog
     return {
         "brands": brand_catalog(),
-        "source_kinds": ["rtsp", "onvif", "webcam", "screen", "video", "fake"],
+        "source_kinds": [
+            "rtsp", "onvif", "webcam", "browser", "screen", "video", "fake",
+            "mjpeg", "snapshot", "hls", "folder",
+        ],
         "streams": [
             {"id": "main", "label": "Main (high-res)"},
             {"id": "sub", "label": "Sub (low-res, lighter on CPU)"},
@@ -221,7 +237,10 @@ async def rtsp_url(payload: RtspUrlIn) -> dict:
 
 
 class ProbeIn(BaseModel):
-    source_kind: str = Field(..., pattern=r"^(rtsp|webcam|screen|video|onvif|fake)$")
+    source_kind: str = Field(
+        ...,
+        pattern=_SOURCE_KIND_RE,
+    )
     source_kwargs: dict = Field(default_factory=dict)
     timeout: float = 8.0
 
@@ -233,6 +252,16 @@ async def test_source(payload: ProbeIn) -> dict:
 
     from app.services.camera_connect import probe_source
     timeout = max(1.0, min(20.0, float(payload.timeout or 8.0)))
+    # Browser push has no remote open — ready once the camera exists.
+    if payload.source_kind in ("browser", "browser-crop", "push"):
+        return {
+            "ok": True,
+            "source_kind": "browser",
+            "width": 0,
+            "height": 0,
+            "latency_ms": 0,
+            "note": "Browser crop: share a tab/window after add, then draw the crop region.",
+        }
     # run the blocking probe off the event loop so the API stays responsive
     return await anyio.to_thread.run_sync(
         lambda: probe_source(payload.source_kind, payload.source_kwargs, timeout=timeout)
@@ -251,20 +280,50 @@ async def discover(timeout: float = 4.0) -> dict:
 
 @router.post("")
 async def add_camera(payload: CameraIn) -> dict:
+    kwargs = dict(payload.source_kwargs or {})
+    if payload.source_kind in ("browser", "browser-crop", "push"):
+        kwargs.setdefault("camera_id", payload.camera_id)
     cfg = CameraConfig(
         camera_id=payload.camera_id,
         source_kind=payload.source_kind,
-        source_kwargs=payload.source_kwargs,
+        source_kwargs=kwargs,
         required_ppe=set(payload.required_ppe),
         fps_limit=payload.fps_limit,
         restricted_zones=payload.restricted_zones,
         hazards_enabled=payload.hazards_enabled,
+        pose_enabled=payload.pose_enabled,
     )
     try:
         _manager().add(cfg)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     return _manager().status(payload.camera_id)
+
+
+@router.post("/{camera_id}/push-frame")
+async def push_browser_frame(
+    camera_id: str,
+    file: UploadFile = File(...),
+) -> dict:
+    """Receive one JPEG from the browser crop client (multipart field `file`)."""
+    from app.services.browser_push import get_hub
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "empty frame body")
+    if len(data) > 8_000_000:
+        raise HTTPException(413, "frame too large (max 8 MB)")
+    try:
+        return get_hub().push_jpeg(camera_id, data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.get("/{camera_id}/push-status")
+async def browser_push_status(camera_id: str) -> dict:
+    from app.services.browser_push import get_hub
+
+    return get_hub().status(camera_id)
 
 
 # playback speed -> real-time multiplier (see VideoFileSource pacing)
@@ -278,6 +337,7 @@ async def upload_video(
     loop: bool = Form(True),
     required_ppe: str = Form("helmet,vest"),
     speed: str = Form("normal"),   # slow | normal | fast
+    fps_limit: float = Form(6.0),
     autostart: bool = Form(True),
 ) -> dict:
     """Upload a video clip and run the FULL pipeline over it as a demo camera.
@@ -303,6 +363,7 @@ async def upload_video(
         source_kind="video",
         source_kwargs={"path": str(dest), "loop": bool(loop), "speed": mult},
         required_ppe=set(ppe),
+        fps_limit=max(1.0, float(fps_limit or 6.0)),
     )
     try:
         _manager().add(cfg)
@@ -339,6 +400,13 @@ async def remove_camera(camera_id: str) -> dict:
         _manager().remove(camera_id)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    # Soft-disable in storage so restore_fleet does not bring it back, while
+    # keeping zones / detection rules if the camera is re-added later.
+    try:
+        from app.services.camera_store import disable_camera
+        await disable_camera(camera_id)
+    except Exception:
+        pass
     return {"removed": camera_id}
 
 
@@ -353,6 +421,172 @@ async def get_camera(camera_id: str) -> dict:
         return _manager().status(camera_id)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.get("/meta/identities")
+async def identities() -> dict:
+    """Who the system is currently tracking, anonymously.
+
+    These are colour signatures, not people. They cannot identify anyone and
+    they expire — the question they answer is "is this the same worker as a
+    moment ago", which is what makes repeat-offender counts real instead of
+    counts of tracker fragments.
+    """
+    from app.core.config import get_settings
+    from app.ml.reid import get_gallery
+
+    s = get_settings()
+    out = get_gallery().snapshot()
+    out["enabled"] = bool(s.REID_ENABLED)
+    return out
+
+
+@router.post("/meta/identities/clear")
+async def clear_identities() -> dict:
+    """Forget every appearance signature. Use at shift change."""
+    from app.ml.reid import get_gallery
+
+    get_gallery().clear()
+    return {"cleared": True}
+
+
+class CalibrateRectIn(BaseModel):
+    """Four ground corners of something whose real size is known."""
+    image_quad: list = Field(..., min_length=4, max_length=4)
+    width_m: float = Field(..., gt=0, le=500)
+    length_m: float = Field(..., gt=0, le=500)
+    note: str = ""
+
+
+class CalibratePointsIn(BaseModel):
+    image_points: list = Field(..., min_length=4)
+    world_points: list = Field(..., min_length=4)
+    note: str = ""
+
+
+@router.get("/{camera_id}/calibration")
+async def get_calibration(camera_id: str) -> dict:
+    """This camera's ground plane, if it has one."""
+    try:
+        out = _manager().get_calibration(camera_id)
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+    out["how"] = ("Click the four ground corners of something whose size you "
+                  "know — a concrete bay, a painted lane, a pallet — clockwise "
+                  "from top-left, and give its width and length in metres.")
+    return out
+
+
+@router.put("/{camera_id}/calibration")
+async def put_calibration(camera_id: str, body: CalibrateRectIn) -> dict:
+    """Calibrate from a known rectangle on the ground. Applied live.
+
+    Turns pixel geometry into metres for this camera: near-miss becomes a real
+    distance rather than a box overlap, and distances can be stated in units an
+    operator can check with a tape measure.
+    """
+    from app.ml.calibration import from_rectangle
+
+    plane, problems = from_rectangle(body.image_quad, body.width_m,
+                                     body.length_m, note=body.note)
+    if plane is None:
+        raise HTTPException(422, {"errors": problems})
+    try:
+        _manager().set_calibration(camera_id, plane.as_dict())
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+    out = plane.as_dict()
+    out["warnings"] = problems
+    return out
+
+
+@router.put("/{camera_id}/calibration/points")
+async def put_calibration_points(camera_id: str, body: CalibratePointsIn) -> dict:
+    """Calibrate from explicit image/world correspondences (survey data)."""
+    from app.ml.calibration import from_points
+
+    plane, problems = from_points(body.image_points, body.world_points,
+                                  note=body.note)
+    if plane is None:
+        raise HTTPException(422, {"errors": problems})
+    try:
+        _manager().set_calibration(camera_id, plane.as_dict())
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+    out = plane.as_dict()
+    out["warnings"] = problems
+    return out
+
+
+@router.delete("/{camera_id}/calibration")
+async def clear_calibration(camera_id: str) -> dict:
+    try:
+        _manager().set_calibration(camera_id, {})
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+    return {"camera_id": camera_id, "calibrated": False}
+
+
+class MeasureIn(BaseModel):
+    a: list = Field(..., min_length=2, max_length=2)
+    b: list = Field(..., min_length=2, max_length=2)
+
+
+@router.post("/{camera_id}/calibration/measure")
+async def measure(camera_id: str, body: MeasureIn) -> dict:
+    """Measure the ground distance between two image points, in metres.
+
+    The sanity check that makes calibration trustworthy: point at two things
+    whose separation you know and confirm the system agrees. A homography built
+    from slightly wrong clicks produces plausible-looking numbers, so there has
+    to be a way to catch that before anyone alerts on it.
+    """
+    from app.ml.calibration import load
+
+    try:
+        data = _manager().get_calibration(camera_id)
+    except KeyError:
+        raise HTTPException(404, f"camera '{camera_id}' not found")
+    plane = load(data)
+    if plane is None:
+        raise HTTPException(409, "this camera is not calibrated")
+    d = plane.distance_m(tuple(body.a), tuple(body.b))
+    if d is None:
+        raise HTTPException(422, "one of those points maps to the horizon — "
+                                 "it is above the ground plane")
+    return {"camera_id": camera_id, "metres": round(d, 2),
+            "quality": plane.quality, "error_m": round(plane.error_m, 3),
+            "reminder": ("Both points must be ON THE GROUND. A homography is "
+                         "only valid on the plane it was fitted to, so pointing "
+                         "at something at head height returns a wrong number.")}
+
+
+class PoseIn(BaseModel):
+    enabled: bool
+
+
+@router.post("/{camera_id}/pose")
+async def set_pose(camera_id: str, payload: PoseIn) -> dict:
+    """Turn keypoint estimation on/off for one camera. Applied live.
+
+    Pose fixes the failure the fixed bounding-box bands have with posture: a
+    worker bending over has their head more than halfway down their own box, so
+    the band logic does not credit their helmet and starts building a violation
+    against someone who is wearing one. It costs a second model call per frame
+    on this camera, which is why it is per camera and not a global switch.
+    """
+    try:
+        enabled = _manager().set_pose(camera_id, payload.enabled)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    out = _manager().status(camera_id)
+    out["pose_enabled"] = enabled
+    if enabled:
+        from app.ml.pose import get_pose
+        out["pose_weights"] = get_pose().weights
+        out["note"] = ("Keypoints active from the next frame. Expect roughly "
+                       "double the inference cost on this camera.")
+    return out
 
 
 class RequiredPpeIn(BaseModel):

@@ -30,6 +30,7 @@ from app.ml.zones import ZoneMap
 from app.ml.hazards import HazardConfig, HazardEngine
 from app.services.sources import FrameSource, build_source
 from app.services.inference_budget import get_budget
+from app.services.recorder import get_recorder
 from app.services.stream_supervisor import (Action as SupervisorAction,
                                             StreamSupervisor)
 
@@ -62,6 +63,14 @@ class CameraConfig:
     # "this person should not be here at all".
     monitoring_zones: list = field(default_factory=list)
     hazards_enabled: bool = True
+    # Keypoints for this camera. A SECOND model per frame, so opt-in: worth it
+    # where posture varies (people working, bending, at height) and wasteful on
+    # a gate camera where everyone walks past upright and the box bands are
+    # already right. See app/ml/pose.py.
+    pose_enabled: bool = False
+    # Ground-plane homography, as stored by app/ml/calibration.GroundPlane.
+    # Empty means uncalibrated and every distance stays in pixels.
+    calibration: dict = field(default_factory=dict)
 
 
 # A detect function: (frame) -> FrameResult. Injected so tests avoid YOLO.
@@ -81,6 +90,7 @@ class CameraStats:
     violations_fired: int = 0
     captures_made: int = 0
     alerts_sent: int = 0
+    poses_estimated: int = 0
     last_error: str = ""
 
 
@@ -117,18 +127,54 @@ class CameraWorker:
             zones=ZoneMap.from_config(config.monitoring_zones,
                                       config.required_ppe) or None,
         ))
-        self._hazards = HazardEngine(
-            HazardConfig(restricted_zones=list(config.restricted_zones))
-        ) if config.hazards_enabled else None
+        self._hazards = HazardEngine(HazardConfig(
+            restricted_zones=list(config.restricted_zones),
+            ground_plane=self._ground_plane(),
+        )) if config.hazards_enabled else None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self.state = CameraState.created
         self.stats = CameraStats()
+        self._last_heartbeat = 0.0
+        self._last_state = ""
+
+    def _ground_plane(self):
+        """This camera's ground plane, or None if it is not calibrated."""
+        try:
+            from app.ml.calibration import load
+
+            return load(getattr(self.config, "calibration", None))
+        except Exception:
+            return None
+
+    def set_calibration(self, data: dict | None) -> dict:
+        """Store a ground plane and apply it live to the hazard rules."""
+        self.config.calibration = dict(data or {})
+        plane = self._ground_plane()
+        if self._hazards is not None:
+            self._hazards.cfg.ground_plane = plane
+        self._persist()
+        return plane.as_dict() if plane else {"usable": False,
+                                              "quality": "uncalibrated"}
 
     @property
     def health(self) -> dict:
         """Stream health for the dashboard: reconnects, freezes, availability."""
         return self._supervisor.snapshot()
+
+    @property
+    def _record_overlay(self) -> bool:
+        """Record the annotated picture rather than the raw one.
+
+        Read live rather than cached at construction so flipping it in NVR
+        settings takes effect on the next segment instead of the next restart.
+        """
+        try:
+            from app.core.config import get_settings
+
+            return bool(get_settings().RECORD_OVERLAY)
+        except Exception:
+            return False
 
     # ---- lifecycle -------------------------------------------------------
     def start(self) -> None:
@@ -156,6 +202,17 @@ class CameraWorker:
             self._thread.join(timeout=timeout)
         self.state = CameraState.stopped
 
+    def set_pose(self, enabled: bool) -> bool:
+        """Turn keypoints on/off for this camera, live.
+
+        Takes effect on the next frame. Enabling costs a second model call per
+        frame on this camera only — the inference budget is unaware of it, so
+        enabling it fleet-wide on a busy box will show up as skipped frames.
+        """
+        self.config.pose_enabled = bool(enabled)
+        self._persist()
+        return self.config.pose_enabled
+
     def set_mode(self, mode: str) -> str:
         if mode not in ("off", "monitor", "collect", "strict"):
             raise ValueError(f"invalid mode {mode!r}")
@@ -171,10 +228,23 @@ class CameraWorker:
         if not cleaned:
             cleaned = {"helmet", "vest"}
         self.config.required_ppe = cleaned
-        # rebuild violation engine with new zone rule
+        # Keep existing tuning (incl. infer_missing_from_absence); only swap
+        # required set + zones so mid-shift PPE edits do not reset behaviour.
+        old = self._engine.rule
         from app.ml.violations import ZoneRule, ViolationEngine
         self._engine = ViolationEngine(ZoneRule(
             required=cleaned,
+            min_frames=old.min_frames,
+            window=old.window,
+            cooldown_s=old.cooldown_s,
+            min_person_px=old.min_person_px,
+            min_person_frac=old.min_person_frac,
+            always_assess_frac=old.always_assess_frac,
+            occlusion_grace_frames=old.occlusion_grace_frames,
+            min_evidence_conf=old.min_evidence_conf,
+            require_band=old.require_band,
+            edge_margin_px=old.edge_margin_px,
+            infer_missing_from_absence=old.infer_missing_from_absence,
             zones=ZoneMap.from_config(self.config.monitoring_zones, cleaned) or None,
         ))
         self._persist()
@@ -191,6 +261,7 @@ class CameraWorker:
         "min_evidence_conf": "min_evidence_conf",
         "require_band": "require_band",
         "cooldown_s": "cooldown_s",
+        "infer_missing_from_absence": "infer_missing_from_absence",
     }
 
     def get_detection_rule(self) -> dict:
@@ -201,6 +272,56 @@ class CameraWorker:
         out["camera_id"] = self.config.camera_id
         out["required_ppe"] = sorted(self.config.required_ppe)
         return out
+
+    # How often a running worker writes its liveness to the database. Well
+    # inside the 120 s staleness threshold the analytics endpoint uses, so a
+    # healthy camera is never reported stale just because the beat was slow.
+    _HEARTBEAT_S = 30.0
+
+    def _heartbeat(self) -> None:
+        """Record that this camera is alive, and in what state.
+
+        `touch_camera_health` existed from the start and was never called from
+        anywhere, so `cameras.last_seen_at` was permanently NULL — and
+        /api/analytics/camera-health treats a NULL last_seen_at as stale. Every
+        camera in the fleet therefore reported `healthy: false` on the Analytics
+        tab no matter how well it was running, which is the kind of readout that
+        teaches operators to ignore the dashboard.
+        """
+        now = time.time()
+        state, error = self.state.value, self.stats.last_error
+        # A state CHANGE always beats, regardless of the timer. Without this the
+        # first beat lands while the worker is still `starting` and the rate
+        # limit then pins that in the database for the next 30 s — so a camera
+        # that came up instantly still reports "starting" (and therefore
+        # unhealthy) on the dashboard. The same applies in the direction that
+        # matters more: a camera dropping into `error` must show it now, not on
+        # the next tick.
+        if (state == self._last_state
+                and now - self._last_heartbeat < self._HEARTBEAT_S):
+            return
+        self._last_heartbeat = now
+        self._last_state = state
+        try:
+            from app.services import runtime
+
+            loop = getattr(runtime, "_loop", None)
+            if loop is None or loop.is_closed():
+                return
+            import asyncio
+
+            async def _write() -> None:
+                from app.core.db import SessionLocal
+                from app.services.persistence import get_persistence_service
+
+                async with SessionLocal() as session:
+                    await get_persistence_service().touch_camera_health(
+                        session, self.config.camera_id, state, error)
+
+            asyncio.run_coroutine_threadsafe(_write(), loop)
+        except Exception:
+            # Liveness reporting must never be able to stop a camera running.
+            pass
 
     def _persist(self) -> None:
         """Save this camera's config. Best effort — never blocks capture."""
@@ -271,6 +392,21 @@ class CameraWorker:
         )
         if made:
             self.stats.captures_made += 1
+        # NVR: cut (or extend) an evidence clip around this event. Done before
+        # alerting so the clip exists by the time anyone follows the alert link,
+        # and it includes the pre-roll seconds leading up to the violation.
+        try:
+            from app.services.recorder import get_recorder
+
+            get_recorder().mark_event(self.config.camera_id, {
+                "gear": getattr(fired, "gear", "ppe"),
+                "rule_type": getattr(fired, "rule_type", "ppe"),
+                "track_id": getattr(fired, "track_id", None),
+                "confidence": getattr(fired, "confidence", None),
+                "capture_id": snapshot_path,
+            })
+        except Exception:
+            pass
         try:
             from app.services.alert_service import get_alert_service
             decision = get_alert_service().fire(
@@ -301,10 +437,17 @@ class CameraWorker:
             self._source = None
         if self._source is None:
             self._source = (self._source_factory() if self._source_factory
-                            else build_source(self.config.source_kind,
-                                              **self.config.source_kwargs))
+                            else self._build_source())
         self._source.open()
         self._source_opened = True
+
+    def _build_source(self) -> FrameSource:
+        """Instantiate the frame source, injecting camera_id for browser push."""
+        kw = dict(self.config.source_kwargs or {})
+        kind = (self.config.source_kind or "").lower()
+        if kind in ("browser", "browser-crop", "push"):
+            kw.setdefault("camera_id", self.config.camera_id)
+        return build_source(kind, **kw)
 
     def _run(self) -> None:
         """Supervised capture loop.
@@ -322,6 +465,12 @@ class CameraWorker:
 
         try:
             while not self._stop.is_set():
+                # Liveness, at the top of the loop so it covers every path —
+                # reconnecting and errored workers beat too, which is the case
+                # that matters: a camera that has been failing for an hour must
+                # be reported failing, not simply absent.
+                self._heartbeat()
+
                 # ---- ensure we have an open source ------------------------
                 if self._source is None or not self._source_opened:
                     try:
@@ -389,6 +538,18 @@ class CameraWorker:
                     self.state = CameraState.running
                 self.stats.frames_read += 1
 
+                # NVR feed. Taken from the raw read, before the inference-rate
+                # gate: recording is about what the camera saw, not about what
+                # we had detector capacity to look at, and a clip stuttering at
+                # the inference rate is unusable as evidence. The recorder does
+                # its own rate limiting and drops rather than blocking, so a
+                # slow disk can never stall this loop.
+                if not self._record_overlay:
+                    try:
+                        get_recorder().submit(self.config.camera_id, frame)
+                    except Exception:
+                        pass
+
                 now = time.time()
                 if now - last < min_dt:
                     continue
@@ -423,14 +584,47 @@ class CameraWorker:
                         budget.release(self.config.camera_id, time.time() - t_infer)
                 self.stats.frames_inferred += 1
 
-                fired_list = self._engine.update(result)
+                # Model ops: fold this frame into the camera's drift window and
+                # offer it to any shadow evaluation. Both sample and are strictly
+                # best effort — a model-quality readout must never be able to
+                # affect the detection it is measuring.
+                try:
+                    from app.services import shadow
+
+                    shadow.get_drift().observe(self.config.camera_id, frame, result)
+                    run = shadow.get_shadow()
+                    if run is not None:
+                        run.offer(self.config.camera_id, frame, result)
+                except Exception:
+                    pass
+
+                # Keypoints, when this camera is configured for them. Failure
+                # here degrades to the box-band behaviour rather than dropping
+                # the frame: pose is an accuracy improvement, not a dependency.
+                poses = None
+                if self.config.pose_enabled:
+                    try:
+                        from app.ml.pose import attach, get_pose
+
+                        person_boxes = [d.xyxy for d in result.detections
+                                        if d.cls_name == "person"]
+                        if person_boxes:
+                            poses = attach(person_boxes, get_pose().estimate(frame))
+                            self.stats.poses_estimated += len(poses)
+                    except Exception as exc:  # noqa: BLE001
+                        self.stats.last_error = f"pose: {type(exc).__name__}: {exc}"
+                        poses = None
+
+                fired_list = self._engine.update(
+                    result, poses=poses, frame=frame,
+                    camera_id=self.config.camera_id)
                 for fired in fired_list:
                     self._handle_fired(fired, frame, result, mode)
 
                 # non-PPE hazards (restricted area, fall, near-miss, smoking,
                 # phone, fire/smoke) run through the SAME capture/alert path.
                 if self._hazards is not None:
-                    for hz in self._hazards.update(result):
+                    for hz in self._hazards.update(result, poses=poses):
                         self._handle_fired(hz, frame, result, mode)
 
                 if mode in ("collect", "strict"):
@@ -450,14 +644,22 @@ class CameraWorker:
 
                 try:
                     from app.services import live_view
+                    # Raw frame + detections BEFORE the overlay is drawn, so
+                    # Live Teach corrections are saved on a clean image.
+                    live_view.publish_state(self.config.camera_id, frame, result)
                     annotated = live_view.draw_overlay(
                         frame, result, mode, self.config.camera_id,
                         required=self.config.required_ppe,
+                        # Same rule the engine just judged on, so the picture
+                        # and the alert log can never tell different stories.
+                        rule=self._engine.rule,
                     )
                     live_view.publish(
                         self.config.camera_id, annotated,
                         {"mode": mode, "detections": len(result.detections)},
                     )
+                    if self._record_overlay:
+                        get_recorder().submit(self.config.camera_id, annotated)
                 except Exception:
                     pass
         except Exception as e:
@@ -508,6 +710,12 @@ class CameraManager:
     def remove(self, camera_id: str) -> None:
         worker = self._get(camera_id)
         worker.stop()
+        # Free admission-control slot so a removed camera cannot keep consuming
+        # the fleet budget after it is gone.
+        try:
+            get_budget().unregister(camera_id)
+        except Exception:
+            pass
         with self._lock:
             del self._cameras[camera_id]
 
@@ -516,6 +724,18 @@ class CameraManager:
 
     def set_required_ppe(self, camera_id: str, items: list[str] | set[str]) -> list[str]:
         return self._get(camera_id).set_required_ppe(items)
+
+    def set_pose(self, camera_id: str, enabled: bool) -> bool:
+        return self._get(camera_id).set_pose(enabled)
+
+    def set_calibration(self, camera_id: str, data: dict | None) -> dict:
+        return self._get(camera_id).set_calibration(data)
+
+    def get_calibration(self, camera_id: str) -> dict:
+        w = self._get(camera_id)
+        plane = w._ground_plane()
+        return plane.as_dict() if plane else {"usable": False,
+                                              "quality": "uncalibrated"}
 
     def get_detection_rule(self, camera_id: str) -> dict:
         return self._get(camera_id).get_detection_rule()
@@ -538,7 +758,10 @@ class CameraManager:
             "state": w.state.value,
             "source": w.config.source_kind,
             "mode": w.config.mode,
+            "fps_limit": w.config.fps_limit,
             "required_ppe": sorted(w.config.required_ppe),
+            "pose_enabled": bool(getattr(w.config, "pose_enabled", False)),
+            "calibrated": bool((getattr(w.config, "calibration", None) or {}).get("matrix")),
             "stats": vars(w.stats),
         }
 

@@ -16,6 +16,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+import os
+
 from fastapi.responses import FileResponse
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,6 +147,28 @@ async def get_image(
     if not path.exists():
         raise HTTPException(status_code=404, detail="image file missing")
     return FileResponse(str(path), media_type="image/jpeg")
+
+
+@router.get("/clip/{capture_id}.gif")
+async def capture_clip(capture_id: str,
+                       session: AsyncSession = Depends(get_session)):
+    """The animated evidence clip spanning this violation.
+
+    404 with an explanation rather than an empty response while it is still
+    being built: the clip deliberately covers the seconds AFTER the event, so
+    for a few seconds after a capture appears there is genuinely nothing yet.
+    """
+    item = await session.get(CaptureItem, capture_id)
+    if item is None:
+        raise HTTPException(404, f"capture {capture_id} not found")
+    path = getattr(item, "clip_path", "") or ""
+    if not path or not os.path.exists(path):
+        raise HTTPException(
+            404, "no clip for this capture yet — clips span the seconds after "
+                 "the event, so one is still being assembled for a few seconds "
+                 "after the still appears")
+    return FileResponse(path, media_type="image/gif",
+                        headers={"Cache-Control": "max-age=86400"})
 
 
 @router.delete("/captures")

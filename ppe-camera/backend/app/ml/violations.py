@@ -88,6 +88,12 @@ class ZoneRule:
     min_evidence_conf: float = 0.35   # below this a negative detection is weak
     require_band: bool = True         # enforce anatomical placement
     edge_margin_px: int = 4           # how close to the edge counts as truncated
+    # Match live red overlay: when a person is assessable and required gear is
+    # not seen (and the model also did not emit an explicit no_* class), treat
+    # that absence as missing PPE. Without this, SH17-style models that only
+    # detect positive classes paint "Cap Not found" on the live feed but never
+    # fire a durable violation (engine only accepted explicit no_helmet/no_vest).
+    infer_missing_from_absence: bool = True
     # Where PPE is enforced on this camera, and which gear applies where.
     # None means the whole frame under `required`.
     zones: ZoneMap | None = None
@@ -139,12 +145,40 @@ def _contains_center(person, gear) -> bool:
     return person[0] <= gx <= person[2] and person[1] <= gy <= person[3]
 
 
-def in_gear_band(person, gear, item: str) -> bool:
-    """Is `gear` in the anatomically plausible band of `person` for `item`?
+def in_gear_band(person, gear, item: str, pose=None) -> bool:
+    """Is `gear` in the anatomically plausible place on `person` for `item`?
 
     This is what stops a helmet on the ground, or a neighbour's boots
     overlapping the box, from being credited as worn PPE.
+
+    Two ways of answering it, in order of trust:
+
+    1. **Keypoints**, when a pose is attached. The gear must sit near the joint
+       that actually wears it — helmet near the head, boots near the ankles.
+
+    2. **Box bands**, otherwise: fixed fractions of the person box's height.
+
+    The fallback is the historical behaviour and it has a specific, common
+    failure: the bands assume an upright body. A worker bending over a casting
+    has their head around 55-70% down their own bounding box, so their helmet
+    falls outside the (0.00, 0.42) head band, is not credited, and the engine
+    starts accumulating evidence that they are bare-headed. On a plant, bending
+    over is most of the work — which is why pose is worth a second model on the
+    cameras that watch people working.
     """
+    if pose is not None:
+        verdict, _why = pose.matches(item, gear)
+        if verdict is not None:
+            # Keypoints could see it, so they decide — outright, without also
+            # consulting the band. Keeping the band as a second veto would
+            # reinstate the exact failure pose was added to remove: a worker
+            # bent double over a valve has their hips as the highest point of
+            # their own bounding box and their head down near 0.76 of it, so
+            # the head band rejects a helmet that is visibly on their head.
+            return verdict
+        # verdict is None: this pose has no opinion (occluded joints), so fall
+        # through to the box band rather than guessing either way.
+
     band = GEAR_BANDS.get(item)
     if band is None:
         return True                   # unknown gear type: do not constrain
@@ -155,13 +189,15 @@ def in_gear_band(person, gear, item: str) -> bool:
     _, gy = _center(gear)
     rel = (gy - py1) / height
     lo, hi = band
+
     return lo <= rel <= hi
 
 
 class _Identity:
     """A person's evidence buffers, surviving brief occlusion."""
 
-    __slots__ = ("key", "box", "track_id", "last_seen_frame", "history", "last_fire")
+    __slots__ = ("key", "box", "track_id", "last_seen_frame", "history",
+                 "last_fire", "person_key")
 
     def __init__(self, key: str, box, track_id, frame_no: int, window: int):
         self.key = key
@@ -170,6 +206,11 @@ class _Identity:
         self.last_seen_frame = frame_no
         self.history: dict[str, deque] = defaultdict(lambda: deque(maxlen=window))
         self.last_fire: dict[str, float] = {}
+        # The site-wide anonymous appearance identity, when re-ID is on. Unlike
+        # `key` (which is per-engine and dies with the track) this survives
+        # occlusion and crosses cameras, so it is what repeat-offender counting
+        # must group by.
+        self.person_key: str = ""
 
 
 class ViolationEngine:
@@ -183,12 +224,21 @@ class ViolationEngine:
         self.last_assessments: list[PersonAssessment] = []
 
     # ---- identity ---------------------------------------------------------
-    def _resolve_identity(self, person: Detection) -> _Identity:
+    def _resolve_identity(self, person: Detection, frame=None,
+                          camera_id: str = "") -> _Identity:
         """Tracked id when available, else IoU match against recent identities.
 
         Without this fallback every untracked person shares one evidence
         buffer, and a bare-headed worker's frames cancel against a helmeted
         worker's.
+
+        Separately, when `frame` is supplied and re-ID is enabled, an anonymous
+        appearance signature is attached as `person_key`. That is a different
+        question from the one above: `key` identifies a person WITHIN this
+        engine's recent frames, `person_key` identifies them across occlusion
+        and across cameras, which is what makes repeat-offender counting mean
+        anything. A ByteTrack id resets every time someone walks behind a
+        column, so counting by it counts track fragments, not people.
         """
         if person.track_id is not None:
             key = f"t{person.track_id}"
@@ -219,6 +269,32 @@ class ViolationEngine:
         self._identities[key] = ident
         return ident
 
+    def _attach_person_key(self, ident: "_Identity", person: Detection,
+                           frame, camera_id: str) -> None:
+        """Give this identity a site-wide anonymous appearance key.
+
+        Recomputed periodically rather than every frame: the signature is
+        stable over seconds, and re-matching a person who already has a key
+        only risks drifting them onto a neighbour who happens to be wearing a
+        similar shirt.
+        """
+        try:
+            from app.core.config import get_settings
+
+            if not get_settings().REID_ENABLED or frame is None:
+                return
+            if ident.person_key and self._frame_no % 30:
+                return
+            from app.ml.reid import describe, get_gallery
+
+            desc = describe(frame, person.xyxy)
+            if desc is None:
+                return
+            key, _score, _is_new = get_gallery().match(desc, camera_id)
+            ident.person_key = key
+        except Exception:
+            pass
+
     # ---- assessability ----------------------------------------------------
     def _assessable(self, person: Detection, item: str,
                     frame_w: int, frame_h: int) -> tuple[bool, str]:
@@ -246,8 +322,12 @@ class ViolationEngine:
 
     # ---- per-frame gear association --------------------------------------
     def _person_wears(self, person: Detection, gear_dets: list[Detection],
-                      item: str) -> tuple[str, float, str]:
-        """Return (state, confidence, reason) for `item` on `person`."""
+                      item: str, pose=None) -> tuple[str, float, str]:
+        """Return (state, confidence, reason) for `item` on `person`.
+
+        `pose`, when supplied, anchors gear to the joint that wears it rather
+        than to a fixed slice of the bounding box — see in_gear_band.
+        """
         neg_cls = taxonomy.GEAR_PAIRS.get(item)
 
         def candidates(cls_name):
@@ -260,7 +340,7 @@ class ViolationEngine:
                 if not _contains_center(person.xyxy, g.xyxy):
                     continue
                 if self.rule.require_band and not in_gear_band(
-                        person.xyxy, g.xyxy, cls_name):
+                        person.xyxy, g.xyxy, cls_name, pose=pose):
                     continue
                 out.append(g)
             return out
@@ -270,18 +350,42 @@ class ViolationEngine:
 
         # A positive detection wins: seeing the helmet is stronger evidence
         # than a competing "no helmet" box on the same person.
+        where = "on body (pose)" if pose is not None else "in band"
         if pos_hits:
-            return "has", max(g.confidence for g in pos_hits), "gear detected in band"
+            return "has", max(g.confidence for g in pos_hits), f"gear detected {where}"
         if neg_hits:
             best = max(g.confidence for g in neg_hits)
             if best < self.rule.min_evidence_conf:
                 return "unknown", best, "negative detection below confidence floor"
-            return "missing", best, "violation class detected in band"
+            return "missing", best, f"violation class detected {where}"
+
+        # No positive gear and no explicit no_* class. Live overlay already
+        # treats this as "Not found" for assessable people (SH17 etc. have no
+        # negative classes). Mirror that here so alerts/audit match the HUD.
+        if self.rule.infer_missing_from_absence:
+            # Absence has no model score — use person conf floored at the
+            # evidence threshold so temporal scoring still counts the frame.
+            conf = max(
+                float(self.rule.min_evidence_conf),
+                float(getattr(person, "confidence", 0.0) or 0.0),
+                0.5,
+            )
+            return (
+                "missing",
+                conf,
+                "required gear not detected on assessable person",
+            )
         return "unknown", 0.0, "no gear evidence"
 
     # ---- main -------------------------------------------------------------
-    def update(self, fr: FrameResult) -> list[FiredViolation]:
-        """Feed one frame; return violations that fired THIS frame."""
+    def update(self, fr: FrameResult, poses: dict | None = None,
+               frame=None, camera_id: str = "") -> list[FiredViolation]:
+        """Feed one frame; return violations that fired THIS frame.
+
+        `poses` maps an index into this frame's person detections to a
+        PersonPose. Optional throughout: a camera without pose enabled behaves
+        exactly as before, which keeps the cost opt-in per camera.
+        """
         self._frame_no += 1
         now = time.time()
         people = [d for d in fr.detections if d.cls_name == "person"]
@@ -289,8 +393,10 @@ class ViolationEngine:
         fired: list[FiredViolation] = []
         assessments: list[PersonAssessment] = []
 
-        for person in people:
+        for p_idx, person in enumerate(people):
             ident = self._resolve_identity(person)
+            self._attach_person_key(ident, person, frame, camera_id)
+            pose = (poses or {}).get(p_idx)
 
             # Where is this person standing, and do our rules apply there?
             # Without this a camera that also frames a public road turns every
@@ -319,7 +425,7 @@ class ViolationEngine:
                     # frames we could not actually judge.
                     continue
 
-                state, conf, reason = self._person_wears(person, gear, item)
+                state, conf, reason = self._person_wears(person, gear, item, pose=pose)
                 assessments.append(PersonAssessment(ident.key, item, state, conf, reason))
 
                 hist = ident.history[item]
@@ -341,7 +447,7 @@ class ViolationEngine:
                     confidence=conf,
                     at=now,
                     evidence_frames=int(score),
-                    identity=ident.key,
+                    identity=ident.person_key or ident.key,
                     zone=zone_name,
                 ))
 

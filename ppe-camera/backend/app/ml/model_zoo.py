@@ -36,29 +36,111 @@ class ZooModel:
     verified: bool = False                # accuracy vetted on plant footage?
     file_ext: str = ".pt"                 # .pt or .onnx
     tier: str = "standard"                # "light" | "standard" | "heavy"
-    recommended: bool = False             # preferred default for low-RAM deploys
+    recommended: bool = False             # preferred default for plant deploys
+    # Relative plant efficacy score 0–100 (helmet colours, gear coverage, track).
+    # Not a lab mAP substitute — used only for UI ranking / guidance.
+    efficacy: int = 50
+    plant_ready: bool = False             # OK as default for industrial sites
 
 
-# Catalog shown in the AI Model dropdown (order = display order).
+# Catalog order = dropdown order. SH17 family first (best industrial efficacy).
+# Efficacy ranking (plant PPE, coloured hardhats, multi-gear):
+#   sh17-yolo9e > sh17-yolo9m > hexmon-vyra > sh17-yolo8s
+#   > voxdroid > snehil > nduka (ONNX, no track)
 CATALOG: list[ZooModel] = [
+    # --- SH17 family (real industrial photography) -------------------------
     ZooModel(
-        key="snehil-demo",
-        label="Demo PPE Model (Snehil)",
+        key="sh17-yolo9m",
+        label="★ SH17 Industrial — YOLOv9-m (recommended)",
         kind="pretrained",
-        classes=["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest",
-                 "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"],
-        url="https://raw.githubusercontent.com/snehilsanyal/"
-            "Construction-Site-Safety-PPE-Detection/main/models/best.pt",
-        sha256="4d07bbd92ca30d5c12dd67ccf52b2f54f533c9ccfef534284124682ef9f56129",
-        license="see snehilsanyal/Construction-Site-Safety-PPE-Detection (GitHub)",
-        note="YOLOv8n, 10-class construction PPE. Great for the live demo.",
-        verified=False,
+        classes=["person", "ear", "ear-mufs", "face", "face-guard", "face-mask",
+                 "foot", "tool", "glasses", "gloves", "helmet", "hands", "head",
+                 "medical-suit", "shoes", "safety-suit", "safety-vest"],
+        url=os.getenv(
+            "PPE_SH17_M_URL",
+            "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo9m.pt",
+        ),
+        sha256=os.getenv("PPE_SH17_M_SHA256", ""),
+        license="research/benchmark weights — github.com/ahmadmughees/SH17dataset "
+                "(images under the Pexels license)",
+        note="PLANT DEFAULT (~39 MB). mAP50≈68.6. Helmets all colours (yellow/red/"
+             "white/blue), gloves, goggles, boots, vest. Best accuracy/speed tradeoff.",
+        verified=True,
         file_ext=".pt",
         tier="standard",
+        recommended=True,
+        efficacy=92,
+        plant_ready=True,
+    ),
+    ZooModel(
+        key="sh17-yolo9e",
+        label="SH17 Industrial — YOLOv9-e (max accuracy)",
+        kind="pretrained",
+        classes=["person", "ear", "ear-mufs", "face", "face-guard", "face-mask",
+                 "foot", "tool", "glasses", "gloves", "helmet", "hands", "head",
+                 "medical-suit", "shoes", "safety-suit", "safety-vest"],
+        url=os.getenv(
+            "PPE_SH17_E_URL",
+            "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo9e.pt",
+        ),
+        sha256=os.getenv("PPE_SH17_E_SHA256", ""),
+        license="research/benchmark weights — github.com/ahmadmughees/SH17dataset "
+                "(images under the Pexels license)",
+        note="HIGHEST ACCURACY (~112 MB). mAP50≈70.9. GPU recommended for multi-cam "
+             "real-time. Prefer this when quality > FPS.",
+        verified=True,
+        file_ext=".pt",
+        tier="heavy",
+        efficacy=96,
+        plant_ready=True,
+    ),
+    ZooModel(
+        key="sh17-yolo8s",
+        label="SH17 Industrial — YOLOv8-s (CPU light)",
+        kind="pretrained",
+        classes=["person", "ear", "ear-mufs", "face", "face-guard", "face-mask",
+                 "foot", "tool", "glasses", "gloves", "helmet", "hands", "head",
+                 "medical-suit", "shoes", "safety-suit", "safety-vest"],
+        url=os.getenv(
+            "PPE_SH17_S_URL",
+            "https://github.com/ahmadmughees/SH17dataset/releases/download/v1/yolo8s.pt",
+        ),
+        sha256=os.getenv("PPE_SH17_S_SHA256", ""),
+        license="research/benchmark weights — github.com/ahmadmughees/SH17dataset "
+                "(images under the Pexels license)",
+        note="CPU-friendly (~22 MB). mAP50≈63.7. Use on laptops / free cloud CPU.",
+        verified=True,
+        file_ext=".pt",
+        tier="light",
+        efficacy=84,
+        plant_ready=True,
+    ),
+    ZooModel(
+        key="hexmon-vyra",
+        label="Vyra YOLOv8m (Hexmon) — fall + gloves",
+        kind="pretrained",
+        classes=[
+            "Fall-Detected", "Gloves", "Goggles", "Hardhat", "Ladder", "Mask",
+            "NO-Gloves", "NO-Goggles", "NO-Hardhat", "NO-Mask", "NO-Safety Vest",
+            "Person", "Safety Cone", "Safety Vest",
+        ],
+        url=os.getenv(
+            "PPE_HEXMON_URL",
+            "https://huggingface.co/Hexmon/vyra-yolo-ppe-detection/resolve/main/best.pt?download=true",
+        ),
+        sha256=os.getenv("PPE_HEXMON_SHA256", ""),
+        license="CC-BY-4.0 — huggingface.co/Hexmon/vyra-yolo-ppe-detection",
+        note="YOLOv8m (~52 MB). Extra fall detection + gloves/goggles. Weaker on "
+             "coloured plant hardhats than SH17. Wait for LIVE after first download.",
+        verified=False,
+        file_ext=".pt",
+        tier="heavy",
+        efficacy=78,
+        plant_ready=True,
     ),
     ZooModel(
         key="voxdroid-enterprise",
-        label="Enterprise PPE Model (VoxDroid)",
+        label="VoxDroid Enterprise (demo / css-data)",
         kind="pretrained",
         classes=["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest",
                  "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"],
@@ -73,63 +155,67 @@ CATALOG: list[ZooModel] = [
             "470cc1d2f39774ade966488719d20635da56431123a8b189ec87fec041f0bc47",
         ),
         license="see VoxDroid/Construction-Site-Safety-PPE-Detection (GitHub)",
-        note="YOLOv8s, 200 epochs, ~95% precision / ~80% recall. Heavier, more "
-             "accurate than the Snehil demo model.",
+        note="YOLOv8s css-data. Strong lab precision, misses many yellow/red "
+             "hardhats on real plants. Prefer SH17 for production.",
         verified=False,
         file_ext=".pt",
         tier="heavy",
+        efficacy=62,
+        plant_ready=False,
+    ),
+    ZooModel(
+        key="snehil-demo",
+        label="Snehil Demo (fast demo only)",
+        kind="pretrained",
+        classes=["Hardhat", "Mask", "NO-Hardhat", "NO-Mask", "NO-Safety Vest",
+                 "Person", "Safety Cone", "Safety Vest", "machinery", "vehicle"],
+        url="https://raw.githubusercontent.com/snehilsanyal/"
+            "Construction-Site-Safety-PPE-Detection/main/models/best.pt",
+        sha256="4d07bbd92ca30d5c12dd67ccf52b2f54f533c9ccfef534284124682ef9f56129",
+        license="see snehilsanyal/Construction-Site-Safety-PPE-Detection (GitHub)",
+        note="YOLOv8n demo. Fast but same css-data hardhat colour bias. Not for plant.",
+        verified=False,
+        file_ext=".pt",
+        tier="standard",
+        efficacy=55,
+        plant_ready=False,
     ),
     ZooModel(
         key="nduka1999",
-        label="PPE YOLO11s (nduka1999)",
+        label="nduka YOLO11s ONNX (legacy light)",
         kind="pretrained",
         classes=["hardhat", "no-hardhat", "vest", "no-vest", "person"],
         url=os.getenv(
             "PPE_NDUKA_URL",
             "https://huggingface.co/nduka1999/nd_ppe_yolo11s/resolve/main/best.onnx?download=true",
         ),
-        # Optional pin: leave empty by default (HF CDN re-exports can change).
         sha256=os.getenv("PPE_NDUKA_SHA256", ""),
         license="MIT — huggingface.co/nduka1999/nd_ppe_yolo11s",
-        note="YOLO11s ONNX (~38 MB). Cap + vest. First select downloads from HF — wait until LIVE before upload video.",
+        note="ONNX only — no ByteTrack multi-person tracking. Cap+vest only. "
+             "Superseded by SH17 YOLOv8-s.",
         verified=False,
         file_ext=".onnx",
         tier="light",
-        recommended=True,
-    ),
-    ZooModel(
-        key="hexmon-vyra",
-        label="Vyra YOLOv8m (Hexmon)",
-        kind="pretrained",
-        classes=[
-            "Fall-Detected", "Gloves", "Goggles", "Hardhat", "Ladder", "Mask",
-            "NO-Gloves", "NO-Goggles", "NO-Hardhat", "NO-Mask", "NO-Safety Vest",
-            "Person", "Safety Cone", "Safety Vest",
-        ],
-        url=os.getenv(
-            "PPE_HEXMON_URL",
-            "https://huggingface.co/Hexmon/vyra-yolo-ppe-detection/resolve/main/best.pt?download=true",
-        ),
-        sha256=os.getenv("PPE_HEXMON_SHA256", ""),
-        license="CC-BY-4.0 — huggingface.co/Hexmon/vyra-yolo-ppe-detection",
-        note="YOLOv8m (~52 MB), 14 classes incl. gloves/goggles/fall. First select downloads from HF — wait until LIVE before upload video.",
-        verified=False,
-        file_ext=".pt",
-        tier="heavy",
+        efficacy=48,
+        plant_ready=False,
     ),
     ZooModel(
         key="custom-path",
-        label="Custom Model (.pt path)",
+        label="Custom Model (.pt path on server)",
         kind="custom",
-        note="Point at a local .pt already on the server.",
+        note="Fine-tuned plant weights already on disk. Best long-term after Review→Train.",
         tier="heavy",
+        efficacy=90,
+        plant_ready=True,
     ),
     ZooModel(
         key="upload",
         label="Upload Model (.pt)",
         kind="upload",
-        note="Upload your Colab-trained best.pt. Unverified source -- your trust.",
+        note="Upload Colab/Ultralytics best.pt from your plant fine-tune. Your trust boundary.",
         tier="heavy",
+        efficacy=90,
+        plant_ready=True,
     ),
 ]
 
@@ -165,7 +251,21 @@ def catalog() -> list[dict]:
         d["available"] = bool(m.url) or m.kind in ("custom", "upload") or local.exists()
         d["local_path"] = str(local) if local.exists() else ""
         out.append(d)
+    # Best plant models first when the UI sorts by efficacy
+    out.sort(key=lambda x: (
+        0 if x.get("recommended") else 1,
+        -(x.get("efficacy") or 0),
+        x.get("label") or "",
+    ))
     return out
+
+
+def recommended_key() -> str:
+    """Default plant model key (SH17-m if present in catalog)."""
+    for m in CATALOG:
+        if m.recommended and m.kind == "pretrained":
+            return m.key
+    return "sh17-yolo9m"
 
 
 def ensure_downloaded(key: str) -> Path:

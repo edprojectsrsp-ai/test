@@ -17,7 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from app.core.db import init_db
-from app.routers import alerts, analytics, cameras, models, review, stream, violations
+from app.routers import (alerts, analytics, cameras, modelops, models, nvr,
+                         review, stream, training, violations)
 
 
 @asynccontextmanager
@@ -49,6 +50,24 @@ async def lifespan(app: FastAPI):
     except Exception as exc:  # noqa: BLE001 - never block startup
         import logging
         logging.getLogger(__name__).warning("fleet restore skipped: %s", exc)
+
+    # NVR: re-apply stored recording settings, re-arm the cameras that were
+    # recording before the restart, and start the retention sweeper. Without
+    # the re-arm a power cut disarms the whole site silently — streams come
+    # back, the dashboard looks healthy, and nothing is being recorded.
+    try:
+        from app.routers.nvr import load_config, restore_camera_modes
+        from app.services.recorder import get_recorder
+
+        await load_config()
+        armed = await restore_camera_modes()
+        get_recorder().start_retention()
+        if armed:
+            print(f"[ppe] recording re-armed on {len(armed)} camera(s)")
+    except Exception as exc:  # noqa: BLE001 - recording must not block boot
+        import logging
+        logging.getLogger(__name__).warning("nvr startup skipped: %s", exc)
+
     boot_model_key = os.getenv("PPE_BOOT_MODEL_KEY", "").strip()
     if boot_model_key:
         async def _boot_model() -> None:
@@ -69,6 +88,14 @@ async def lifespan(app: FastAPI):
         from app.services.runtime import get_manager
 
         get_manager().stop_all()
+        # Flush open clips last: a segment killed mid-write is an unplayable
+        # file, and the recorder threads outlive the camera workers feeding them.
+        try:
+            from app.services.recorder import get_recorder
+
+            get_recorder().stop_all()
+        except Exception:
+            pass
 
 
 def create_app() -> FastAPI:
@@ -93,13 +120,71 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router)
     app.include_router(violations.router)
     app.include_router(alerts.router)
+    app.include_router(training.router)
+    app.include_router(nvr.router)
+    app.include_router(modelops.router)
 
     @app.get("/health")
     async def health() -> dict:
+        """Industrial health: device, fleet, active model, recorder armed count."""
         from app.core.config import get_settings
 
         s = get_settings()
-        return {"status": "ok", "device": s.DEVICE, "db": s.DATABASE_URL.split("://")[0]}
+        out: dict = {
+            "status": "ok",
+            "device": s.DEVICE,
+            "db": s.DATABASE_URL.split("://")[0],
+            "version": app.version,
+        }
+        try:
+            from app.services.runtime import get_manager
+
+            snapshots = get_manager().list_status() or []
+            running = sum(
+                1 for c in snapshots
+                if (c.get("state") if isinstance(c, dict) else None) == "running"
+            )
+            out["fleet"] = {"total": len(snapshots), "running": running}
+        except Exception as exc:  # noqa: BLE001
+            out["fleet"] = {"error": str(exc)}
+
+        try:
+            from app.routers.models import _load
+            from app.ml.detector import get_detector
+
+            reg = _load()
+            active_ver = reg.get("active")
+            zoo_key = None
+            for v in reg.get("versions") or []:
+                if v.get("version") == active_ver:
+                    zoo_key = v.get("zoo_key") or v.get("note")
+                    break
+            out["active_model"] = zoo_key
+            out["active_version"] = active_ver
+            try:
+                out["live_weights"] = get_detector().active_weights
+            except Exception:
+                out["live_weights"] = None
+        except Exception:
+            out["active_model"] = None
+
+        try:
+            from app.services.recorder import get_recorder
+
+            st = get_recorder().status() or []
+            armed = sum(
+                1
+                for c in st
+                if isinstance(c, dict)
+                and c.get("mode") not in (None, "off")
+            )
+            recording = sum(1 for c in st if isinstance(c, dict) and c.get("recording"))
+            out["recording_armed"] = armed
+            out["recording_active"] = recording
+        except Exception:
+            out["recording_armed"] = None
+
+        return out
 
     return app
 

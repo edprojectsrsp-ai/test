@@ -6,16 +6,38 @@ const RAW_PPE_BASE =
 export const PPE_PROXY_BASE = "/api/ppe";
 export const PPE_DIRECT_BASE = RAW_PPE_BASE.replace(/\/$/, "");
 
+/**
+ * Next.js is configured with trailingSlash: true. Paths without a trailing
+ * slash get a 308 redirect. Browser GET follows it, but PUT/POST can lose the
+ * body or fail in some clients — so always normalize before calling the proxy.
+ * File-like endpoints (stream.mjpg, snapshot.jpg) are left alone.
+ */
+export function normalizePpePath(path = "") {
+  if (!path) return "/";
+  if (/^https?:\/\//i.test(path)) return path;
+  let p = path.startsWith("/") ? path : `/${path}`;
+  const qIdx = p.indexOf("?");
+  let pathname = qIdx >= 0 ? p.slice(0, qIdx) : p;
+  const query = qIdx >= 0 ? p.slice(qIdx) : "";
+  if (/\.(mjpg|mjpeg|jpg|jpeg|png|webp|gif|mp4|pt|onnx|cgi)$/i.test(pathname)) {
+    return pathname + query;
+  }
+  if (!pathname.endsWith("/")) pathname += "/";
+  return pathname + query;
+}
+
 export function getPpeApiBase() {
   return PPE_PROXY_BASE;
 }
 
 export function buildPpeUrl(path = "") {
-  const cleanPath = path.startsWith("/") ? path : `/${path}`;
-  return `${getPpeApiBase()}${cleanPath}`;
+  if (/^https?:\/\//i.test(path)) return path;
+  return `${getPpeApiBase()}${normalizePpePath(path)}`;
 }
 
 export function buildDirectPpeUrl(path = "") {
+  if (/^https?:\/\//i.test(path)) return path;
+  // Upstream FastAPI does not require trailing slashes
   const cleanPath = path.startsWith("/") ? path : `/${path}`;
   return `${PPE_DIRECT_BASE}${cleanPath}`;
 }

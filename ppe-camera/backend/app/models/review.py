@@ -19,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     Float,
     ForeignKey,
     Integer,
@@ -72,8 +73,19 @@ class CaptureItem(Base):
     width: Mapped[int] = mapped_column(Integer, default=0)
     height: Mapped[int] = mapped_column(Integer, default=0)
     note: Mapped[str] = mapped_column(Text, default="")
+    # Animated evidence clip spanning the event (see services/evidence.py).
+    # Written after the post-roll accumulates, so it is empty for a moment
+    # after the capture itself.
+    clip_path: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Held out of training, forever, so every model can be scored on identical
+    # data. A frame that has ever been trained on cannot measure anything: the
+    # model has memorised it, and the number it produces is a report on the
+    # training set wearing an evaluation's clothes.
+    is_golden: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    golden_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    golden_note: Mapped[str] = mapped_column(Text, default="")
 
     labels: Mapped[list["ReviewLabel"]] = relationship(
         back_populates="capture", cascade="all, delete-orphan"

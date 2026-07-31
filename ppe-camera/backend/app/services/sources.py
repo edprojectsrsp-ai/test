@@ -84,6 +84,7 @@ class WebcamSource(FrameSource):
     `index` 0 is the default built-in camera; 1/2 for external USB cams.
     """
     index: int = 0
+    fps: float | None = None
     _cap: object | None = None
     _backend_name: str = ""
 
@@ -110,6 +111,8 @@ class WebcamSource(FrameSource):
 
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+                if self.fps and float(self.fps) > 0:
+                    cap.set(cv2.CAP_PROP_FPS, float(self.fps))
 
                 frame = None
                 ok = False
@@ -328,6 +331,35 @@ class ONVIFSource(FrameSource):
 
 
 
+def _auth_opener(url: str, username: str, password: str):
+    """An opener that satisfies Basic OR Digest, whichever the camera demands.
+
+    This exists because sending a Basic header unconditionally — which is what
+    this module used to do — fails outright on most of the market. Dahua, CP
+    Plus, Uniview and their many OEM rebadges all answer Basic with a bare 401,
+    so an HTTP snapshot or MJPEG camera from any of them looked simply
+    unreachable. Verified against a Dahua SD49225T-HN: Basic gets 401 on
+    /cgi-bin/snapshot.cgi, Digest gets a JPEG.
+
+    urllib's handlers negotiate from the WWW-Authenticate challenge, so
+    registering both means the caller never has to know or configure which
+    scheme a given firmware wants.
+    """
+    import urllib.parse
+    import urllib.request
+
+    if not username:
+        return urllib.request.build_opener()
+    parsed = urllib.parse.urlparse(url)
+    root = f"{parsed.scheme}://{parsed.netloc}/"
+    mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+    mgr.add_password(None, root, username, password)
+    return urllib.request.build_opener(
+        urllib.request.HTTPDigestAuthHandler(mgr),
+        urllib.request.HTTPBasicAuthHandler(mgr),
+    )
+
+
 @dataclass
 class MJPEGSource(FrameSource):
     """HTTP MJPEG stream — the fallback almost every IP camera exposes.
@@ -337,6 +369,11 @@ class MJPEGSource(FrameSource):
     frequently the only way in without vendor credentials. Parsed directly
     from the multipart stream rather than through OpenCV, which handles
     boundary quirks poorly on some firmware.
+
+    Authenticates with Basic or Digest as the camera asks — see _auth_opener.
+    On a site where RTSP is firewalled off (very common when the recorder is
+    reachable only through a port-forwarded web UI) this is the difference
+    between a working camera and no camera.
     """
     url: str
     username: str = ""
@@ -348,13 +385,9 @@ class MJPEGSource(FrameSource):
     def open(self) -> None:
         import urllib.request
 
-        req = urllib.request.Request(self.url)
-        if self.username:
-            import base64
-            token = base64.b64encode(
-                f"{self.username}:{self.password}".encode()).decode()
-            req.add_header("Authorization", f"Basic {token}")
-        self._resp = urllib.request.urlopen(req, timeout=self.timeout)
+        req = urllib.request.Request(self.url, headers={"User-Agent": "Mozilla/5.0"})
+        opener = _auth_opener(self.url, self.username, self.password)
+        self._resp = opener.open(req, timeout=self.timeout)
         self._buf = b""
 
     def read(self):
@@ -422,14 +455,13 @@ class HTTPSnapshotSource(FrameSource):
             _t.sleep(wait)
         self._last_poll = _t.time()
 
-        req = urllib.request.Request(self.url)
-        if self.username:
-            import base64
-            token = base64.b64encode(
-                f"{self.username}:{self.password}".encode()).decode()
-            req.add_header("Authorization", f"Basic {token}")
+        req = urllib.request.Request(self.url, headers={"User-Agent": "Mozilla/5.0"})
+        # Basic or Digest, whichever the firmware demands. Sending Basic blind
+        # returns 401 on most Dahua/CP Plus/Uniview units, which made every
+        # snapshot camera from those vendors look permanently offline.
+        opener = _auth_opener(self.url, self.username, self.password)
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with opener.open(req, timeout=self.timeout) as r:
                 data = r.read()
         except Exception:
             return None
@@ -482,7 +514,11 @@ def build_source(kind: str, **kwargs) -> FrameSource:
     if kind == "rtsp":
         return RTSPSource(url=kwargs["url"], transport=kwargs.get("transport", ""))
     if kind == "webcam":
-        return WebcamSource(index=kwargs.get("index", 0))
+        fps = kwargs.get("fps", None)
+        return WebcamSource(
+            index=kwargs.get("index", 0),
+            fps=float(fps) if fps not in (None, "") else None,
+        )
     if kind == "screen":
         return ScreenSource(
             top=kwargs.get("top", 0), left=kwargs.get("left", 0),
@@ -514,6 +550,17 @@ def build_source(kind: str, **kwargs) -> FrameSource:
         # CamGear's FFmpeg backend already handles these; RTSPSource is just a
         # thin wrapper over it, so the same class serves them.
         return RTSPSource(url=kwargs["url"], transport=kwargs.get("transport", ""))
+    if kind in ("browser", "browser-crop", "push"):
+        from app.services.browser_push import BrowserPushSource
+
+        cam_id = kwargs.get("camera_id") or kwargs.get("id") or ""
+        if not cam_id:
+            raise ValueError("browser source needs camera_id in source_kwargs")
+        return BrowserPushSource(
+            camera_id=str(cam_id),
+            wait_first_s=float(kwargs.get("wait_first_s", 120.0)),
+            max_age_s=float(kwargs.get("max_age_s", 0.0)),
+        )
     if kind == "fake":
         # API-created demo cameras should live long enough for cold model warmup.
         return FakeSource(frames=kwargs.get("frames", 300))
@@ -536,15 +583,20 @@ SOURCE_KINDS: dict[str, dict] = {
                  "hint": "http://host/snapshot.jpg — lowest common denominator"},
     "hls": {"label": "HLS / RTMP / HTTP stream", "fields": ["url"],
             "hint": "https://host/stream.m3u8 — NVR and cloud re-streams"},
-    "webcam": {"label": "USB / built-in camera", "fields": ["index"],
-               "hint": "Device index, usually 0"},
+    "webcam": {"label": "USB / built-in camera", "fields": ["index", "fps"],
+               "hint": "Device index, usually 0, with optional requested FPS"},
+    "browser": {"label": "Browser crop (share tab / window)",
+                "fields": ["camera_id"],
+                "hint": "Login to NVR web UI, share the tab, crop the live pane — "
+                        "frames push from the browser. No RTSP required."},
     "video": {"label": "Video file", "fields": ["path", "loop", "speed"],
               "hint": "Replay recorded footage"},
     "folder": {"label": "Image folder", "fields": ["path", "pattern", "loop"],
                "hint": "Drone or handheld stills dropped on a share"},
-    "screen": {"label": "Screen capture",
+    "screen": {"label": "Screen capture (server OS)",
                "fields": ["top", "left", "width", "height"],
-               "hint": "For NVR software with no stream export"},
+               "hint": "Captures the server machine display — use Browser crop "
+                       "when you want to crop a browser tab instead"},
     "fake": {"label": "Test pattern", "fields": ["frames"],
              "hint": "Synthetic frames for pipeline testing"},
 }

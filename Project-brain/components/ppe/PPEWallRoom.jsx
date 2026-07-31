@@ -6,15 +6,15 @@
  * Single screen, no tab switching required for day-to-day ops.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
 const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
-  const r = await fetch(`${API_BASE}${path}`, options);
+  const r = await fetch(buildPpeUrl(path), options);
   const t = await r.text();
   let body; try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
-  if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : (body.detail ? JSON.stringify(body.detail) : `HTTP ${r.status}`));
   return body;
 }
 
@@ -331,8 +331,10 @@ export default function PPEWallRoom({ onNavigate }) {
         background: "#0b1220",
         flexWrap: "wrap",
       }}>
-        <span style={{ fontSize: 13, fontWeight: 800 }}>Control wall</span>
-        <span style={{ fontSize: 12, color: "#7a8fa3" }}>live video · live alerts · single screen</span>
+        <span style={{ fontSize: 13, fontWeight: 800, letterSpacing: -0.2 }}>Control wall</span>
+        <span style={{ fontSize: 11, color: "#7a8fa3", textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 600 }}>
+          live video · live alerts · plant TV
+        </span>
         <span style={{ flex: 1 }} />
         <Kpi label="Cameras" value={`${running}/${cams.length}`} ok={running > 0} />
         <Kpi label="Open alerts" value={String(openAlerts)} danger={openAlerts > 0} />

@@ -6,15 +6,15 @@
  * Filter chips by type + status; per-card acknowledge / resolve.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
 const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
-  const r = await fetch(`${API_BASE}${path}`, options);
+  const r = await fetch(buildPpeUrl(path), options);
   const t = await r.text();
   let body; try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
-  if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : (body.detail ? JSON.stringify(body.detail) : `HTTP ${r.status}`));
   return body;
 }
 
@@ -35,6 +35,24 @@ function timeAgo(iso) {
   if (d < 86400) return `${Math.floor(d / 3600)}h ago`;
   return `${Math.floor(d / 86400)}d ago`;
 }
+
+/** SLA age for open alerts: green <5m, amber <30m, red after. */
+function slaInfo(iso, status) {
+  if (!iso || status === "resolved" || status === "false_alarm") {
+    return { label: null, tone: null };
+  }
+  const mins = (Date.now() - new Date(iso).getTime()) / 60000;
+  if (mins < 5) return { label: `${Math.max(0, Math.floor(mins))}m SLA`, tone: "ok" };
+  if (mins < 30) return { label: `${Math.floor(mins)}m SLA`, tone: "warn" };
+  if (mins < 1440) return { label: `${Math.floor(mins / 60)}h SLA`, tone: "crit" };
+  return { label: `${Math.floor(mins / 1440)}d SLA`, tone: "crit" };
+}
+
+const SLA_STYLE = {
+  ok: { color: "var(--verdigris)", background: "var(--verdigris-soft)" },
+  warn: { color: "var(--slag)", background: "var(--slag-soft)" },
+  crit: { color: "var(--molten)", background: "var(--molten-soft)" },
+};
 
 function Chip({ active, label, count, onClick, tone }) {
   const [fg, bg] = tone || [C.brand, C.brandSoft];
@@ -66,15 +84,17 @@ function Chip({ active, label, count, onClick, tone }) {
 function ViolationCard({ v, onStatus, onOpen }) {
   const [fg, bg] = sevColor(v.severity);
   const done = v.status === "resolved" || v.status === "false_alarm";
+  const sla = slaInfo(v.occurred_at, v.status);
+  const isOpen = v.status === "open";
   return (
     <article style={{
       background: C.panel,
-      border: `1px solid ${C.line}`,
-      borderRadius: 14,
+      border: `1px solid ${isOpen ? "rgba(255,77,106,.35)" : C.line}`,
+      borderRadius: 12,
       overflow: "hidden",
-      boxShadow: C.shadow,
+      boxShadow: isOpen ? "0 0 0 1px rgba(255,77,106,.2), 0 12px 32px -16px rgba(255,77,106,.35)" : C.shadow,
       opacity: done ? 0.62 : 1,
-      transition: "opacity .15s ease, transform .15s ease",
+      transition: "opacity .15s ease, transform .15s ease, box-shadow .15s ease",
     }}>
       <div
         style={{ position: "relative", aspectRatio: "4/3", background: "#0b0f14", cursor: "pointer" }}
@@ -111,9 +131,26 @@ function ViolationCard({ v, onStatus, onOpen }) {
         </span>
       </div>
       <div style={{ padding: "10px 12px" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: C.sub, alignItems: "center", gap: 8 }}>
           <span style={{ fontWeight: 700, color: C.ink }}>{v.camera_id}</span>
-          <span title={v.occurred_at || ""}>{timeAgo(v.occurred_at)}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            {sla.label ? (
+              <span
+                title="Time since event — open/ack alerts age into SLA breach"
+                style={{
+                  fontFamily: "IBM Plex Mono, ui-monospace, monospace",
+                  fontSize: 10.5,
+                  fontWeight: 800,
+                  padding: "2px 7px",
+                  borderRadius: 5,
+                  ...SLA_STYLE[sla.tone],
+                }}
+              >
+                {sla.label}
+              </span>
+            ) : null}
+            <span title={v.occurred_at || ""}>{timeAgo(v.occurred_at)}</span>
+          </span>
         </div>
         <div style={{ display: "flex", gap: 8, fontSize: 11, color: C.sub, marginTop: 4, flexWrap: "wrap" }}>
           {v.department ? <span>dept {v.department}</span> : null}
@@ -297,10 +334,10 @@ export default function ViolationsGallery({ embedded = false }) {
           </h1>
           {embedded ? (
             <p style={{ margin: "2px 0 0", fontSize: 12.5, color: C.sub }}>
-              Violation evidence · classified by type · live
+              Evidence · ack / resolve · SLA timers · live
             </p>
           ) : (
-            <span style={{ color: C.sub, fontSize: 13, marginLeft: 0 }}>violation evidence, classified by type · live</span>
+            <span style={{ color: C.sub, fontSize: 13, marginLeft: 0 }}>evidence · ack / resolve · SLA · live</span>
           )}
         </div>
         <span style={{ flex: 1 }} />

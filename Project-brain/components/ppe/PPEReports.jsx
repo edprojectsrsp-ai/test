@@ -3,15 +3,15 @@
  * PPE Violation Reports — audit-ready summary + table + CSV export.
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
 const API_BASE = getPpeApiBase();
 
 async function api(path) {
-  const r = await fetch(`${API_BASE}${path}`, { cache: "no-store" });
+  const r = await fetch(buildPpeUrl(path), { cache: "no-store" });
   const t = await r.text();
   let body; try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
-  if (!r.ok) throw new Error(body.detail || `HTTP ${r.status}`);
+  if (!r.ok) throw new Error(typeof body.detail === "string" ? body.detail : (body.detail ? JSON.stringify(body.detail) : `HTTP ${r.status}`));
   return body;
 }
 
@@ -101,9 +101,9 @@ export default function PPEReports({ embedded = false }) {
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800 }}>PPE violation reports</h2>
+          <h2 style={{ margin: 0, fontSize: 15, fontWeight: 800, letterSpacing: -0.2 }}>Audit reports</h2>
           <p style={{ margin: "3px 0 0", fontSize: 12.5, color: C.sub }}>
-            Audit log · type mix · daily trend · CSV export
+            Compliance log · type mix · daily trend · CSV audit pack
           </p>
         </div>
         <span style={{ flex: 1 }} />

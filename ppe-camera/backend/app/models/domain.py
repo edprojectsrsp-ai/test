@@ -78,7 +78,13 @@ class CameraRecord(Base):
     # at that value, and an operator who tunes it must not lose the change on
     # the next restart.
     detection_rule: Mapped[dict] = mapped_column(JSON, default=dict)
+    # Ground-plane homography (app/ml/calibration.py) so this camera's geometry
+    # can be expressed in metres rather than pixels.
+    calibration: Mapped[dict] = mapped_column(JSON, default=dict)
     priority: Mapped[str] = mapped_column(String(16), default="normal")
+    # Keypoints for this camera (Track B). Costs a second model per
+    # frame, so it is per-camera rather than global.
+    pose_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     mode: Mapped[str] = mapped_column(String(16), default="monitor")
     fps_limit: Mapped[float] = mapped_column(Float, default=6.0)
     location: Mapped[str] = mapped_column(String(128), default="")
@@ -138,6 +144,11 @@ class ViolationEvent(Base):
     rule_type: Mapped[str] = mapped_column(String(48), index=True, default="ppe")
     gear: Mapped[str] = mapped_column(String(48), default="")  # missing item / hazard
     track_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Anonymous appearance identity (app/ml/reid.py). Survives occlusion and
+    # crosses cameras, unlike track_id — which is why repeat-offender counting
+    # groups by this. Not biometric and not durable: the signature behind it
+    # expires, this is only the label it had at the time.
+    person_key: Mapped[str] = mapped_column(String(48), default="", index=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     person_box: Mapped[list] = mapped_column(JSON, default=list)  # [x1,y1,x2,y2]
     capture_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)

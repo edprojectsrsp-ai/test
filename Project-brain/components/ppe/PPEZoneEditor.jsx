@@ -19,11 +19,12 @@
  *   road with nothing on screen to say so.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = (process.env.NEXT_PUBLIC_PPE_API_URL || "http://127.0.0.1:8004").replace(/\/$/, "");
+const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
-  const r = await fetch(`${API_BASE}${path}`, { cache: "no-store", ...options });
+  const r = await fetch(buildPpeUrl(path), { cache: "no-store", ...options });
   const t = await r.text();
   let body;
   try { body = t ? JSON.parse(t) : {}; } catch { body = { detail: t }; }
