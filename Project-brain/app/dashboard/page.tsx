@@ -280,8 +280,8 @@ export default function DashboardPage() {
   if (view === "executive") {
     return (
       <div className="min-h-screen">
-        <div className="flex items-center justify-between bg-[#0b3d91] px-6 py-2">
-          <span className="text-sm font-semibold text-white">RSP Project Department — Dashboard</span>
+        <div className="flex items-center justify-between px-6 py-2" style={{ background: "var(--table-head)", borderBottom: "1px solid var(--line-2)" }}>
+          <span className="text-sm font-semibold" style={{ color: "var(--ink)" }}>RSP Project Department — Dashboard</span>
           <ViewToggle view={view} setView={setView} />
         </div>
         <ExecutiveView />
@@ -307,20 +307,20 @@ export default function DashboardPage() {
       <div className="flex-1 flex flex-col overflow-hidden">
 
         {/* ── TOP HEADER ── */}
-        <div className="shrink-0 bg-[#0b3d91] px-6 py-3 flex items-center justify-between">
+        <div className="shrink-0 px-6 py-3 flex items-center justify-between" style={{ background: "var(--table-head)", borderBottom: "1px solid var(--line-2)" }}>
           <div className="flex items-center gap-3">
-            <LayoutDashboard className="h-6 w-6 text-white" />
+            <LayoutDashboard className="h-6 w-6" style={{ color: "var(--steel)" }} />
             <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">
+              <h1 className="text-lg font-bold tracking-tight" style={{ color: "var(--ink)" }}>
                 RSP Project Department — Executive Dashboard
               </h1>
-              <p className="text-blue-200 text-[11px]">Rourkela Steel Plant · Capital Project Monitoring</p>
+              <p className="text-[11px]" style={{ color: "var(--ink-3)" }}>Rourkela Steel Plant · Capital Project Monitoring</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             <ViewToggle view={view} setView={setView} />
-            <div className="flex items-center gap-2 text-[11px] text-blue-200">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+            <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--ink-3)" }}>
+              <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
               Live · {summary?.current_fy}
             </div>
           </div>
@@ -986,11 +986,13 @@ export default function DashboardPage() {
 
 function ViewToggle({ view, setView }: { view: "command" | "executive"; setView: (v: "command" | "executive") => void }) {
   const base = "px-3 py-1 rounded-md text-[11px] font-semibold transition-colors cursor-pointer";
+  const activeStyle: React.CSSProperties = { background: "var(--steel)", color: "#ffffff" };
+  const idleStyle: React.CSSProperties = { color: "var(--ink-3)" };
   return (
-    <div className="inline-flex items-center gap-1 rounded-lg bg-white/10 p-1">
-      <button className={`${base} ${view === "command" ? "bg-white text-[#0b3d91]" : "text-blue-100 hover:bg-white/10"}`}
+    <div className="inline-flex items-center gap-1 rounded-lg p-1" style={{ background: "color-mix(in srgb, var(--steel) 10%, transparent)" }}>
+      <button className={base} style={view === "command" ? activeStyle : idleStyle}
         onClick={() => setView("command")}>Command View</button>
-      <button className={`${base} ${view === "executive" ? "bg-white text-[#0b3d91]" : "text-blue-100 hover:bg-white/10"}`}
+      <button className={base} style={view === "executive" ? activeStyle : idleStyle}
         onClick={() => setView("executive")}>Executive View</button>
     </div>
   );
