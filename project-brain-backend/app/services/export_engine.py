@@ -40,18 +40,23 @@ from typing import Any, Dict, List, Optional, Sequence
 # reportlab / docx where needed.
 
 class MinistryPalette:
+    """White-dominant Ministry treatment: paper-white rows, a light-blue
+    header band, and restrained status accents. Colour is used sparingly and
+    only where it carries meaning; the coloured status *ink* is bold so the
+    signal survives even a black-and-white printout."""
     HEAD = "DBEAFE"        # light-blue table header  (--table-head)
     HEAD_INK = "0A0A0A"    # black header text        (--ink)
     STEEL = "2563EB"       # brand blue               (--steel)
     STEEL_DEEP = "1E40AF"  # deep brand               (--steel-deep)
-    ROW_EVEN = "F6F9FD"    # zebra even row           (--panel-2)
-    ROW_ODD = "FFFFFF"     # zebra odd row
-    LINE = "CFE0EC"        # gridline                 (--line-2)
-    GOOD = "ECFDF5"        # on-track fill            (--verdigris-soft)
+    ROW_EVEN = "F5F9FF"    # whisper-blue zebra (barely there, paper-like)
+    ROW_ODD = "FFFFFF"     # white
+    LINE = "D8E4F0"        # soft blue gridline
+    # Status accents — very light fills, strong ink for print legibility.
+    GOOD = "F1FBF5"        # on-track fill (near-white green)
     GOOD_INK = "047857"
-    WARN = "FEFCE8"        # attention fill           (--slag-soft)
+    WARN = "FDFBEF"        # attention fill (near-white amber)
     WARN_INK = "A16207"
-    CRIT = "FEF2F2"        # delay/shortfall fill     (--molten-soft)
+    CRIT = "FDF3F3"        # delay/shortfall fill (near-white red)
     CRIT_INK = "B91C1C"
 
 
@@ -66,21 +71,28 @@ _WARN_HINTS = ("revised", "extension", "pending", "risk", "reason")
 _GOOD_HINTS = ("on track", "on-track", "complete", "achieved", "no delay")
 
 
-def _status_fill(header: str, value: str) -> Optional[str]:
-    """Return a palette fill hex for a cell given its column header + value,
-    or None for no tint. Empty cells are never tinted."""
+def _status_style(header: str, value: str) -> Optional[tuple]:
+    """Return (fill_hex, ink_hex) for a cell given its column header + value,
+    or None for a plain cell. Empty cells are never styled. The ink is bold
+    and coloured so the status still reads on a black-and-white printout."""
     v = (value or "").strip()
     if not v or v in {"-", "—", "0", "0%", "0.00"}:
         return None
     h = (header or "").lower()
     vl = v.lower()
     if any(g in vl for g in _GOOD_HINTS):
-        return PALETTE.GOOD
+        return (PALETTE.GOOD, PALETTE.GOOD_INK)
     if any(c in h for c in _CRIT_HINTS):
-        return PALETTE.CRIT
+        return (PALETTE.CRIT, PALETTE.CRIT_INK)
     if any(w in h for w in _WARN_HINTS):
-        return PALETTE.WARN
+        return (PALETTE.WARN, PALETTE.WARN_INK)
     return None
+
+
+def _status_fill(header: str, value: str) -> Optional[str]:
+    """Back-compat: just the fill hex (None for plain)."""
+    st = _status_style(header, value)
+    return st[0] if st else None
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -206,13 +218,16 @@ def export_pdf(payload: Dict[str, Any], output_path: Optional[str] = None) -> by
             ("FONTSIZE", (0, 0), (-1, -1), 8),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]
-        # status tinting per cell (overrides zebra where it applies)
+        # status tinting per cell (overrides zebra where it applies); the
+        # flagged value is also set in bold coloured ink so it survives B/W print
         for ri, row in enumerate(header_rows, start=1):
             for ci, h in enumerate(headers):
                 val = row[ci] if ci < len(row) else ""
-                fill = _status_fill(str(h), val)
-                if fill:
-                    style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#" + fill)))
+                st = _status_style(str(h), val)
+                if st:
+                    style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#" + st[0])))
+                    style.append(("TEXTCOLOR", (ci, ri), (ci, ri), colors.HexColor("#" + st[1])))
+                    style.append(("FONTNAME", (ci, ri), (ci, ri), "Helvetica-Bold"))
         t.setStyle(TableStyle(style))
         story.append(t)
         story.append(Spacer(1, 10))
@@ -357,10 +372,14 @@ def export_docx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
             zebra = PALETTE.ROW_EVEN if ri % 2 == 0 else None
             for i, h in enumerate(headers):
                 val = row[i] if i < len(row) else ""
-                _cell_text(cells[i], val)
-                fill = _status_fill(str(h), val) or zebra
-                if fill:
-                    _shade(cells[i], fill)
+                status = _status_style(str(h), val)
+                if status:
+                    _cell_text(cells[i], val, bold=True, color=status[1])
+                    _shade(cells[i], status[0])
+                else:
+                    _cell_text(cells[i], val)
+                    if zebra:
+                        _shade(cells[i], zebra)
 
     add_table(
         "Critical Path Activities",
@@ -531,9 +550,12 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
         bottom=Side(style="thin", color=PALETTE.LINE),
     )
 
-    def _fill_for(header: str, value: str):
-        hexc = _status_fill(header, value)
-        return PatternFill("solid", fgColor=hexc) if hexc else None
+    def _status_for(header: str, value: str):
+        """(PatternFill, Font) for a status cell, or (None, None)."""
+        st = _status_style(header, value)
+        if not st:
+            return None, None
+        return PatternFill("solid", fgColor=st[0]), Font(color=st[1], bold=True)
 
     ws["A1"] = payload.get("title") or "Export"
     ws["A1"].font = Font(bold=True, size=14, color=PALETTE.STEEL_DEEP)
@@ -592,9 +614,10 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
                 cell = ws.cell(r, c, val)
                 cell.border = thin
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
-                status = _fill_for(str(h), val)
-                if status:
-                    cell.fill = status
+                fill, font = _status_for(str(h), val)
+                if fill:
+                    cell.fill = fill
+                    cell.font = font
                 elif zebra:
                     cell.fill = zebra
             r += 1
@@ -630,9 +653,10 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
                     val = row[c - 1] if c - 1 < len(row) else ""
                     cell = wsn.cell(ri, c, val)
                     cell.border = thin
-                    status = _fill_for(str(h), val)
-                    if status:
-                        cell.fill = status
+                    fill, font = _status_for(str(h), val)
+                    if fill:
+                        cell.fill = fill
+                        cell.font = font
                     elif zebra:
                         cell.fill = zebra
             wsn.freeze_panes = "A2"
