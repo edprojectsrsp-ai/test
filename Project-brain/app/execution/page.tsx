@@ -6,6 +6,7 @@ import {
   CheckSquare, Plus, RefreshCw, ChevronDown, ChevronRight,
   FileText, Truck, ClipboardList, Building2, Save, Trash2
 } from "lucide-react";
+import { PageHeader } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -254,29 +255,25 @@ export default function ExecutionPage({ initialTab = "contract" }: { initialTab?
   // ── Render ────────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen p-8 pt-10 text-white bg-zinc-950">
-
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="flex items-center gap-3 text-3xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-cyan-500">
-            <CheckSquare className="h-8 w-8 text-emerald-400 shrink-0" style={{ WebkitTextFillColor: "initial" }} />
-            Execution Tracker
-          </h1>
-          <p className="text-zinc-400 text-sm mt-1">Contract details, milestones, TOD &amp; Appendix-II</p>
-        </div>
-        <select
-          value={selectedId}
-          onChange={(e) => setSelectedId(e.target.value)}
-          className="min-w-[320px] rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 font-semibold outline-none focus:border-emerald-400 text-sm"
-        >
-          {schemes.map((s) => (
-            <option key={s.scheme_id} value={s.scheme_id}>
-              [{s.scheme_id}] {s.scheme_name}
-            </option>
-          ))}
-        </select>
-      </div>
+    <div className="min-h-screen p-8 pt-10" style={{ color: "var(--ink)" }}>
+      <PageHeader
+        title="Execution Tracker"
+        subtitle="Contract details, milestones, TOD & Appendix-II"
+        right={
+          <select
+            value={selectedId}
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="min-w-[300px] rounded-lg border px-3 py-2 text-sm font-semibold outline-none"
+            style={{ borderColor: "var(--line-2)", background: "var(--panel)", color: "var(--ink)" }}
+          >
+            {schemes.map((s) => (
+              <option key={s.scheme_id} value={s.scheme_id}>
+                [{s.scheme_id}] {s.scheme_name}
+              </option>
+            ))}
+          </select>
+        }
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-zinc-800">

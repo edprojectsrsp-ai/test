@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useMos } from "@/components/brain/MosContext";
+import { PageHeader } from "@/ui";
 
 const API_URL = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/schemes`;
 
@@ -287,20 +288,20 @@ export default function AddSchemeWizard() {
 
   return (
     <div className="relative min-h-screen p-10 pt-20 text-[var(--ink)]">
-      <div className="mx-auto mb-10 flex max-w-4xl flex-col justify-between gap-4 md:flex-row md:items-center">
-        <h1 className="flex items-center gap-3 text-4xl font-bold tracking-tight text-[var(--ink)]">
-          <span className="rounded-full border border-[var(--steel-dim)] bg-[var(--steel-soft)] px-4 py-1 text-lg text-[var(--steel)]">
-            Step {step}/3
-          </span>
-          Scheme Registration
-        </h1>
-
-        <Link href="/add/bulk">
-          <button className="flex items-center gap-2 rounded-xl border border-[var(--verdigris)] bg-[var(--verdigris-soft)] px-5 py-2.5 font-medium text-[var(--verdigris)] transition-all hover:scale-105 hover:brightness-[.98]">
-            <UploadCloud size={20} />
-            Bulk Upload (Excel)
-          </button>
-        </Link>
+      <div className="mx-auto mb-6 max-w-4xl">
+        <PageHeader
+          title="Scheme Registration"
+          subtitle={`Step ${step} of 3`}
+          right={
+            <Link href="/add/bulk">
+              <button className="flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition-all hover:brightness-[.98]"
+                      style={{ borderColor: "var(--verdigris)", background: "var(--verdigris-soft)", color: "var(--verdigris)" }}>
+                <UploadCloud size={18} />
+                Bulk Upload (Excel)
+              </button>
+            </Link>
+          }
+        />
       </div>
 
       <div className="mx-auto max-w-4xl">

@@ -4,8 +4,8 @@ import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
-import { motion } from "framer-motion";
 import { TrendingUp, AlertTriangle, Calendar, Target, Activity, Package, Building2 } from "lucide-react";
+import { PageHeader } from "@/ui";
 import PlanVersionsOverlay from "./PlanVersionsOverlay";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
@@ -228,27 +228,10 @@ export default function SCurvePage() {
   return (
     <div className="min-h-screen" style={{ background: C.bg, color: C.ink, padding: 24 }}>
       <div className="max-w-7xl mx-auto">
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 4 }}>
-            <span
-              style={{
-                width: 40, height: 40, borderRadius: 14, display: "grid", placeItems: "center",
-                background: "linear-gradient(145deg, #eff6ff, #ecfdf5)",
-                border: `1px solid ${C.borderSoft}`,
-                color: C.plan,
-                boxShadow: "0 8px 20px -12px rgba(37,99,235,.35)",
-              }}
-            >
-              <TrendingUp className="w-5 h-5" />
-            </span>
-            <h1 className="fz-display" style={{ fontSize: 28, fontWeight: 800, color: C.ink, margin: 0, letterSpacing: "-0.03em" }}>
-              S-Curve — Plan vs Actual
-            </h1>
-          </div>
-          <p style={{ color: C.muted, fontSize: 14, fontWeight: 550, marginBottom: 20, marginLeft: 52 }}>
-            Cumulative progress with linear-regression forecast · executive view
-          </p>
-        </motion.div>
+        <PageHeader
+          title="S-Curve — Plan vs Actual"
+          subtitle="Cumulative progress with linear-regression forecast · executive view"
+        />
 
         {/* Controls */}
         <div
