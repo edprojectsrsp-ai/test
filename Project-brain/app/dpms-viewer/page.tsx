@@ -3,43 +3,32 @@
 import dynamic from "next/dynamic";
 import { useState } from "react";
 import { Database, ExternalLink, GitBranch, Layers, List, RefreshCw, Table2 } from "lucide-react";
+import { LoadingState } from "@/ui";
 
 const DPMS_URL = process.env.NEXT_PUBLIC_DPMS_VIEWER_URL || "http://localhost:8010";
 
+const tabLoader = (label: string) => () => (
+  <div style={{ padding: 24 }}><LoadingState label={label} rows={4} /></div>
+);
+
 const DpmsErdStudio = dynamic(() => import("@/components/dpms/DpmsErdStudio"), {
   ssr: false,
-  loading: () => (
-    <div style={{ padding: 28, fontSize: 13, color: "var(--ink-4)" }}>
-      Loading join board…
-    </div>
-  ),
+  loading: tabLoader("Loading join board…"),
 });
 
 const DpmsSavedLinks = dynamic(() => import("@/components/dpms/DpmsSavedLinks"), {
   ssr: false,
-  loading: () => (
-    <div style={{ padding: 28, fontSize: 13, color: "var(--ink-4)" }}>
-      Loading saved relationships…
-    </div>
-  ),
+  loading: tabLoader("Loading saved relationships…"),
 });
 
 const DpmsTableData = dynamic(() => import("@/components/dpms/DpmsTableData"), {
   ssr: false,
-  loading: () => (
-    <div style={{ padding: 28, fontSize: 13, color: "var(--ink-4)" }}>
-      Loading table data…
-    </div>
-  ),
+  loading: tabLoader("Loading table data…"),
 });
 
 const DpmsProjectMaster = dynamic(() => import("@/components/dpms/DpmsProjectMaster"), {
   ssr: false,
-  loading: () => (
-    <div style={{ padding: 28, fontSize: 13, color: "var(--ink-4)" }}>
-      Loading project master…
-    </div>
-  ),
+  loading: tabLoader("Loading project master…"),
 });
 
 type Tab = "board" | "master" | "data" | "saved" | "classic";
