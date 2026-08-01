@@ -11,7 +11,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  CreditCard,
   FileText,
   Loader2,
   Plus,
@@ -20,6 +19,7 @@ import {
   Trash2,
   TrendingUp,
 } from "lucide-react";
+import { PageHeader, LoadingState } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -226,44 +226,40 @@ export default function BillingPage() {
     d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
   return (
-    <div className="relative min-h-screen bg-[radial-gradient(circle_at_50%_0%,rgba(34,211,238,0.05)_0%,transparent_60%)] p-10 pt-20 text-white">
-      {/* Header */}
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-zinc-800 pb-6">
-        <div>
-          <h1 className="mb-1 flex items-center gap-3 text-4xl font-bold">
-            <CreditCard className="h-8 w-8 text-emerald-400" />
-            Billing Schedule
-          </h1>
-          <p className="text-zinc-400">Milestone billing & payment monitoring</p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <select
-            value={selectedScheme}
-            onChange={e => setSelectedScheme(e.target.value)}
-            className="min-w-[260px] rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
-          >
-            {schemes.map(s => (
-              <option key={s.id} value={s.id}>[{s.id}] {s.scheme_name}</option>
-            ))}
-          </select>
-          {packages.length > 0 && (
+    <div className="relative min-h-screen p-10 pt-6" style={{ color: "var(--ink)" }}>
+      <PageHeader
+        title="Billing Schedule"
+        subtitle="Milestone billing & payment monitoring"
+        right={
+          <div className="flex flex-wrap gap-3">
             <select
-              value={selectedPkg}
-              onChange={e => setSelectedPkg(e.target.value)}
-              className="min-w-[180px] rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-sm font-bold outline-none focus:border-emerald-400"
+              value={selectedScheme}
+              onChange={e => setSelectedScheme(e.target.value)}
+              className="min-w-[240px] rounded-lg border px-3 py-2 text-sm font-semibold outline-none"
+              style={{ borderColor: "var(--line-2)", background: "var(--panel)", color: "var(--ink)" }}
             >
-              {packages.map(p => (
-                <option key={p.package_id} value={p.package_id}>{p.package_name}</option>
+              {schemes.map(s => (
+                <option key={s.id} value={s.id}>[{s.id}] {s.scheme_name}</option>
               ))}
             </select>
-          )}
-        </div>
-      </div>
+            {packages.length > 0 && (
+              <select
+                value={selectedPkg}
+                onChange={e => setSelectedPkg(e.target.value)}
+                className="min-w-[180px] rounded-lg border px-3 py-2 text-sm font-semibold outline-none"
+                style={{ borderColor: "var(--line-2)", background: "var(--panel)", color: "var(--ink)" }}
+              >
+                {packages.map(p => (
+                  <option key={p.package_id} value={p.package_id}>{p.package_name}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        }
+      />
 
       {loading && (
-        <div className="flex items-center justify-center gap-2 py-20 text-emerald-400">
-          <Loader2 className="h-6 w-6 animate-spin" /> Loading billing data…
-        </div>
+        <div className="py-8"><LoadingState label="Loading billing data…" rows={6} /></div>
       )}
 
       {!loading && summary && (
