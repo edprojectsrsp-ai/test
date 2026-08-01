@@ -10,9 +10,10 @@ same network, so they lock in the engine's correctness.
 from datetime import date
 
 from app.services.cpm_engine import CPMActivity, CPMEngine
+from app.services.work_calendar import SEVEN_DAY, WorkCalendar
 
 
-def _engine(project_start: date, activities: list[CPMActivity]) -> CPMEngine:
+def _engine(project_start: date, activities: list[CPMActivity], calendar=SEVEN_DAY) -> CPMEngine:
     eng = CPMEngine.__new__(CPMEngine)          # skip __init__ (no DB)
     eng.schedule_id = 0
     eng.conn = None
@@ -20,6 +21,7 @@ def _engine(project_start: date, activities: list[CPMActivity]) -> CPMEngine:
     eng.project_start = project_start
     eng.project_finish = None
     eng.activities = {a.activity_id: a for a in activities}
+    eng.calendar = calendar
     return eng
 
 
@@ -90,6 +92,29 @@ def test_ss_dependency_with_lag():
     assert B.early_finish == date(2026, 1, 7)
     # A finishes 01-07, B finishes 01-07 -> project finish 01-07
     assert eng.project_finish == date(2026, 1, 7)
+
+
+def test_calendar_skips_weekend_in_forward_pass():
+    """Same A3->B4 chain, but a Mon–Fri calendar pushes dates across weekends.
+
+    Start Thu 2026-01-01 (a working day). A dur 3 working days: Thu, Fri, then
+    skip Sat/Sun -> Mon. Engine convention EF = ES + 3 working days.
+    """
+    cal = WorkCalendar(working_weekdays=range(5), name="5-day")  # Mon–Fri
+    A, B = _act(1, "A", 3), _act(2, "B", 4)
+    _link(A, B)
+    eng = _engine(date(2026, 1, 1), [A, B], calendar=cal)
+    eng.forward_pass()
+    # A starts Thu 01-01; +3 working days (Fri, Mon, Tue) -> EF 01-06 (skips weekend)
+    assert A.early_start == date(2026, 1, 1)
+    assert A.early_finish == date(2026, 1, 6)
+    # B starts at A.EF, +4 working days -> lands mid next week, never on a weekend
+    assert B.early_start == date(2026, 1, 6)
+    assert B.early_finish.weekday() < 5           # finish is a weekday
+    # every computed date is a working day
+    for a in (A, B):
+        assert cal.is_working(a.early_start)
+        assert cal.is_working(a.early_finish)
 
 
 def test_circular_dependency_is_reported_not_crashed():

@@ -83,25 +83,47 @@ def _date_diff_days(d1: Optional[date], d2: Optional[date]) -> float:
 
 
 class CPMEngine:
-    def __init__(self, schedule_id: int, conn):
+    def __init__(self, schedule_id: int, conn, calendar=None):
         self.schedule_id = schedule_id
         self.conn = conn
         self.activities: dict[int, CPMActivity] = {}
         self.project_start: Optional[date] = None
         self.project_finish: Optional[date] = None
         self.warnings: list[str] = []
+        # Work calendar controls which days count as working days. The default
+        # 7-day calendar treats every day as working, so behaviour is identical
+        # to the pre-calendar engine unless a real calendar is supplied.
+        if calendar is None:
+            from app.services.work_calendar import SEVEN_DAY
+            calendar = SEVEN_DAY
+        self.calendar = calendar
 
     def load(self):
         """Load activities + dependencies + schedule meta from DB."""
         cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT project_start_date, data_date FROM cpm_schedules
+            SELECT project_start_date, data_date, working_weekdays, holidays
+            FROM cpm_schedules
             WHERE schedule_id=%s
         """, (self.schedule_id,))
         sched = cur.fetchone()
         if not sched:
             raise ValueError(f"Schedule {self.schedule_id} not found")
         self.project_start = sched['project_start_date'] or sched['data_date'] or date.today()
+
+        # Build the work calendar from the schedule's stored config. Null
+        # working_weekdays keeps the default 7-day (all-days-work) calendar, so
+        # existing schedules behave exactly as before until a calendar is set.
+        weekdays = sched.get('working_weekdays')
+        holidays = sched.get('holidays')
+        if weekdays:
+            from app.services.work_calendar import WorkCalendar
+            self.calendar = WorkCalendar(
+                working_weekdays=[int(w) for w in weekdays],
+                holidays=set(holidays or []),
+                name=f"schedule-{self.schedule_id}",
+            )
+        # else: keep self.calendar (SEVEN_DAY default from __init__)
 
         cur.execute("""
             SELECT activity_id, activity_code, activity_name,
@@ -159,6 +181,22 @@ class CPMEngine:
             visit(act)
         return order
 
+    def _adv(self, d: Optional[date], days: float) -> Optional[date]:
+        """Advance `days` *working* days from d using the schedule calendar.
+
+        With the default 7-day calendar every day is a working day, so this is
+        identical to plain calendar arithmetic and the engine's pre-calendar
+        behaviour is preserved exactly."""
+        if d is None:
+            return None
+        return self.calendar.add_working_days(d, days)
+
+    def _work_diff(self, d1: Optional[date], d2: Optional[date]) -> float:
+        """Working days between d2 and d1 (d1 - d2), calendar-aware."""
+        if d1 is None or d2 is None:
+            return 0.0
+        return float(self.calendar.working_days_between(d2, d1))
+
     def forward_pass(self):
         """Compute Early Start and Early Finish for every activity."""
         for act in self._topological_order():
@@ -171,16 +209,16 @@ class CPMEngine:
                 candidates: list[date] = []
                 for pred, dep_type, lag in act.predecessors:
                     if dep_type == 'FS' and pred.early_finish:
-                        candidates.append(_add_days(pred.early_finish, lag))
+                        candidates.append(self._adv(pred.early_finish, lag))
                     elif dep_type == 'SS' and pred.early_start:
-                        candidates.append(_add_days(pred.early_start, lag))
+                        candidates.append(self._adv(pred.early_start, lag))
                     elif dep_type == 'FF' and pred.early_finish:
                         # Successor must finish at or after pred's EF + lag; back-calc start
-                        ef_constraint = _add_days(pred.early_finish, lag)
-                        candidates.append(_add_days(ef_constraint, -act.duration))
+                        ef_constraint = self._adv(pred.early_finish, lag)
+                        candidates.append(self._adv(ef_constraint, -act.duration))
                     elif dep_type == 'SF' and pred.early_start:
-                        sf_constraint = _add_days(pred.early_start, lag)
-                        candidates.append(_add_days(sf_constraint, -act.duration))
+                        sf_constraint = self._adv(pred.early_start, lag)
+                        candidates.append(self._adv(sf_constraint, -act.duration))
                 act.early_start = _max_date(candidates) or self.project_start
 
             # Apply constraints
@@ -190,11 +228,11 @@ class CPMEngine:
             elif act.constraint_type == 'must_start_on' and act.constraint_date:
                 act.early_start = act.constraint_date
 
-            # EF = ES + duration
+            # EF = ES + duration (working days)
             if act.actual_finish:
                 act.early_finish = act.actual_finish
             else:
-                act.early_finish = _add_days(act.early_start, act.duration)
+                act.early_finish = self._adv(act.early_start, act.duration)
 
         # Project finish = max EF
         self.project_finish = _max_date([a.early_finish for a in self.activities.values()])
@@ -210,15 +248,15 @@ class CPMEngine:
                 candidates: list[date] = []
                 for succ, dep_type, lag in act.successors:
                     if dep_type == 'FS' and succ.late_start:
-                        candidates.append(_add_days(succ.late_start, -lag))
+                        candidates.append(self._adv(succ.late_start, -lag))
                     elif dep_type == 'SS' and succ.late_start:
                         # Pred must start before succ start - lag, so latest pred finish is unconstrained
                         # but pred start ≤ succ.LS - lag. So pred LF = pred LS + dur = (succ.LS - lag) + dur
-                        candidates.append(_add_days(succ.late_start, -lag + act.duration))
+                        candidates.append(self._adv(succ.late_start, -lag + act.duration))
                     elif dep_type == 'FF' and succ.late_finish:
-                        candidates.append(_add_days(succ.late_finish, -lag))
+                        candidates.append(self._adv(succ.late_finish, -lag))
                     elif dep_type == 'SF' and succ.late_finish:
-                        candidates.append(_add_days(succ.late_finish, -lag + act.duration))
+                        candidates.append(self._adv(succ.late_finish, -lag + act.duration))
                 act.late_finish = _min_date(candidates) or self.project_finish
 
             # Apply constraints
@@ -228,22 +266,22 @@ class CPMEngine:
             elif act.constraint_type == 'must_finish_on' and act.constraint_date:
                 act.late_finish = act.constraint_date
 
-            act.late_start = _add_days(act.late_finish, -act.duration)
+            act.late_start = self._adv(act.late_finish, -act.duration)
 
     def compute_float(self):
         """Compute total float and free float; mark critical."""
         for act in self.activities.values():
-            # Total float = LS - ES (in days)
-            act.total_float = _date_diff_days(act.late_start, act.early_start)
+            # Total float = LS - ES (in working days)
+            act.total_float = self._work_diff(act.late_start, act.early_start)
 
-            # Free float = min(ES of successors via FS) - EF
+            # Free float = min(ES of successors via FS) - EF, in working days
             succ_es: list[date] = []
             for succ, dep_type, lag in act.successors:
                 if dep_type == 'FS' and succ.early_start:
-                    succ_es.append(_add_days(succ.early_start, -lag))
+                    succ_es.append(self._adv(succ.early_start, -lag))
             min_succ_es = _min_date(succ_es)
             if min_succ_es and act.early_finish:
-                act.free_float = float((min_succ_es - act.early_finish).days)
+                act.free_float = self._work_diff(min_succ_es, act.early_finish)
             else:
                 act.free_float = act.total_float
 
