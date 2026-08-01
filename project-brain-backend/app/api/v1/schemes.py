@@ -340,6 +340,14 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
                 "extension_letter_no", "approved_by_date", "reason"
             ]) for e in cy.tod_extensions]
 
+            # Reconcile the effective TOD (Tender Opening Date): the latest
+            # extension's date wins over the original, so consumers don't have
+            # to re-derive it. Pick the extension with the highest extension_no
+            # that carries a date; fall back to the original TOD.
+            dated_exts = [e for e in cy.tod_extensions if e.extended_to_date]
+            latest_ext = max(dated_exts, key=lambda e: (e.extension_no or 0)) if dated_exts else None
+            tod_effective = latest_ext.extended_to_date if latest_ext else cy.tod_original_date
+
             tendering_data.append({
                 "tender_cycle_id": cy.tender_cycle_id,
                 "package_id": p.package_id,
@@ -355,6 +363,8 @@ def get_scheme_full(scheme_id: int, db: Session = Depends(get_db)):
                 "nit_date": _date(cy.nit_date),
                 "pre_bid_date": _date(cy.pre_bid_date),
                 "tod_original_date": _date(cy.tod_original_date),
+                "tod_effective_date": _date(tod_effective),
+                "tod_extension_count": len(dated_exts),
                 "offers_received_count": cy.offers_received_count,
                 "bidder_names": cy.bidder_names or [],
                 "cancellation_reason": cy.cancellation_reason,

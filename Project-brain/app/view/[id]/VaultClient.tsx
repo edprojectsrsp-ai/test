@@ -610,8 +610,14 @@ function TenderingTab({ data, packages }: any) {
               <div><span className="text-zinc-500">NIT Date: </span><span className="text-white">{c.nit_date || "—"}</span></div>
               <div><span className="text-zinc-500">Mode: </span><span className="text-white">{c.mode_of_tender || "—"}</span></div>
               <div><span className="text-zinc-500">Offers: </span><span className="text-white">{c.offers_received_count ?? "—"}</span></div>
-              <div><span className="text-zinc-500">TOD: </span><span className="text-white">{c.tod_original_date || "—"}</span></div>
-              <div><span className="text-zinc-500">Extensions: </span><span className="text-white">{c.tod_extensions?.length ?? 0}</span></div>
+              <div>
+                <span className="text-zinc-500">TOD: </span>
+                <span className="text-white">{c.tod_effective_date || c.tod_original_date || "—"}</span>
+                {c.tod_effective_date && c.tod_original_date && c.tod_effective_date !== c.tod_original_date && (
+                  <span className="text-zinc-500"> (orig <span className="line-through">{c.tod_original_date}</span>)</span>
+                )}
+              </div>
+              <div><span className="text-zinc-500">Extensions: </span><span className="text-white">{c.tod_extension_count ?? c.tod_extensions?.length ?? 0}</span></div>
             </div>
           </div>
         ))}
