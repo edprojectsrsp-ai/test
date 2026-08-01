@@ -114,11 +114,11 @@ export default function ReportsHub() {
     },
     {
       name: "Physical Progress",
-      desc: "9-column activity-wise progress table",
+      desc: "9-column activity-wise progress table — Scope, FTM & FY Plan/Actual, Cumulative; month-selectable",
       icon: Activity,
       color: "border-emerald-500/40 hover:bg-emerald-500/10",
       iconCls: "text-emerald-400",
-      path: "/table",
+      path: "/statics",
       badge: null,
     },
     {
