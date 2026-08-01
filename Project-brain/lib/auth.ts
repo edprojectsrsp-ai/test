@@ -13,13 +13,20 @@ export type BrainUser = {
   department?: string;
 };
 
+/** A real backend JWT has three dot-separated segments (header.payload.sig).
+ *  Stale/placeholder values (e.g. "dev") are not JWTs and cause the export
+ *  endpoints to 401 with "Invalid token: Not enough segments", so we skip
+ *  them when picking the token to send. */
+function looksLikeJwt(v: string | null): boolean {
+  return !!v && v.split(".").length === 3;
+}
+
 export function getToken(): string | null {
   if (typeof localStorage === "undefined") return null;
-  for (const k of TOKEN_KEYS) {
-    const v = localStorage.getItem(k);
-    if (v) return v;
-  }
-  return null;
+  // Prefer a value that actually looks like a JWT, so a garbage value left in
+  // one key doesn't shadow a valid token in another and break downloads.
+  const values = TOKEN_KEYS.map((k) => localStorage.getItem(k)).filter(Boolean) as string[];
+  return values.find(looksLikeJwt) ?? values[0] ?? null;
 }
 
 export function setSession(token: string, user?: BrainUser) {

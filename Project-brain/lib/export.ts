@@ -17,6 +17,12 @@ function filenameFromDisposition(header: string | null, fallback: string): strin
 
 async function downloadBlob(res: Response, fallbackName: string) {
   if (!res.ok) {
+    // Auth failures on export are almost always a stale/expired session — the
+    // raw "Invalid token: Not enough segments" is meaningless to a user, so
+    // turn 401/403 into an actionable message.
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Your session has expired — please sign in again, then retry the download.");
+    }
     let detail = `Export failed (${res.status})`;
     try {
       const j = await res.json();
