@@ -17,12 +17,12 @@ export default function Appendix2Redirect() {
   }, [router]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center">
+    <div className="min-h-screen flex items-center justify-center" style={{ color: "var(--ink)" }}>
       <div className="text-center">
-        <div className="text-lg font-bold text-zinc-400 mb-2">Redirecting…</div>
-        <p className="text-sm text-zinc-500">
+        <div className="text-lg font-bold mb-2" style={{ color: "var(--ink-3)" }}>Redirecting…</div>
+        <p className="text-sm" style={{ color: "var(--ink-4)" }}>
           Appendix-2 has moved to the{" "}
-          <a href="/progress/plan-engine" className="text-cyan-400 underline">
+          <a href="/progress/plan-engine" className="underline" style={{ color: "var(--steel)" }}>
             Master Plan Engine
           </a>
           .

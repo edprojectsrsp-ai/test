@@ -6,6 +6,7 @@ import {
   Clock, AlertTriangle, User, Building2, ChevronRight, Plus, Search,
   Inbox, Archive, FileCheck2
 } from "lucide-react";
+import { PageHeader, Chip } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 const USER_ID = 1; // TODO: from auth
@@ -93,20 +94,13 @@ export default function NotesheetPage() {
   if (view === "detail" && selected) return <DetailView data={selected} onBack={() => { setView("list"); load(); }} />;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6">
+    <div className="min-h-screen p-6" style={{ color: "var(--ink)" }}>
       <div className="max-w-7xl mx-auto">
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} className="mb-6">
-          <div className="flex items-center gap-3 mb-2">
-            <FileText className="w-8 h-8 text-indigo-400" />
-            <h1 className="text-3xl font-bold">e-NoteSheet</h1>
-            <span className="px-2 py-0.5 text-xs font-mono rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              SPRINT 9A · DIGITAL FILE NOTING
-            </span>
-          </div>
-          <p className="text-zinc-400">
-            Paper file replacement. Every note, signature, decision tracked digitally. Notes are immutable.
-          </p>
-        </motion.div>
+        <PageHeader
+          title="e-NoteSheet"
+          subtitle="Paper file replacement — every note, signature and decision tracked digitally. Notes are immutable."
+          right={<Chip tone="steel" dot>Digital file noting</Chip>}
+        />
 
         <div className="flex items-center justify-between mb-4 gap-3">
           <div className="flex flex-wrap gap-2">
