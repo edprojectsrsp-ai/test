@@ -6,9 +6,8 @@
 // All maths is in integer WORKING-DAY UNITS, matching the backend engine.
 // Durations, lags and float are unit counts; conversion to calendar dates goes
 // through WorkCalendar at the display boundary, never by plain day addition. The backend
-// _scheduling_module remains the authority for official runs; this engine gives
-// instant in-browser recompute while dragging bars — something the rival's
-// iframe module cannot do without a server round-trip.
+// api/v1/cpm engine remains the authority for official runs; this engine gives
+// instant in-browser recompute while dragging bars, without a server round-trip.
 import { API_BASE, MOCK } from "@/lib/furnace/gridApi";
 
 import { WorkCalendar } from "@/lib/furnace/workCalendar";

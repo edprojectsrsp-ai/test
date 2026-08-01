@@ -4,9 +4,9 @@
 //   Day/Week/Month zoom. No GPL debt (deliberately NOT dhtmlxGantt free tier).
 // Intelligence: lib/furnace/cpmEngine.ts — instant in-browser CPM recompute
 //   (drag a bar → critical path re-flows live) + 10 DCMA-style health checks.
-// Backend: existing _scheduling_module endpoints for official runs, XER/MSP
-//   import, baselines. The rival's Codex-built module is an iframe island that
-//   needs a server round-trip for every recalculation; this does it in <1ms.
+// Backend: api/v1/cpm endpoints for official runs, XER/MSP import, baselines.
+//   The in-browser engine here does live recalculation in <1ms, with no
+//   server round-trip per drag.
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 const BaselinePanel = dynamic(() => import("@/app/cpm/BaselinePanel"), { ssr: false });
