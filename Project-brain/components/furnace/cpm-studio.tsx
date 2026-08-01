@@ -318,7 +318,6 @@ export default function CpmStudio() {
               </span>
             )}
           </span>
-          <a href="/cpm" style={{ textDecoration: "none" }}><Button>Advanced / Projects</Button></a>
         </div>
       </Card>
 

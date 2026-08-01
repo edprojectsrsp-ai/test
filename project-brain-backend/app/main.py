@@ -1,5 +1,4 @@
 import os
-import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -77,14 +76,13 @@ from app.api.v1 import report_docs
 from app.api.v1.exports import router as exports_router
 from report_brain.api import router as report_brain_router
 
-SCHEDULING_ROOT = Path(__file__).resolve().parents[2] / "_scheduling_module"
-if SCHEDULING_ROOT.exists() and str(SCHEDULING_ROOT) not in sys.path:
-    sys.path.insert(0, str(SCHEDULING_ROOT))
-
-try:
-    from scheduling_module.app.api.routes import router as scheduling_router
-except Exception:
-    scheduling_router = None
+# The standalone scheduling module (_scheduling_module, /api/scheduling) has
+# been retired: its frontend "/cpm Advanced" view was consolidated into the
+# primary CPM Studio (/furnace/cpm), which uses the audited api/v1/cpm engine
+# on the cpm_schedules schema. The module is left on disk but no longer mounted,
+# so /api/scheduling/* is not served. The /health endpoint below reports it as
+# unavailable. To revive it, restore the import + include_router below.
+scheduling_router = None
 
 app = FastAPI(title="Project Brain API")
 
