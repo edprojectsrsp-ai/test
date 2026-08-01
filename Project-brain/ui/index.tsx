@@ -242,19 +242,88 @@ export function PageHeader({ title, subtitle, right }: { title: string; subtitle
         gap: 16, flexWrap: "wrap", marginBottom: 10,
         padding: "14px 16px",
         borderRadius: 16,
-        /* Solid light-blue page header + black type for max contrast */
-        background: "#dbeafe",
-        border: "1px solid #93c5fd",
-        boxShadow: "0 1px 0 rgba(255,255,255,.7) inset, 0 2px 8px -4px rgba(37,99,235,.18)",
+        /* Light-blue Ministry band — theme-aware so dark mode & presets apply */
+        background: "var(--table-head)",
+        border: "1px solid var(--line-2)",
+        boxShadow: "0 2px 8px -4px color-mix(in srgb, var(--steel) 18%, transparent)",
       }}
     >
       <div>
-        <h1 className="fz-display" style={{ fontWeight: 800, fontSize: 26, margin: 0, color: "#0a0a0a", WebkitTextFillColor: "#0a0a0a", background: "none" }}>{title}</h1>
+        <h1 className="fz-display" style={{ fontWeight: 800, fontSize: 26, margin: 0, color: "var(--ink)", WebkitTextFillColor: "var(--ink)", background: "none" }}>{title}</h1>
         {subtitle && (
-          <p style={{ fontSize: 13, color: "#0a0a0a", margin: "6px 0 0", fontWeight: 600 }}>{subtitle}</p>
+          <p style={{ fontSize: 13, color: "var(--ink-3)", margin: "6px 0 0", fontWeight: 600 }}>{subtitle}</p>
         )}
       </div>
       {right && <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>{right}</div>}
+    </div>
+  );
+}
+
+/* ---------- Skeleton (shimmer placeholder) ---------- */
+export function Skeleton({ width = "100%", height = 14, radius = 8, style }:
+  { width?: number | string; height?: number | string; radius?: number; style?: CSSProperties }) {
+  return (
+    <span
+      aria-hidden
+      className="ui-skeleton"
+      style={{
+        display: "block", width, height, borderRadius: radius,
+        background:
+          "linear-gradient(90deg, color-mix(in srgb, var(--panel-3) 88%, transparent) 25%, " +
+          "color-mix(in srgb, var(--steel-soft) 60%, var(--panel-3)) 37%, " +
+          "color-mix(in srgb, var(--panel-3) 88%, transparent) 63%)",
+        backgroundSize: "400% 100%",
+        animation: "ui-shimmer 1.4s ease infinite",
+        ...style,
+      }}
+    />
+  );
+}
+
+/* ---------- LoadingState (spinner + label, centred) ---------- */
+export function LoadingState({ label = "Loading…", rows }:
+  { label?: string; rows?: number }) {
+  if (rows && rows > 0) {
+    return (
+      <div style={{ display: "grid", gap: 10 }} role="status" aria-label={label}>
+        {Array.from({ length: rows }).map((_, i) => (
+          <Skeleton key={i} height={18} width={`${92 - (i % 3) * 12}%`} />
+        ))}
+      </div>
+    );
+  }
+  return (
+    <div role="status" aria-label={label}
+      style={{ display: "flex", alignItems: "center", gap: 10, color: "var(--ink-3)", padding: "18px 4px", fontSize: 14 }}>
+      <span className="ui-spin" style={{
+        width: 18, height: 18, borderRadius: "50%",
+        border: "2.5px solid color-mix(in srgb, var(--steel) 30%, transparent)",
+        borderTopColor: "var(--steel)", display: "inline-block",
+      }} />
+      {label}
+    </div>
+  );
+}
+
+/* ---------- EmptyState (no-data / error placeholder) ---------- */
+export function EmptyState({ title, hint, icon, action, tone = "neutral" }:
+  { title: string; hint?: string; icon?: ReactNode; action?: ReactNode; tone?: "neutral" | "error" }) {
+  const isErr = tone === "error";
+  return (
+    <div
+      role={isErr ? "alert" : undefined}
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        textAlign: "center", gap: 8, padding: "40px 24px", borderRadius: "var(--r-lg)",
+        border: `1px solid ${isErr ? "color-mix(in srgb, var(--molten) 40%, var(--line-2))" : "var(--line)"}`,
+        background: isErr ? "var(--molten-soft)" : "var(--panel-3)",
+        color: isErr ? "var(--molten)" : "var(--ink-3)",
+      }}
+    >
+      {icon && <div style={{ opacity: 0.85, marginBottom: 2 }}>{icon}</div>}
+      <div style={{ fontWeight: 700, fontSize: 15, color: isErr ? "var(--molten)" : "var(--ink)" }}>{title}</div>
+      {hint && <div style={{ fontSize: 13, maxWidth: 420 }}>{hint}</div>}
+      {action && <div style={{ marginTop: 8 }}>{action}</div>}
     </div>
   );
 }

@@ -402,6 +402,15 @@ button {
   transform: translateY(-1px);
 }
 
+/* Shared @/ui state components — shimmer + spinner */
+@keyframes ui-shimmer { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+@keyframes ui-spin { to { transform: rotate(360deg); } }
+.ui-spin { animation: ui-spin 0.7s linear infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .ui-skeleton { animation: none; }
+  .ui-spin { animation-duration: 1.4s; }
+}
+
 /* Sidebar nav — hover + keyboard focus (inline styles can't express these) */
 .sidebar-link:hover:not([aria-current="page"]) {
   background: color-mix(in srgb, var(--steel-soft) 60%, transparent);
