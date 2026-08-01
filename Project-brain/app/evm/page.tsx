@@ -18,10 +18,11 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
-  Activity, AlertTriangle, ArrowLeft, Gauge, HelpCircle, IndianRupee,
+  Activity, AlertTriangle, ArrowLeft, HelpCircle, IndianRupee,
   LayoutGrid, Loader2, RefreshCw, TrendingDown, TrendingUp, X,
 } from "lucide-react";
 import { authFetch } from "@/lib/auth";
+import { PageHeader, EmptyState } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 
@@ -129,38 +130,35 @@ export default function EvmStudio() {
 
   return (
     <div style={{ padding: "16px 22px", maxWidth: 1280, margin: "0 auto" }}>
-      {/* header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
-        <Gauge size={19} style={{ color: "var(--steel)" }} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 17, fontWeight: 850, letterSpacing: "-0.02em" }}>EVM Studio</div>
-          <div style={{ fontSize: 11.5, color: "var(--ink-4)" }}>
-            Earned value · PV / EV / AC · CPI · SPI · EAC forecasting — live figures, ₹ Cr
-          </div>
-        </div>
-        <select style={inp} value={schemeId ?? ""} onChange={(e) => setSchemeId(e.target.value ? Number(e.target.value) : null)}>
-          <option value="">Portfolio board — all schemes</option>
-          {schemes.map((s) => <option key={s.scheme_id} value={s.scheme_id}>{s.scheme_name}</option>)}
-        </select>
-        <select style={inp} value={fy} onChange={(e) => setFy(Number(e.target.value))}>
-          {[defaultFy - 2, defaultFy - 1, defaultFy, defaultFy + 1].map((y) => (
-            <option key={y} value={y}>FY {y}-{String(y + 1).slice(2)}</option>
-          ))}
-        </select>
-        <button style={{ ...inp, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700 }}
-                onClick={() => (schemeId != null ? loadDetail(schemeId) : loadPortfolio())}>
-          {busy ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Refresh
-        </button>
-        <button style={{ ...inp, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
-                onClick={() => setShowGlossary(true)} title="Metric definitions">
-          <HelpCircle size={13} />
-        </button>
-      </div>
+      <PageHeader
+        title="EVM Studio"
+        subtitle="Earned value · PV / EV / AC · CPI · SPI · EAC forecasting — live figures, ₹ Cr"
+        right={
+          <>
+            <select style={inp} value={schemeId ?? ""} onChange={(e) => setSchemeId(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">Portfolio board — all schemes</option>
+              {schemes.map((s) => <option key={s.scheme_id} value={s.scheme_id}>{s.scheme_name}</option>)}
+            </select>
+            <select style={inp} value={fy} onChange={(e) => setFy(Number(e.target.value))}>
+              {[defaultFy - 2, defaultFy - 1, defaultFy, defaultFy + 1].map((y) => (
+                <option key={y} value={y}>FY {y}-{String(y + 1).slice(2)}</option>
+              ))}
+            </select>
+            <button style={{ ...inp, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5, fontWeight: 700 }}
+                    onClick={() => (schemeId != null ? loadDetail(schemeId) : loadPortfolio())}>
+              {busy ? <Loader2 size={13} className="spin" /> : <RefreshCw size={13} />} Refresh
+            </button>
+            <button style={{ ...inp, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}
+                    onClick={() => setShowGlossary(true)} title="Metric definitions">
+              <HelpCircle size={13} />
+            </button>
+          </>
+        }
+      />
 
       {err && (
-        <div style={{ marginBottom: 12, padding: "8px 12px", borderRadius: 8, background: "rgba(229,83,75,.12)",
-                      border: "1px solid rgba(229,83,75,.4)", color: "#e5534b", fontSize: 12.5, fontWeight: 600 }}>
-          {err}
+        <div style={{ marginBottom: 12 }}>
+          <EmptyState tone="error" icon={<AlertTriangle size={24} />} title="Couldn't load EVM data" hint={err} />
         </div>
       )}
 
