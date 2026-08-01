@@ -2,7 +2,8 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { AlertCircle, ArrowDownToLine, ArrowUpFromLine, Package, Plus } from "lucide-react";
+import { AlertCircle, ArrowDownToLine, ArrowUpFromLine, Plus } from "lucide-react";
+import { PageHeader, LoadingState } from "@/ui";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -140,24 +141,21 @@ export default function MaterialTracking() {
 
   return (
     <div className="relative min-h-screen p-10 pt-20 text-[var(--ink)]">
-      <div className="mb-10 flex items-end justify-between border-b border-[var(--line)] pb-6">
-        <div>
-          <h1 className="mb-2 flex items-center gap-3 text-4xl font-bold tracking-tight">
-            <Package className="h-8 w-8 text-[var(--steel)]" />
-            Material Tracking
-          </h1>
-          <p className="text-lg text-[var(--ink-3)]">Live inventory, procurement, and site consumption</p>
-        </div>
-        <select
-          value={selectedScheme}
-          onChange={(event) => setSelectedScheme(event.target.value)}
-          className="min-w-[300px] rounded-xl border border-[var(--line)] bg-[var(--panel)] px-4 py-3 text-lg font-bold text-[var(--ink)] outline-none focus:border-[var(--steel)]"
-        >
-          {schemes.map((scheme) => (
-            <option key={scheme.id} value={scheme.id}>[{scheme.id}] {scheme.scheme_name}</option>
-          ))}
-        </select>
-      </div>
+      <PageHeader
+        title="Material Tracking"
+        subtitle="Live inventory, procurement, and site consumption"
+        right={
+          <select
+            value={selectedScheme}
+            onChange={(event) => setSelectedScheme(event.target.value)}
+            className="min-w-[280px] rounded-lg border border-[var(--line-2)] bg-[var(--panel)] px-3 py-2 text-sm font-semibold text-[var(--ink)] outline-none focus:border-[var(--steel)]"
+          >
+            {schemes.map((scheme) => (
+              <option key={scheme.id} value={scheme.id}>[{scheme.id}] {scheme.scheme_name}</option>
+            ))}
+          </select>
+        }
+      />
 
       <div className="grid grid-cols-1 gap-8 xl:grid-cols-4">
         <div className="space-y-6 xl:col-span-1">
@@ -222,7 +220,7 @@ export default function MaterialTracking() {
 
         <div className="flex flex-col overflow-hidden rounded-3xl border border-[var(--line)] bg-[var(--panel)] shadow-[var(--shadow-lg)] xl:col-span-3">
           {isLoading ? (
-            <div className="flex flex-1 items-center justify-center text-[var(--steel)] animate-pulse">Loading Inventory...</div>
+            <div className="flex-1 p-6"><LoadingState label="Loading inventory…" rows={6} /></div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full border-collapse text-left">
