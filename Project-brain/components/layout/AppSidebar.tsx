@@ -103,7 +103,7 @@ const baseLinkStyle: CSSProperties = {
   padding: "12px 14px",
   borderRadius: 14,
   marginBottom: 4,
-  color: "#0a0a0a",
+  color: "var(--ink)",
   background: "transparent",
   border: "1px solid transparent",
   transition: "transform .22s cubic-bezier(.22,1,.36,1), box-shadow .22s ease, background .18s ease",
@@ -115,10 +115,10 @@ const baseLinkStyle: CSSProperties = {
 function activeLinkStyle(): CSSProperties {
   return {
     ...baseLinkStyle,
-    color: "#0a0a0a",
-    background: "#dbeafe",
-    border: "1px solid #93c5fd",
-    boxShadow: "0 4px 12px -8px rgba(37,99,235,.35)",
+    color: "var(--ink)",
+    background: "var(--steel-soft)",
+    border: "1px solid var(--steel)",
+    boxShadow: "0 4px 12px -8px color-mix(in srgb, var(--steel) 35%, transparent)",
     transform: "translateX(4px)",
   };
 }
@@ -151,15 +151,15 @@ export default function AppSidebar() {
   return (
     <div
       className="z-10 flex h-screen w-80 flex-col"
-      style={{ ...passiveSurfaceStyle(), position: "fixed", left: 0, top: 0, background: "#ffffff" }}
+      style={{ ...passiveSurfaceStyle(), position: "fixed", left: 0, top: 0, background: "var(--panel)" }}
       data-sidebar
     >
       <div
         className="flex items-center gap-4 p-6"
         style={{
-          borderBottom: "1px solid #93c5fd",
-          /* Solid light-blue brand header — crisp black type */
-          background: "#dbeafe",
+          borderBottom: "1px solid var(--line-2)",
+          /* Brand header — light-blue band (Ministry), theme-aware */
+          background: "var(--table-head)",
         }}
       >
         <motion.div
@@ -174,14 +174,14 @@ export default function AppSidebar() {
             className="text-2xl font-bold tracking-tight"
             style={{
               fontFamily: "var(--font-display), Fraunces, Georgia, serif",
-              color: "#0a0a0a",
-              WebkitTextFillColor: "#0a0a0a",
+              color: "var(--ink)",
+              WebkitTextFillColor: "var(--ink)",
               background: "none",
             }}
           >
             PROJECT BRAIN
           </h1>
-          <p className="text-xs font-semibold" style={{ color: "#0a0a0a" }}>
+          <p className="text-xs font-semibold" style={{ color: "var(--ink)" }}>
             RSP · Ministry Command
           </p>
         </div>
@@ -197,7 +197,7 @@ export default function AppSidebar() {
           <div key={group.label} className="mb-3">
             <p
               className="mb-2 px-3 text-[11px] font-extrabold uppercase tracking-[0.12em]"
-              style={{ color: "#0a0a0a" }}
+              style={{ color: "var(--ink-3)" }}
             >
               {group.label}
             </p>
@@ -209,11 +209,12 @@ export default function AppSidebar() {
                   key={module.path}
                   type="button"
                   onClick={() => router.push(module.path)}
-                  className="w-full"
+                  aria-current={active ? "page" : undefined}
+                  className="w-full sidebar-link"
                   style={active ? activeLinkStyle() : baseLinkStyle}
                 >
-                  <Icon className="h-4 w-4 shrink-0" style={{ color: "#0a0a0a" }} />
-                  <span className="text-sm font-semibold" style={{ letterSpacing: "-0.01em", color: "#0a0a0a" }}>{module.name}</span>
+                  <Icon className="h-4 w-4 shrink-0" style={{ color: active ? "var(--steel)" : "var(--ink-3)" }} />
+                  <span className="text-sm font-semibold" style={{ letterSpacing: "-0.01em", color: "var(--ink)" }}>{module.name}</span>
                 </button>
               );
             })}
@@ -222,7 +223,7 @@ export default function AppSidebar() {
         })}
       </div>
 
-      <div className="px-4 py-3 text-[10px]" style={{ borderTop: "1px solid #e2e8f0", color: "#0a0a0a" }}>
+      <div className="px-4 py-3 text-[10px]" style={{ borderTop: "1px solid var(--line)", color: "var(--ink-4)" }}>
         Sprint 0 shell · auth-hardened routes
       </div>
     </div>
