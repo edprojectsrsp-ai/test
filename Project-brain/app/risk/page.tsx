@@ -1,7 +1,8 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, AlertCircle, CheckCircle2, ShieldQuestion, Flame, TrendingDown, DollarSign, Clock, RefreshCw } from "lucide-react";
+import { AlertTriangle, AlertCircle, CheckCircle2, ShieldQuestion, TrendingDown, DollarSign, Clock, RefreshCw } from "lucide-react";
+import { PageHeader, LoadingState, EmptyState, Chip } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -44,20 +45,13 @@ export default function RiskHeatmapPage() {
   const filtered = filter === "all" ? items : items.filter(x => x.overall_risk === filter);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 p-8">
+    <div className="min-h-screen p-8" style={{ color: "var(--ink)" }}>
       <div className="max-w-7xl mx-auto">
-        <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
-          <div className="flex items-center gap-3 mb-2">
-            <Flame className="w-8 h-8 text-red-400" />
-            <h1 className="text-3xl font-bold">Risk Heatmap</h1>
-            <span className="px-2 py-0.5 text-xs font-mono rounded bg-red-500/20 text-red-300 border border-red-500/30">
-              SPRINT 7 · INTELLIGENCE
-            </span>
-          </div>
-          <p className="text-zinc-400 mb-6">
-            5 risk rules computed nightly across the portfolio. Where friend's app shows static numbers, we surface trouble before it grows.
-          </p>
-        </motion.div>
+        <PageHeader
+          title="Risk Heatmap"
+          subtitle="5 risk rules computed nightly across the portfolio — surfacing trouble before it grows."
+          right={<Chip tone="critical" dot>Intelligence</Chip>}
+        />
 
         {summary && (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
@@ -81,8 +75,14 @@ export default function RiskHeatmapPage() {
           ))}
         </div>
 
-        {loading ? <div className="text-zinc-400">Loading risk data...</div> :
-         filtered.length === 0 ? <div className="text-zinc-400 text-center py-12">No items match this filter.</div> :
+        {loading ? <LoadingState label="Loading risk data…" rows={6} /> :
+         filtered.length === 0 ? (
+           <EmptyState
+             icon={<ShieldQuestion size={28} />}
+             title="No packages match this filter"
+             hint={filter === "all" ? "No risk items in the portfolio yet." : "Try the All Packages filter to see everything."}
+           />
+         ) :
          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
            {filtered.map(item => (
              <motion.div key={item.package_id} layout
