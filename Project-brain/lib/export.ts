@@ -120,6 +120,25 @@ export async function exportRsReport(opts: {
   return downloadBlob(res, `${opts.name || "report"}.${opts.fmt}`);
 }
 
+/** CMD Weekly Report — schemes above Rs 100 Cr, project/package-wise execution.
+ *  Renders the already-assembled report payload via the generic export engine. */
+export async function exportCmdWeekly(opts: {
+  format: ExportFormat;
+  payload: Record<string, unknown>;
+  month?: string;
+}) {
+  const res = await fetch(`${API}/exports/render`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({
+      format: opts.format,
+      filename_stem: `CMD_Weekly_Report_${opts.month || ""}`.replace(/_$/, ""),
+      payload: opts.payload,
+    }),
+  });
+  return downloadBlob(res, `CMD_Weekly_Report.${opts.format}`);
+}
+
 /** Generic payload render (template designer / what-if) */
 export async function exportPayload(opts: {
   format: ExportFormat;

@@ -12,6 +12,7 @@ import {
   ClipboardList,
   Building2,
   ChevronRight,
+  CalendarClock,
 } from "lucide-react";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
@@ -147,6 +148,15 @@ export default function ReportsHub() {
   })();
 
   const portfolioReports: ReportCard[] = [
+    {
+      name: "CMD Weekly Report",
+      desc: "Project/package-wise execution report for schemes above Rs 100 Cr — synopsis, cost, dates and activity-wise physical progress. View & download.",
+      icon: CalendarClock,
+      color: "border-emerald-500/40 hover:bg-emerald-500/10",
+      iconCls: "text-emerald-400",
+      href: "/reports/cmd-weekly",
+      badge: "New",
+    },
     {
       name: "MoS CAPEX Format",
       desc: "Monthly overview of CAPEX projects including expenditure, progress and delays",

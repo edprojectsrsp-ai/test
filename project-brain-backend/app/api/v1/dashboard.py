@@ -45,6 +45,37 @@ def _first_of_month(month_str: str) -> date:
     return date(yr, mo, 1)
 
 
+def _norm(s: Optional[str]) -> str:
+    """Lower-case alphanumeric-only key for fuzzy name matching."""
+    import re as _re
+    return _re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _match_capex_to_package(pkg_name: str, capex_rows: list) -> Optional[dict]:
+    """Best-effort match of a package to its CAPEX Item row by name overlap.
+    capex_rows: list of dicts with 'row_name'. Returns the matched row or None."""
+    pk = _norm(pkg_name)
+    best, best_score = None, 0
+    for r in capex_rows:
+        rn = _norm(r.get("row_name"))
+        if not rn or not pk:
+            continue
+        if rn == pk:
+            return r
+        # longest common token / containment score
+        score = 0
+        if rn in pk or pk in rn:
+            score = min(len(rn), len(pk))
+        else:
+            # count shared 4+ char fragments (e.g. "bpp", "cdcp", "battery")
+            for tok in {rn[i:i + 4] for i in range(max(0, len(rn) - 3))}:
+                if tok in pk:
+                    score = max(score, len(tok))
+        if score > best_score:
+            best, best_score = r, score
+    return best if best_score >= 3 else None
+
+
 def _delay_category(months_late: float):
     if months_late <= 0:
         return ("on_time", "green")
@@ -441,6 +472,256 @@ def get_capex_snapshot(scheme_id: int, db: Session = Depends(get_db)):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"CAPEX snapshot failed: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 4b. GET /cmd-weekly-form
+#     Assembles the "Execution Details" form data per scheme (one block per
+#     package). Field mapping (as specified by the ED-Projects office):
+#       - Date of award of contract      = contract effective_date (fallback loa_date)
+#       - Original date of completion    = contract schedule_completion_date
+#       - Overall Physical Progress      = weighted plan% vs actual% from plan_activities
+#       - CAPEX BE                       = be_fy (full year); Actual = actuals this FY
+#       - Financial Target % till month  = (last_fy + capex plan till month) / gross * 100
+#       - Financial Actual % till month  = (last_fy + capex actual till month) / gross * 100
+#       - Activity rows                  = weighted % progress (plan vs actual), per package
+#     Everything not derivable is returned as None (blank in the form).
+# ---------------------------------------------------------------------------
+@router.get("/cmd-weekly-form")
+def get_cmd_weekly_form(
+    scheme_id: int,
+    month: Optional[str] = None,   # 'YYYY-MM'; defaults to current month
+    db: Session = Depends(get_db),
+):
+    try:
+        if not month:
+            today = date.today()
+            month = f"{today.year}-{today.month:02d}"
+        sel = _first_of_month(month)
+        # FY month number: April = 1 … March = 12
+        fy_month_no = sel.month - 3 if sel.month >= 4 else sel.month + 9
+
+        scheme = db.execute(text("""
+            SELECT scheme_id, scheme_name, current_status,
+                   estimated_cost_cr, sanctioned_cost_cr
+            FROM scheme_master WHERE scheme_id = :sid AND is_deleted = FALSE
+        """), {"sid": scheme_id}).first()
+        if not scheme:
+            raise HTTPException(status_code=404, detail="Scheme not found")
+
+        # ---- CAPEX Item rows (each ≈ one package) ----------------------------
+        item_rows = db.execute(text("""
+            SELECT r.id, r.row_name, r.package_id,
+                   COALESCE(v.gross_cost, 0)                  AS gross_cost,
+                   COALESCE(v.cumulative_exp_till_last_fy, 0) AS last_fy,
+                   COALESCE(v.be_fy, 0)                        AS be_fy
+            FROM capex_plan_rows r
+            JOIN capex_plan_values v ON v.plan_row_id = r.id
+            WHERE r.scheme_id = :sid AND r.row_level = 'Item'
+            ORDER BY r.display_order, r.id
+        """), {"sid": scheme_id}).fetchall()
+
+        # month-wise plan/actual per Item row, up to the selected FY month
+        month_by_row: dict = {}
+        if item_rows:
+            for row in db.execute(text("""
+                SELECT mv.plan_row_id AS rid,
+                       COALESCE(SUM(mv.be_amount), 0)     AS plan_till,
+                       COALESCE(SUM(mv.actual_amount), 0) AS actual_till
+                FROM capex_month_values mv
+                JOIN capex_plan_rows r ON r.id = mv.plan_row_id
+                WHERE r.scheme_id = :sid AND r.row_level = 'Item' AND mv.month_no <= :mno
+                GROUP BY mv.plan_row_id
+            """), {"sid": scheme_id, "mno": fy_month_no}).fetchall():
+                month_by_row[row.rid] = (float(row.plan_till or 0), float(row.actual_till or 0))
+
+        capex_items = []
+        capex_by_pkg: dict = {}
+        for r in item_rows:
+            pt, at = month_by_row.get(r.id, (0.0, 0.0))
+            item = {
+                "id": r.id, "row_name": r.row_name, "package_id": r.package_id,
+                "gross": float(r.gross_cost or 0), "last_fy": float(r.last_fy or 0),
+                "be_fy": float(r.be_fy or 0), "plan_till": pt, "actual_till": at,
+            }
+            capex_items.append(item)
+            # exact package link via capex_plan_rows.package_id (aggregate if >1 row/pkg)
+            if r.package_id is not None:
+                agg = capex_by_pkg.setdefault(r.package_id, {
+                    "gross": 0.0, "last_fy": 0.0, "be_fy": 0.0, "plan_till": 0.0, "actual_till": 0.0,
+                })
+                for k in ("gross", "last_fy", "be_fy", "plan_till", "actual_till"):
+                    agg[k] += item[k]
+
+        # scheme-level totals (for the summary block)
+        gross = sum(c["gross"] for c in capex_items)
+        last_fy = sum(c["last_fy"] for c in capex_items)
+        be_fy = sum(c["be_fy"] for c in capex_items)
+        plan_till = sum(c["plan_till"] for c in capex_items)
+        actual_till = sum(c["actual_till"] for c in capex_items)
+        if gross <= 0:
+            gross = float(scheme.sanctioned_cost_cr or scheme.estimated_cost_cr or 0)
+        fin_target_pct = round((last_fy + plan_till) / gross * 100, 2) if gross > 0 else None
+        fin_actual_pct = round((last_fy + actual_till) / gross * 100, 2) if gross > 0 else None
+
+        # ---- Packages of this scheme + their contracts -----------------------
+        pkgs = db.execute(text("""
+            SELECT p.package_id, p.package_name, p.package_value_cr, p.package_estimate_cr
+            FROM packages p
+            WHERE p.scheme_id = :sid AND p.is_deleted = FALSE
+            ORDER BY p.package_no, p.package_id
+        """), {"sid": scheme_id}).fetchall()
+
+        single_pkg = len(pkgs) == 1
+        used_capex_ids: set = set()
+
+        packages = []
+        for p in pkgs:
+            con = db.execute(text("""
+                SELECT effective_date, loa_date, schedule_completion_date,
+                       expected_completion_date
+                FROM contracts
+                WHERE package_id = :pid AND is_deleted = FALSE AND is_active = TRUE
+                ORDER BY contract_id DESC LIMIT 1
+            """), {"pid": p.package_id}).first()
+
+            award = None
+            orig_completion = None
+            if con:
+                award = (con.effective_date or con.loa_date)
+                orig_completion = con.schedule_completion_date
+
+            # weighted physical % for this package (plan vs actual)
+            acts = db.execute(text("""
+                SELECT pa.activity_id, pa.activity_name, pa.scope_qty, pa.weight_pct,
+                       pa.actuals_till_last_fy
+                FROM plan_activities pa
+                JOIN progress_plans pp ON pp.plan_id = pa.plan_id
+                WHERE pp.package_id = :pid
+                  AND pp.is_current = TRUE AND pp.is_deleted = FALSE
+                  AND pa.is_deleted = FALSE
+                ORDER BY pa.sort_order, pa.activity_id
+            """), {"pid": p.package_id}).fetchall()
+
+            act_ids = [a.activity_id for a in acts]
+            fy_start = _fy_start(month)
+            import calendar as _cal
+            last_day = _cal.monthrange(sel.year, sel.month)[1]
+            fy_end = date(sel.year, sel.month, last_day)
+
+            plan_map, act_map = {}, {}
+            if act_ids:
+                id_list = ",".join(str(x) for x in act_ids)
+                for row in db.execute(text(f"""
+                    SELECT activity_id, COALESCE(SUM(planned_qty),0) q
+                    FROM monthly_plan_entries
+                    WHERE activity_id IN ({id_list}) AND month_date >= :fs AND month_date <= :mo
+                      AND row_type='plan' GROUP BY activity_id
+                """), {"fs": fy_start.isoformat(), "mo": sel.isoformat()}).fetchall():
+                    plan_map[row.activity_id] = float(row.q)
+                for row in db.execute(text(f"""
+                    SELECT activity_id, COALESCE(SUM(actual_qty),0) q
+                    FROM daily_actuals
+                    WHERE activity_id IN ({id_list}) AND actual_date >= :fs AND actual_date <= :fe
+                    GROUP BY activity_id
+                """), {"fs": fy_start.isoformat(), "fe": fy_end.isoformat()}).fetchall():
+                    act_map[row.activity_id] = float(row.q)
+
+            activity_rows = []
+            wsum = 0.0
+            wplan = 0.0
+            wact = 0.0
+            for a in acts:
+                scope = float(a.scope_qty or 0)
+                weight = float(a.weight_pct or 0)
+                till_lfy = float(a.actuals_till_last_fy or 0)
+                cum_plan_qty = till_lfy + plan_map.get(a.activity_id, 0.0)
+                cum_act_qty = till_lfy + act_map.get(a.activity_id, 0.0)
+                # % completion of this activity (cumulative qty / scope)
+                plan_pct = round(cum_plan_qty / scope * 100, 2) if scope > 0 else None
+                act_pct = round(cum_act_qty / scope * 100, 2) if scope > 0 else None
+                mtd_plan_pct = round(plan_map.get(a.activity_id, 0.0) / scope * 100, 2) if scope > 0 else None
+                mtd_act_pct = round(act_map.get(a.activity_id, 0.0) / scope * 100, 2) if scope > 0 else None
+                activity_rows.append({
+                    "activity_name": a.activity_name,
+                    "scope": round(scope, 3) if scope else None,
+                    "mtd_plan_pct": mtd_plan_pct,
+                    "mtd_actual_pct": mtd_act_pct,
+                    "cum_plan_pct": plan_pct,
+                    "cum_actual_pct": act_pct,
+                })
+                if weight > 0 and scope > 0:
+                    wsum += weight
+                    wplan += weight * min(cum_plan_qty / scope, 1.0)
+                    wact += weight * min(cum_act_qty / scope, 1.0)
+
+            phys_plan_pct = round(wplan / wsum * 100, 2) if wsum > 0 else None
+            phys_act_pct = round(wact / wsum * 100, 2) if wsum > 0 else None
+
+            # ---- per-package CAPEX --------------------------------------------
+            # Exact link via capex_plan_rows.package_id. Fallbacks: single-package
+            # scheme → whole scheme CAPEX; else fuzzy name match (legacy safety).
+            if p.package_id in capex_by_pkg:
+                pkg_capex = capex_by_pkg[p.package_id]
+            elif single_pkg:
+                pkg_capex = {
+                    "gross": gross, "last_fy": last_fy, "be_fy": be_fy,
+                    "plan_till": plan_till, "actual_till": actual_till,
+                }
+            else:
+                remaining = [c for c in capex_items if c["id"] not in used_capex_ids]
+                m = _match_capex_to_package(p.package_name, remaining)
+                if m:
+                    used_capex_ids.add(m["id"])
+                    pkg_capex = m
+                else:
+                    pkg_capex = None
+
+            if pkg_capex:
+                p_gross = pkg_capex["gross"] or float(p.package_value_cr or p.package_estimate_cr or 0)
+                p_be = pkg_capex["be_fy"]
+                p_actual = pkg_capex["actual_till"]
+                p_fin_tgt = round((pkg_capex["last_fy"] + pkg_capex["plan_till"]) / p_gross * 100, 2) if p_gross > 0 else None
+                p_fin_act = round((pkg_capex["last_fy"] + pkg_capex["actual_till"]) / p_gross * 100, 2) if p_gross > 0 else None
+            else:
+                p_gross = float(p.package_value_cr or p.package_estimate_cr) if (p.package_value_cr or p.package_estimate_cr) else None
+                p_be = p_actual = p_fin_tgt = p_fin_act = None
+
+            packages.append({
+                "package_id": p.package_id,
+                "package_name": p.package_name,
+                "package_cost_cr": float(p.package_value_cr or p.package_estimate_cr) if (p.package_value_cr or p.package_estimate_cr) else None,
+                "gross_cost_cr": round(p_gross, 4) if p_gross else None,
+                "award_date": award.isoformat() if award else None,
+                "original_completion_date": orig_completion.isoformat() if orig_completion else None,
+                "physical_plan_pct": phys_plan_pct,
+                "physical_actual_pct": phys_act_pct,
+                "capex_be_fy_cr": round(p_be, 4) if p_be else None,
+                "capex_actual_fy_cr": round(p_actual, 4) if p_actual else None,
+                "financial_target_pct": p_fin_tgt,
+                "financial_actual_pct": p_fin_act,
+                "activities": activity_rows,
+            })
+
+        return {
+            "scheme_id": scheme.scheme_id,
+            "scheme_name": scheme.scheme_name,
+            "status": scheme.current_status,
+            "month": month,
+            "fy_month_no": fy_month_no,
+            "gross_cost_cr": round(gross, 4) if gross else None,
+            "original_cost_cr": float(scheme.estimated_cost_cr) if scheme.estimated_cost_cr else None,
+            "revised_cost_cr": float(scheme.sanctioned_cost_cr) if scheme.sanctioned_cost_cr else None,
+            "capex_be_fy_cr": round(be_fy, 4) if be_fy else None,
+            "capex_actual_fy_cr": round(actual_till, 4) if actual_till else None,
+            "financial_target_pct": fin_target_pct,
+            "financial_actual_pct": fin_actual_pct,
+            "packages": packages,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"CMD weekly form failed: {e}")
 
 
 # ---------------------------------------------------------------------------
