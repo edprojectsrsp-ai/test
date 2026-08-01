@@ -297,7 +297,7 @@ export default function CpmStudio() {
           <Button onClick={() => setShowChecker((c) => !c)} kind={showChecker ? "accent" : "default"}>Schedule Checker</Button>
           <Button onClick={() => setShowMultiBl((b) => !b)} kind={showMultiBl ? "accent" : "default"}>Compare Baselines</Button>
           <span style={{ position: "relative", display: "inline-block" }}>
-            <Button onClick={() => setExportOpen((o) => !o)}>Export \u25be</Button>
+            <Button onClick={() => setExportOpen((o) => !o)}>Export ▾</Button>
             {exportOpen && (
               <span style={{ position: "absolute", right: 0, top: "calc(100% + 5px)", zIndex: 40,
                 background: "var(--panel)", border: "1px solid var(--line)", borderRadius: "var(--r)",
