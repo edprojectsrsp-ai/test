@@ -33,6 +33,56 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 
 
+# ── Ministry palette ─────────────────────────────────────────────────────────
+# Single source of truth for export colours, mirroring the frontend
+# theme (Project-brain/theme/tokens.css). Hex values are given without the
+# leading "#" so they drop straight into openpyxl; helpers add "#" for
+# reportlab / docx where needed.
+
+class MinistryPalette:
+    HEAD = "DBEAFE"        # light-blue table header  (--table-head)
+    HEAD_INK = "0A0A0A"    # black header text        (--ink)
+    STEEL = "2563EB"       # brand blue               (--steel)
+    STEEL_DEEP = "1E40AF"  # deep brand               (--steel-deep)
+    ROW_EVEN = "F6F9FD"    # zebra even row           (--panel-2)
+    ROW_ODD = "FFFFFF"     # zebra odd row
+    LINE = "CFE0EC"        # gridline                 (--line-2)
+    GOOD = "ECFDF5"        # on-track fill            (--verdigris-soft)
+    GOOD_INK = "047857"
+    WARN = "FEFCE8"        # attention fill           (--slag-soft)
+    WARN_INK = "A16207"
+    CRIT = "FEF2F2"        # delay/shortfall fill     (--molten-soft)
+    CRIT_INK = "B91C1C"
+
+
+PALETTE = MinistryPalette
+
+
+# Column-name / value hints that drive status colouring. A cell is tinted
+# red when its column is a "negative" metric with a non-empty value (delay,
+# shortfall), amber for "watch" columns, green for explicit on-track markers.
+_CRIT_HINTS = ("delay", "shortfall", "hindrance", "overrun", "slippage", "variance (-)")
+_WARN_HINTS = ("revised", "extension", "pending", "risk", "reason")
+_GOOD_HINTS = ("on track", "on-track", "complete", "achieved", "no delay")
+
+
+def _status_fill(header: str, value: str) -> Optional[str]:
+    """Return a palette fill hex for a cell given its column header + value,
+    or None for no tint. Empty cells are never tinted."""
+    v = (value or "").strip()
+    if not v or v in {"-", "—", "0", "0%", "0.00"}:
+        return None
+    h = (header or "").lower()
+    vl = v.lower()
+    if any(g in vl for g in _GOOD_HINTS):
+        return PALETTE.GOOD
+    if any(c in h for c in _CRIT_HINTS):
+        return PALETTE.CRIT
+    if any(w in h for w in _WARN_HINTS):
+        return PALETTE.WARN
+    return None
+
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _esc(s: Any) -> str:
@@ -116,9 +166,11 @@ def export_pdf(payload: Dict[str, Any], output_path: Optional[str] = None) -> by
         data = [["Metric", "Value"]] + _as_rows(payload["kpi_rows"])
         t = Table(data, repeatRows=1, colWidths=[220, 220])
         t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b3d91")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + PALETTE.HEAD)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#" + PALETTE.HEAD_INK)),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#" + PALETTE.ROW_EVEN)]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + PALETTE.LINE)),
             ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
@@ -138,19 +190,30 @@ def export_pdf(payload: Dict[str, Any], output_path: Optional[str] = None) -> by
             story.append(Paragraph(f"• {_esc(item)}", styles["BodyText"]))
         story.append(Spacer(1, 8))
 
-    def add_table(title: str, headers: Sequence[str], rows: Sequence, header_color: str) -> None:
+    def add_table(title: str, headers: Sequence[str], rows: Sequence, header_color: str = None) -> None:
         if not rows:
             return
         story.append(Paragraph(f"<b>{_esc(title)}</b>", styles["Heading3"]))
-        data = [list(headers)] + _as_rows(rows)
+        header_rows = _as_rows(rows)
+        data = [list(headers)] + header_rows
         t = Table(data, repeatRows=1)
-        t.setStyle(TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        style = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#" + PALETTE.HEAD)),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#" + PALETTE.HEAD_INK)),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#" + PALETTE.ROW_EVEN)]),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#" + PALETTE.LINE)),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ]))
+        ]
+        # status tinting per cell (overrides zebra where it applies)
+        for ri, row in enumerate(header_rows, start=1):
+            for ci, h in enumerate(headers):
+                val = row[ci] if ci < len(row) else ""
+                fill = _status_fill(str(h), val)
+                if fill:
+                    style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#" + fill)))
+        t.setStyle(TableStyle(style))
         story.append(t)
         story.append(Spacer(1, 10))
 
@@ -192,6 +255,26 @@ def export_docx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
     from docx import Document
     from docx.shared import Inches, Pt, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    def _shade(cell, hex_no_hash: str) -> None:
+        """Set a table cell background fill (Word has no python-docx API for
+        this, so we write the w:shd element directly)."""
+        tc_pr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), hex_no_hash)
+        tc_pr.append(shd)
+
+    def _cell_text(cell, text: str, *, bold=False, color: Optional[str] = None, size=9) -> None:
+        cell.text = ""
+        run = cell.paragraphs[0].add_run(str(text))
+        run.bold = bold
+        run.font.size = Pt(size)
+        if color:
+            run.font.color.rgb = RGBColor.from_string(color)
 
     doc = Document()
     current_view_image = payload.get("current_view_image")
@@ -231,12 +314,18 @@ def export_docx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
     if payload.get("kpi_rows"):
         doc.add_heading("Key Indicators", level=1)
         table = doc.add_table(rows=1, cols=2)
-        table.rows[0].cells[0].text = "Metric"
-        table.rows[0].cells[1].text = "Value"
-        for row in _as_rows(payload["kpi_rows"]):
+        table.style = "Table Grid"
+        hdr = table.rows[0].cells
+        for i, h in enumerate(("Metric", "Value")):
+            _cell_text(hdr[i], h, bold=True, color=PALETTE.HEAD_INK)
+            _shade(hdr[i], PALETTE.HEAD)
+        for ri, row in enumerate(_as_rows(payload["kpi_rows"])):
             cells = table.add_row().cells
-            cells[0].text = row[0] if row else ""
-            cells[1].text = row[1] if len(row) > 1 else ""
+            _cell_text(cells[0], row[0] if row else "", bold=True)
+            _cell_text(cells[1], row[1] if len(row) > 1 else "")
+            if ri % 2 == 0:
+                _shade(cells[0], PALETTE.ROW_EVEN)
+                _shade(cells[1], PALETTE.ROW_EVEN)
 
     for heading, key in (
         ("Physical Progress Summary", "physical_text"),
@@ -259,12 +348,19 @@ def export_docx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
             return
         doc.add_heading(title, level=1)
         table = doc.add_table(rows=1, cols=len(headers))
+        table.style = "Table Grid"
         for i, h in enumerate(headers):
-            table.rows[0].cells[i].text = str(h)
-        for row in _as_rows(rows):
+            _cell_text(table.rows[0].cells[i], str(h), bold=True, color=PALETTE.HEAD_INK)
+            _shade(table.rows[0].cells[i], PALETTE.HEAD)
+        for ri, row in enumerate(_as_rows(rows)):
             cells = table.add_row().cells
+            zebra = PALETTE.ROW_EVEN if ri % 2 == 0 else None
             for i, h in enumerate(headers):
-                cells[i].text = row[i] if i < len(row) else ""
+                val = row[i] if i < len(row) else ""
+                _cell_text(cells[i], val)
+                fill = _status_fill(str(h), val) or zebra
+                if fill:
+                    _shade(cells[i], fill)
 
     add_table(
         "Critical Path Activities",
@@ -425,17 +521,22 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
     ws = wb.active
     ws.title = "Summary"
 
-    header_fill = PatternFill("solid", fgColor="0B3D91")
-    header_font = Font(color="FFFFFF", bold=True, size=11)
+    header_fill = PatternFill("solid", fgColor=PALETTE.HEAD)
+    header_font = Font(color=PALETTE.HEAD_INK, bold=True, size=11)
+    even_fill = PatternFill("solid", fgColor=PALETTE.ROW_EVEN)
     thin = Border(
-        left=Side(style="thin", color="B0B0B0"),
-        right=Side(style="thin", color="B0B0B0"),
-        top=Side(style="thin", color="B0B0B0"),
-        bottom=Side(style="thin", color="B0B0B0"),
+        left=Side(style="thin", color=PALETTE.LINE),
+        right=Side(style="thin", color=PALETTE.LINE),
+        top=Side(style="thin", color=PALETTE.LINE),
+        bottom=Side(style="thin", color=PALETTE.LINE),
     )
 
+    def _fill_for(header: str, value: str):
+        hexc = _status_fill(header, value)
+        return PatternFill("solid", fgColor=hexc) if hexc else None
+
     ws["A1"] = payload.get("title") or "Export"
-    ws["A1"].font = Font(bold=True, size=14, color="0B3D91")
+    ws["A1"].font = Font(bold=True, size=14, color=PALETTE.STEEL_DEEP)
     ws.merge_cells("A1:D1")
 
     meta = [
@@ -454,14 +555,21 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
     if payload.get("kpi_rows"):
         ws.cell(r, 1, "Key Indicators").font = Font(bold=True, size=12)
         r += 1
-        ws.cell(r, 1, "Metric").font = header_font
-        ws.cell(r, 1).fill = header_fill
-        ws.cell(r, 2, "Value").font = header_font
-        ws.cell(r, 2).fill = header_fill
+        for c, h in enumerate(("Metric", "Value"), 1):
+            cell = ws.cell(r, c, h)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.border = thin
         r += 1
-        for row in _as_rows(payload["kpi_rows"]):
-            ws.cell(r, 1, row[0] if row else "")
-            ws.cell(r, 2, row[1] if len(row) > 1 else "")
+        for ri, row in enumerate(_as_rows(payload["kpi_rows"])):
+            zebra = even_fill if ri % 2 == 0 else None
+            for c, val in enumerate((row[0] if row else "", row[1] if len(row) > 1 else ""), 1):
+                cell = ws.cell(r, c, val)
+                cell.border = thin
+                if c == 1:
+                    cell.font = Font(bold=True)
+                if zebra:
+                    cell.fill = zebra
             r += 1
         r += 1
 
@@ -477,11 +585,18 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
             cell.fill = header_fill
             cell.border = thin
         r += 1
-        for row in _as_rows(rows):
+        for ri, row in enumerate(_as_rows(rows)):
+            zebra = even_fill if ri % 2 == 0 else None
             for c, h in enumerate(headers, 1):
-                cell = ws.cell(r, c, row[c - 1] if c - 1 < len(row) else "")
+                val = row[c - 1] if c - 1 < len(row) else ""
+                cell = ws.cell(r, c, val)
                 cell.border = thin
                 cell.alignment = Alignment(wrap_text=True, vertical="top")
+                status = _fill_for(str(h), val)
+                if status:
+                    cell.fill = status
+                elif zebra:
+                    cell.fill = zebra
             r += 1
         r += 1
 
@@ -508,9 +623,19 @@ def export_xlsx(payload: Dict[str, Any], output_path: Optional[str] = None) -> b
                 cell = wsn.cell(1, c, str(h))
                 cell.font = header_font
                 cell.fill = header_fill
+                cell.border = thin
             for ri, row in enumerate(_as_rows(rows), 2):
+                zebra = even_fill if ri % 2 == 0 else None
                 for c, h in enumerate(headers, 1):
-                    wsn.cell(ri, c, row[c - 1] if c - 1 < len(row) else "")
+                    val = row[c - 1] if c - 1 < len(row) else ""
+                    cell = wsn.cell(ri, c, val)
+                    cell.border = thin
+                    status = _fill_for(str(h), val)
+                    if status:
+                        cell.fill = status
+                    elif zebra:
+                        cell.fill = zebra
+            wsn.freeze_panes = "A2"
             for col in wsn.columns:
                 wsn.column_dimensions[col[0].column_letter].width = 16
         else:
