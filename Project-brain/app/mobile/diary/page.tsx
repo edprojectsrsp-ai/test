@@ -11,7 +11,7 @@ import {
   syncOfflineQueue, showToast,
 } from "@/lib/native";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 const USER_ID = 1;
 
 type Pkg = { package_id: number; package_name: string; scheme_name: string; site_location?: string };
@@ -70,7 +70,7 @@ export default function MobileDiaryPage() {
   // Load packages for this user (if online)
   useEffect(() => {
     if (!online) return;
-    fetch(`${API}/api/v1/mobile/packages-for-me?user_id=${USER_ID}`)
+    fetch(`${API}/mobile/packages-for-me?user_id=${USER_ID}`)
       .then(r => r.json()).then(d => setPackages(d.packages || []))
       .catch(() => {/* offline — packages list will be empty */});
   }, [online]);
@@ -78,7 +78,7 @@ export default function MobileDiaryPage() {
   // Load activities for selected package
   useEffect(() => {
     if (!selectedPkg || !online) return;
-    fetch(`${API}/api/v1/mobile/activities/${selectedPkg}`)
+    fetch(`${API}/mobile/activities/${selectedPkg}`)
       .then(r => r.json()).then(d => setActivities(d.activities || []));
   }, [selectedPkg, online]);
 
@@ -151,7 +151,7 @@ export default function MobileDiaryPage() {
       await queueOfflineEntry({
         payload,
         photos: photosB64,
-        endpoint: "/api/v1/mobile/diary/submit",
+        endpoint: "/mobile/diary/submit",
       });
       const q = await getOfflineQueue();
       setQueueLen(q.length);
@@ -169,7 +169,7 @@ export default function MobileDiaryPage() {
         if (v != null) fd.append(k, String(v));
       }
       photos.forEach(p => fd.append("photos", p));
-      const r = await fetch(`${API}/api/v1/mobile/diary/submit`, { method: "POST", body: fd });
+      const r = await fetch(`${API}/mobile/diary/submit`, { method: "POST", body: fd });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setResult("success");
       resetForm();

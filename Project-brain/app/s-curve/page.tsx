@@ -8,7 +8,7 @@ import { TrendingUp, AlertTriangle, Calendar, Target, Activity, Package, Buildin
 import { PageHeader } from "@/ui";
 import PlanVersionsOverlay from "./PlanVersionsOverlay";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 /* Premium light palette — soft pastels, black labels */
 const C = {
@@ -167,11 +167,11 @@ export default function SCurvePage() {
   const [schemeError, setSchemeError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(`${API}/api/v1/portfolio/packages`)
+    fetch(`${API}/portfolio/packages`)
       .then(r => r.ok ? r.json() : Promise.reject(r.status))
       .then(d => setPackages(d.packages || d))
       .catch(() => setPackages([]));
-    fetch(`${API}/api/v1/dashboard/scheme-cards`)
+    fetch(`${API}/dashboard/scheme-cards`)
       .then(r => r.json())
       .then(d => { if (Array.isArray(d)) setSchemes(d.map((s: any) => ({ id: s.id, name: s.name }))); })
       .catch(() => {});
@@ -180,7 +180,7 @@ export default function SCurvePage() {
   useEffect(() => {
     if (viewMode !== "package" || !packageId) return;
     setPkgLoading(true); setPkgError(null);
-    fetch(`${API}/api/v1/progress/s-curve/${packageId}`)
+    fetch(`${API}/progress/s-curve/${packageId}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(setPkgData)
       .catch(e => setPkgError(String(e)))
@@ -190,7 +190,7 @@ export default function SCurvePage() {
   useEffect(() => {
     if (viewMode !== "scheme" || !schemeId) return;
     setSchemeLoading(true); setSchemeError(null);
-    fetch(`${API}/api/v1/s-curve/${schemeId}`)
+    fetch(`${API}/s-curve/${schemeId}`)
       .then(r => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(setSchemeData)
       .catch(e => setSchemeError(String(e)))

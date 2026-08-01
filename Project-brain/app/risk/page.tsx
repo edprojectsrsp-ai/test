@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import { AlertTriangle, AlertCircle, CheckCircle2, ShieldQuestion, TrendingDown, DollarSign, Clock, RefreshCw } from "lucide-react";
 import { PageHeader, LoadingState, EmptyState, Chip } from "@/ui";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
 type Indicator = { key: string; label: string; level: string; score: number; action: string };
 type HeatmapItem = {
@@ -34,8 +34,8 @@ export default function RiskHeatmapPage() {
 
   useEffect(() => {
     Promise.all([
-      fetch(`${API}/api/v1/risk/heatmap`).then(r => r.json()),
-      fetch(`${API}/api/v1/risk/summary`).then(r => r.json()),
+      fetch(`${API}/risk/heatmap`).then(r => r.json()),
+      fetch(`${API}/risk/summary`).then(r => r.json()),
     ]).then(([h, s]) => {
       setItems((h.items || []).filter((x: HeatmapItem) => !x.is_scheme_mirror));
       setSummary(s);

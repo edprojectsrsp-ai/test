@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { PageHeader, Chip } from "@/ui";
 
-const API = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
+const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 const USER_ID = 1; // TODO: from auth
 
 type Notesheet = {
@@ -61,32 +61,32 @@ export default function NotesheetPage() {
 
   const load = async () => {
     if (activeTab === "inbox" || activeTab === "outbox" || activeTab === "trash") {
-      const r = await fetch(`${API}/api/v1/notesheet/mailbox/${activeTab}?user_id=${USER_ID}`).then(r => r.json());
+      const r = await fetch(`${API}/notesheet/mailbox/${activeTab}?user_id=${USER_ID}`).then(r => r.json());
       setNotesheets(r.notesheets || []);
     } else {
-      const r = await fetch(`${API}/api/v1/notesheet`).then(r => r.json());
+      const r = await fetch(`${API}/notesheet`).then(r => r.json());
       setNotesheets(r.notesheets || []);
     }
   };
 
   const trashItem = async (id: number) => {
-    await fetch(`${API}/api/v1/notesheet/${id}/trash?user_id=${USER_ID}`, { method: "POST" });
+    await fetch(`${API}/notesheet/${id}/trash?user_id=${USER_ID}`, { method: "POST" });
     load();
   };
   const restoreItem = async (id: number) => {
-    await fetch(`${API}/api/v1/notesheet/${id}/restore?user_id=${USER_ID}`, { method: "POST" });
+    await fetch(`${API}/notesheet/${id}/restore?user_id=${USER_ID}`, { method: "POST" });
     load();
   };
 
   const open = async (id: number) => {
-    const r = await fetch(`${API}/api/v1/notesheet/${id}`).then(r => r.json());
+    const r = await fetch(`${API}/notesheet/${id}`).then(r => r.json());
     setSelected(r);
     setView("detail");
   };
 
   const search = async () => {
     if (!searchQuery.trim()) { load(); return; }
-    const r = await fetch(`${API}/api/v1/notesheet/search/text?q=${encodeURIComponent(searchQuery)}`).then(r => r.json());
+    const r = await fetch(`${API}/notesheet/search/text?q=${encodeURIComponent(searchQuery)}`).then(r => r.json());
     setNotesheets(r.matches || []);
   };
 
@@ -230,7 +230,7 @@ function DetailView({ data, onBack }: any) {
   const submitNote = async () => {
     if (!newNote.trim()) return;
     setSubmitting(true);
-    await fetch(`${API}/api/v1/notesheet/${ns.notesheet_id}/note`, {
+    await fetch(`${API}/notesheet/${ns.notesheet_id}/note`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ note_text: newNote, author_id: USER_ID }),
     });
@@ -240,7 +240,7 @@ function DetailView({ data, onBack }: any) {
   };
 
   const action = async (path: string, body: any = {}) => {
-    await fetch(`${API}/api/v1/notesheet/${ns.notesheet_id}/${path}`, {
+    await fetch(`${API}/notesheet/${ns.notesheet_id}/${path}`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...body, actor_id: USER_ID }),
     });
@@ -387,7 +387,7 @@ function CreateView({ onDone, onCancel }: any) {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetch(`${API}/api/v1/notesheet/workflows/templates`).then(r => r.json())
+    fetch(`${API}/notesheet/workflows/templates`).then(r => r.json())
       .then(d => setWorkflows(d.templates || []));
   }, []);
 
@@ -401,7 +401,7 @@ function CreateView({ onDone, onCancel }: any) {
       scheme_id: form.scheme_id ? parseInt(form.scheme_id) : null,
       workflow_template_id: form.workflow_template_id ? parseInt(form.workflow_template_id) : null,
     };
-    await fetch(`${API}/api/v1/notesheet`, {
+    await fetch(`${API}/notesheet`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
