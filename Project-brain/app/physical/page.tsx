@@ -15,6 +15,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useMos } from "@/components/brain/MosContext";
+import { PageHeader } from "@/ui";
 
 export default function PhysicalProgressHub() {
   const router = useRouter();
@@ -62,11 +63,11 @@ export default function PhysicalProgressHub() {
   };
 
   return (
-    <div className="mx-auto max-w-7xl pb-32 text-[var(--ink)]">
-      <h1 className="mb-8 flex items-center gap-4 font-[Space_Grotesk] text-5xl font-bold">
-        <Activity className="h-10 w-10 text-[var(--steel)]" />
-        Physical Progress Command Center
-      </h1>
+    <div className="mx-auto max-w-7xl pb-32" style={{ color: "var(--ink)" }}>
+      <PageHeader
+        title="Physical Progress Command Center"
+        subtitle="Weighted plan vs actual · variance · plan activation"
+      />
 
       {activeModule === "none" && (
         <div className="grid grid-cols-2 gap-8 mt-12">

@@ -6,6 +6,7 @@ import {
   Filter, RefreshCw, Package, AlertCircle
 } from "lucide-react";
 import Link from "next/link";
+import { PageHeader } from "@/ui";
 
 const API_URL = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/schemes/all`;
 
@@ -160,23 +161,20 @@ export default function ViewSchemesMaster() {
     <div className="min-h-screen p-8 text-[var(--ink)]">
       <div className="max-w-7xl mx-auto">
 
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-          <div>
-            <h1 className="text-3xl font-black tracking-tight text-[var(--ink)]">
-              Master <span className="text-cyan-400">Scheme Registry</span>
-            </h1>
-            <p className="text-zinc-400">All schemes from across the portfolio.</p>
-          </div>
-          <div className="flex items-center gap-3">
+        <PageHeader
+          title="Master Scheme Registry"
+          subtitle="All schemes from across the portfolio."
+          right={
             <button
               onClick={fetchSchemes}
-              className="rounded-xl border border-[var(--line)] bg-[var(--panel)] p-2 text-[var(--ink-3)] transition-all hover:bg-[var(--panel-2)] hover:text-[var(--steel)]"
+              title="Refresh"
+              className="rounded-lg border p-2 transition-all"
+              style={{ borderColor: "var(--line-2)", background: "var(--panel)", color: "var(--ink-3)" }}
             >
-              <RefreshCw size={20} className={loading ? "animate-spin text-cyan-400" : ""} />
+              <RefreshCw size={18} className={loading ? "animate-spin" : ""} style={loading ? { color: "var(--steel)" } : undefined} />
             </button>
-          </div>
-        </div>
+          }
+        />
 
         {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

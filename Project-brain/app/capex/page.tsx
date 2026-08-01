@@ -216,9 +216,9 @@ export default function CapexWorkspace() {
 
   return (
     <div className="module-active-capex capex-shell p-8 min-h-screen">
-      <div className="capex-surface flex items-end justify-between mb-6 p-6 rounded-3xl border gap-4" style={{ background: "#dbeafe", borderColor: "#93c5fd", color: "#0a0a0a" }}>
+      <div className="capex-surface flex items-end justify-between mb-6 p-6 rounded-3xl border gap-4" style={{ background: "var(--table-head)", borderColor: "var(--line-2)", color: "var(--ink)" }}>
         <div>
-          <h1 className="text-3xl font-black" style={{ color: "#0a0a0a" }}>
+          <h1 className="text-3xl font-black" style={{ color: "var(--ink)" }}>
             CAPEX COMMAND
           </h1>
           <div className="flex flex-wrap gap-3 mt-3 items-center">
