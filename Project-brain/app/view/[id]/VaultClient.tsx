@@ -16,6 +16,7 @@ import {
   Plus, Lock, Unlock,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import { authHeaders } from "@/lib/auth";
 
 const API = `${(process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "")}/schemes`;
 
@@ -86,12 +87,16 @@ export default function VaultClient({ schemeId }: { schemeId: number }) {
   // -----------------------------------------------------------------
   //  Fetch
   // -----------------------------------------------------------------
+  const reload = async () => {
+    const d = await fetch(`${API}/${id}/full`).then((r) => r.json());
+    if (d.detail) throw new Error(d.detail);
+    setData(d);
+    return d;
+  };
+
   useEffect(() => {
-    fetch(`${API}/${id}/full`)
-      .then((r) => r.json())
+    reload()
       .then((d) => {
-        if (d.detail) throw new Error(d.detail);
-        setData(d);
         if (d.packages?.length) setActivePackageId(d.packages[0].package_id);
         setLoading(false);
       })
@@ -408,6 +413,8 @@ export default function VaultClient({ schemeId }: { schemeId: number }) {
                   activePackageId={activePackageId}
                   setActivePackageId={setActivePackageId}
                   saveSection={saveSection}
+                  reload={reload}
+                  setToast={setToast}
                 />
               )}
             </div>
@@ -421,14 +428,14 @@ export default function VaultClient({ schemeId }: { schemeId: number }) {
 // =============================================================================
 //   TAB ROUTER
 // =============================================================================
-function TabRouter({ tab, data, updateField, activePackageId, setActivePackageId, saveSection }: any) {
+function TabRouter({ tab, data, updateField, activePackageId, setActivePackageId, saveSection, reload, setToast }: any) {
   switch (tab) {
     case "core":        return <CoreTab        data={data.core}        update={(f: string, v: any) => updateField("core", f, v)} />;
     case "formulation": return <FormulationTab data={data.formulation} update={(f: string, v: any) => updateField("formulation", f, v)} />;
     case "stage1":      return <Stage1Tab      data={data.stage1}      update={(f: string, v: any) => updateField("stage1", f, v)} />;
     case "stage2":      return <Stage2Tab      data={data.stage2}      update={(f: string, v: any) => updateField("stage2", f, v)} />;
     case "packages":    return <PackagesTab    data={data.packages}    activePackageId={activePackageId} setActivePackageId={setActivePackageId} update={(f: string, v: any, pid: number) => updateField("packages", f, v, pid)} />;
-    case "tendering":   return <TenderingTab   data={data.tendering}   packages={data.packages} />;
+    case "tendering":   return <TenderingTab   data={data.tendering}   packages={data.packages} schemeId={data.core?.scheme_id ?? data.scheme_id} reload={reload} setToast={setToast} />;
     case "contracts":   return <ContractsTab   data={data.contracts}   packages={data.packages} activePackageId={activePackageId} setActivePackageId={setActivePackageId} update={(f: string, v: any, pid: number) => updateField("contracts", f, v, pid)} />;
     case "completion":  return <CompletionTab  data={data.completion}  packages={data.packages} activePackageId={activePackageId} setActivePackageId={setActivePackageId} update={(f: string, v: any, pid: number) => updateField("completion", f, v, pid)} />;
     case "monitoring":  return <MonitoringTab  data={data.monitoring}  saveSection={saveSection} />;
@@ -584,47 +591,200 @@ function PackagesTab({ data, activePackageId, setActivePackageId, update }: any)
   );
 }
 
-function TenderingTab({ data, packages }: any) {
+const TENDER_STATUS = ["active", "under_evaluation", "awarded", "cancelled", "retendered"];
+const TENDER_MODES = ["Open", "Limited", "Single", "Nomination", "GeM", "EOI"];
+
+function TenderingTab({ data, packages, schemeId, reload, setToast }: any) {
+  const [adding, setAdding] = useState(false);
+  const [newPkg, setNewPkg] = useState<number | "">("");
+  const [busy, setBusy] = useState(false);
+
+  const api = async (path: string, opts: RequestInit) => {
+    const r = await fetch(`${API}${path}`, {
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      ...opts,
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || `Request failed (${r.status})`);
+    return j;
+  };
+
+  const saveCycle = async (payload: any) => {
+    setBusy(true);
+    try {
+      await api(`/${schemeId}/section/tender_cycle`, { method: "PUT", body: JSON.stringify(payload) });
+      await reload();
+      setToast?.({ msg: "Tender cycle saved", kind: "ok" });
+    } catch (e: any) {
+      setToast?.({ msg: e.message, kind: "err" });
+    } finally { setBusy(false); }
+  };
+
+  const addCycle = async () => {
+    if (!newPkg) return;
+    await saveCycle({ package_id: newPkg, cycle_status: "active" });
+    setAdding(false); setNewPkg("");
+  };
+
   return (
     <div>
-      <SectionTitle title="Tendering" subtitle={`${data.length} tender cycle${data.length !== 1 ? "s" : ""} across all packages`} />
+      <div className="flex items-center justify-between">
+        <SectionTitle title="Tendering" subtitle={`${data.length} tender cycle${data.length !== 1 ? "s" : ""} across all packages`} />
+        <button
+          onClick={() => setAdding((a) => !a)}
+          className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/10 px-3 py-2 text-sm text-cyan-300 hover:bg-cyan-500/20"
+        >
+          <Plus size={15} /> Add tender cycle
+        </button>
+      </div>
+
+      {adding && (
+        <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-4">
+          <div>
+            <label className="block text-xs uppercase tracking-wider text-zinc-500 mb-1.5">Package</label>
+            <select value={newPkg} onChange={(e) => setNewPkg(Number(e.target.value) || "")}
+              className="min-w-[240px] bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/50">
+              <option value="">— Select package —</option>
+              {packages?.map((p: any) => <option key={p.package_id} value={p.package_id}>{p.package_name}</option>)}
+            </select>
+          </div>
+          <button disabled={!newPkg || busy} onClick={addCycle}
+            className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50">
+            {busy ? "Creating…" : "Create cycle"}
+          </button>
+          <button onClick={() => { setAdding(false); setNewPkg(""); }}
+            className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800">Cancel</button>
+        </div>
+      )}
+
       <div className="space-y-3">
-        {data.length === 0 && (
-          <div className="text-zinc-500 text-sm italic">No tender cycles recorded yet. Add one from the package detail to start the tendering process.</div>
+        {data.length === 0 && !adding && (
+          <div className="text-zinc-500 text-sm italic">No tender cycles recorded yet. Use “Add tender cycle” above to start the tendering process.</div>
         )}
         {data.map((c: any) => (
-          <div key={c.tender_cycle_id} className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
-            <div className="flex justify-between items-start mb-3">
-              <div>
-                <div className="font-bold text-white">{c.package_name}</div>
-                <div className="text-xs text-zinc-500">Cycle #{c.cycle_no} {c.cycle_label && `· ${c.cycle_label}`}</div>
-              </div>
-              <span className={`px-2 py-0.5 rounded text-xs uppercase tracking-wider ${
-                c.cycle_status === "awarded" ? "bg-emerald-500/10 text-emerald-400" :
-                c.cycle_status === "cancelled" ? "bg-red-500/10 text-red-400" :
-                "bg-amber-500/10 text-amber-400"
-              }`}>{c.cycle_status}</span>
-            </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-              <div><span className="text-zinc-500">NIT No: </span><span className="text-white">{c.nit_number || "—"}</span></div>
-              <div><span className="text-zinc-500">NIT Date: </span><span className="text-white">{c.nit_date || "—"}</span></div>
-              <div><span className="text-zinc-500">Mode: </span><span className="text-white">{c.mode_of_tender || "—"}</span></div>
-              <div><span className="text-zinc-500">Offers: </span><span className="text-white">{c.offers_received_count ?? "—"}</span></div>
-              <div>
-                <span className="text-zinc-500">TOD: </span>
-                <span className="text-white">{c.tod_effective_date || c.tod_original_date || "—"}</span>
-                {c.tod_effective_date && c.tod_original_date && c.tod_effective_date !== c.tod_original_date && (
-                  <span className="text-zinc-500"> (orig <span className="line-through">{c.tod_original_date}</span>)</span>
-                )}
-              </div>
-              <div><span className="text-zinc-500">Extensions: </span><span className="text-white">{c.tod_extension_count ?? c.tod_extensions?.length ?? 0}</span></div>
-            </div>
-          </div>
+          <TenderCycleCard key={c.tender_cycle_id} c={c} busy={busy} onSave={saveCycle} api={api} reload={reload} setToast={setToast} />
         ))}
       </div>
-      <p className="text-xs text-zinc-500 mt-6">
-        💡 Inline editing of tender cycles coming in Sprint 2 (TOD Tracking page).
-      </p>
+    </div>
+  );
+}
+
+function TenderCycleCard({ c, busy, onSave, api, reload, setToast }: any) {
+  const [edit, setEdit] = useState<any | null>(null);
+  const [extOpen, setExtOpen] = useState(false);
+  const [newExt, setNewExt] = useState({ extended_to_date: "", extension_letter_no: "", reason: "" });
+  const f = edit ?? c;
+
+  const set = (k: string, v: any) => setEdit({ ...(edit ?? c), [k]: v });
+
+  const saveEdits = async () => {
+    await onSave({ ...edit, package_id: c.package_id, tender_cycle_id: c.tender_cycle_id });
+    setEdit(null);
+  };
+
+  const addExtension = async () => {
+    if (!newExt.extended_to_date) { setToast?.({ msg: "Extension date is required", kind: "err" }); return; }
+    try {
+      await api(`/tender-cycles/${c.tender_cycle_id}/extensions`, { method: "POST", body: JSON.stringify(newExt) });
+      await reload();
+      setNewExt({ extended_to_date: "", extension_letter_no: "", reason: "" });
+      setToast?.({ msg: "TOD extension added — effective TOD updated", kind: "ok" });
+    } catch (e: any) { setToast?.({ msg: e.message, kind: "err" }); }
+  };
+
+  const delExtension = async (extId: number) => {
+    try {
+      await api(`/tender-cycles/extensions/${extId}`, { method: "DELETE" });
+      await reload();
+      setToast?.({ msg: "Extension removed", kind: "ok" });
+    } catch (e: any) { setToast?.({ msg: e.message, kind: "err" }); }
+  };
+
+  return (
+    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-4">
+      <div className="flex justify-between items-start mb-3">
+        <div>
+          <div className="font-bold text-white">{c.package_name}</div>
+          <div className="text-xs text-zinc-500">Cycle #{c.cycle_no} {c.cycle_label && `· ${c.cycle_label}`}</div>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className={`px-2 py-0.5 rounded text-xs uppercase tracking-wider ${
+            c.cycle_status === "awarded" ? "bg-emerald-500/10 text-emerald-400" :
+            c.cycle_status === "cancelled" ? "bg-red-500/10 text-red-400" :
+            "bg-amber-500/10 text-amber-400"
+          }`}>{c.cycle_status}</span>
+          {!edit && <button onClick={() => setEdit({ ...c })} className="text-xs text-cyan-400 hover:underline">Edit</button>}
+        </div>
+      </div>
+
+      {edit ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+          <Field label="NIT Number" value={f.nit_number} onChange={(v: any) => set("nit_number", v)} />
+          <Field label="NIT Date" type="date" value={f.nit_date} onChange={(v: any) => set("nit_date", v)} />
+          <Field label="Mode of Tender" type="select" options={TENDER_MODES} value={f.mode_of_tender} onChange={(v: any) => set("mode_of_tender", v)} />
+          <Field label="Original TOD" type="date" value={f.tod_original_date} onChange={(v: any) => set("tod_original_date", v)} />
+          <Field label="Offers Received" type="number" value={f.offers_received_count} onChange={(v: any) => set("offers_received_count", v ? Number(v) : null)} />
+          <Field label="Status" type="select" options={TENDER_STATUS} value={f.cycle_status} onChange={(v: any) => set("cycle_status", v)} />
+          <div className="md:col-span-3 flex gap-2">
+            <button disabled={busy} onClick={saveEdits} className="rounded-lg bg-cyan-600 px-4 py-2 text-sm font-medium text-white hover:bg-cyan-500 disabled:opacity-50">{busy ? "Saving…" : "Save"}</button>
+            <button onClick={() => setEdit(null)} className="rounded-lg border border-zinc-700 px-4 py-2 text-sm text-zinc-400 hover:bg-zinc-800">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div><span className="text-zinc-500">NIT No: </span><span className="text-white">{c.nit_number || "—"}</span></div>
+          <div><span className="text-zinc-500">NIT Date: </span><span className="text-white">{c.nit_date || "—"}</span></div>
+          <div><span className="text-zinc-500">Mode: </span><span className="text-white">{c.mode_of_tender || "—"}</span></div>
+          <div><span className="text-zinc-500">Offers: </span><span className="text-white">{c.offers_received_count ?? "—"}</span></div>
+          <div>
+            <span className="text-zinc-500">TOD: </span>
+            <span className="text-white">{c.tod_effective_date || c.tod_original_date || "—"}</span>
+            {c.tod_effective_date && c.tod_original_date && c.tod_effective_date !== c.tod_original_date && (
+              <span className="text-zinc-500"> (orig <span className="line-through">{c.tod_original_date}</span>)</span>
+            )}
+          </div>
+          <div><span className="text-zinc-500">Extensions: </span><span className="text-white">{c.tod_extension_count ?? c.tod_extensions?.length ?? 0}</span></div>
+        </div>
+      )}
+
+      {/* TOD extensions */}
+      <div className="mt-3 border-t border-zinc-800 pt-3">
+        <button onClick={() => setExtOpen((o) => !o)} className="text-xs font-medium text-zinc-400 hover:text-cyan-400">
+          {extOpen ? "▾" : "▸"} TOD extensions ({c.tod_extensions?.length ?? 0})
+        </button>
+        {extOpen && (
+          <div className="mt-2 space-y-2">
+            {(c.tod_extensions ?? []).map((e: any) => (
+              <div key={e.extension_id} className="flex items-center justify-between rounded-lg bg-zinc-950/60 px-3 py-2 text-xs">
+                <span className="text-zinc-300">
+                  #{e.extension_no} → <span className="text-white font-medium">{e.extended_to_date}</span>
+                  {e.extension_letter_no && <span className="text-zinc-500"> · {e.extension_letter_no}</span>}
+                  {e.reason && <span className="text-zinc-500"> · {e.reason}</span>}
+                </span>
+                <button onClick={() => delExtension(e.extension_id)} className="text-red-400 hover:underline">Remove</button>
+              </div>
+            ))}
+            <div className="flex flex-wrap items-end gap-2 rounded-lg bg-zinc-950/60 px-3 py-2">
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Extend to</label>
+                <input type="date" value={newExt.extended_to_date} onChange={(e) => setNewExt({ ...newExt, extended_to_date: e.target.value })}
+                  className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-white outline-none focus:border-cyan-500/50" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Letter no</label>
+                <input value={newExt.extension_letter_no} onChange={(e) => setNewExt({ ...newExt, extension_letter_no: e.target.value })}
+                  className="w-32 bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-white outline-none focus:border-cyan-500/50" />
+              </div>
+              <div className="flex-1 min-w-[120px]">
+                <label className="block text-[10px] uppercase tracking-wider text-zinc-500 mb-1">Reason</label>
+                <input value={newExt.reason} onChange={(e) => setNewExt({ ...newExt, reason: e.target.value })}
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs text-white outline-none focus:border-cyan-500/50" />
+              </div>
+              <button onClick={addExtension} className="rounded bg-cyan-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-cyan-500">Add extension</button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

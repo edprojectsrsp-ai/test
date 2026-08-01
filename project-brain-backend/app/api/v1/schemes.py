@@ -795,6 +795,43 @@ def update_scheme_section(
             db.commit()
             return {"ok": True, "section": "monitoring", "log_id": log.log_id}
 
+        if section_name == "tender_cycle":
+            # Upsert a tender cycle for a package. Update when tender_cycle_id
+            # is given, else create the next cycle_no for the package.
+            pkg_id = payload.get("package_id")
+            if not pkg_id:
+                raise HTTPException(status_code=400, detail="package_id required")
+            cyc_id = payload.get("tender_cycle_id")
+            if cyc_id:
+                cyc = db.query(TenderCycle).filter(
+                    TenderCycle.tender_cycle_id == cyc_id,
+                    TenderCycle.package_id == pkg_id,
+                ).first()
+                if not cyc:
+                    raise HTTPException(status_code=404, detail="Tender cycle not found")
+            else:
+                # next cycle_no for this package (max + 1, ignoring soft-deleted)
+                existing = db.query(TenderCycle).filter(
+                    TenderCycle.package_id == pkg_id
+                ).all()
+                next_no = max((c.cycle_no for c in existing), default=0) + 1
+                cyc = TenderCycle(package_id=pkg_id, cycle_no=next_no,
+                                  cycle_status=payload.get("cycle_status") or "active",
+                                  is_current=True)
+                db.add(cyc); db.flush()
+            _skip = {"tender_cycle_id", "package_id", "cycle_no", "created_at",
+                     "created_by", "tod_extensions", "tod_effective_date",
+                     "tod_extension_count", "package_name"}
+            for k, v in payload.items():
+                if k in _skip:
+                    continue
+                if hasattr(cyc, k):
+                    setattr(cyc, k, v)
+            cyc.updated_at = datetime.utcnow()
+            db.commit()
+            return {"ok": True, "section": "tender_cycle",
+                    "tender_cycle_id": cyc.tender_cycle_id, "cycle_no": cyc.cycle_no}
+
         raise HTTPException(status_code=400, detail=f"Unknown section: {section_name}")
 
     except HTTPException:
@@ -803,6 +840,43 @@ def update_scheme_section(
         db.rollback()
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Save failed: {e}")
+
+
+# ============================================================================
+# 3b) TOD extensions — add / delete an extension on a tender cycle.
+#     Extensions drive the effective-TOD reconciliation (latest extension wins).
+# ============================================================================
+
+@router.post("/tender-cycles/{tender_cycle_id}/extensions")
+def add_tod_extension(tender_cycle_id: int, payload: dict, db: Session = Depends(get_db)):
+    cyc = db.query(TenderCycle).filter(TenderCycle.tender_cycle_id == tender_cycle_id).first()
+    if not cyc:
+        raise HTTPException(status_code=404, detail="Tender cycle not found")
+    if not payload.get("extended_to_date"):
+        raise HTTPException(status_code=400, detail="extended_to_date is required")
+    next_no = max((e.extension_no for e in cyc.tod_extensions), default=0) + 1
+    ext = TodExtension(
+        tender_cycle_id=tender_cycle_id,
+        extension_no=next_no,
+        extended_to_date=payload["extended_to_date"],
+        extension_letter_no=payload.get("extension_letter_no"),
+        approved_by_date=payload.get("approved_by_date"),
+        reason=payload.get("reason"),
+        extra_fields=payload.get("extra_fields") or {},
+    )
+    db.add(ext)
+    db.commit()
+    return {"ok": True, "extension_id": ext.extension_id, "extension_no": ext.extension_no}
+
+
+@router.delete("/tender-cycles/extensions/{extension_id}")
+def delete_tod_extension(extension_id: int, db: Session = Depends(get_db)):
+    ext = db.query(TodExtension).filter(TodExtension.extension_id == extension_id).first()
+    if not ext:
+        raise HTTPException(status_code=404, detail="Extension not found")
+    db.delete(ext)
+    db.commit()
+    return {"ok": True}
 
 
 # ============================================================================
