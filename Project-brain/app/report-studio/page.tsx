@@ -9,6 +9,7 @@ import Link from "next/link";
 import {
   ArrowRight, FileStack, FlaskConical, Play, Save, Scale, Table2, Wand2, Wrench,
 } from "lucide-react";
+import { PageHeader } from "@/ui";
 
 const card: React.CSSProperties = {
   display: "flex",
@@ -21,7 +22,8 @@ const card: React.CSSProperties = {
   textDecoration: "none",
   color: "inherit",
   minHeight: 168,
-  transition: "border-color .15s, box-shadow .15s",
+  boxShadow: "var(--shadow)",
+  transition: "border-color .15s, box-shadow .15s, transform .15s",
 };
 
 const pill: React.CSSProperties = {
@@ -40,18 +42,12 @@ const pill: React.CSSProperties = {
 export default function ReportStudioHub() {
   return (
     <div style={{ padding: "18px 24px", maxWidth: 1080 }}>
-      <div style={{ marginBottom: 18 }}>
-        <h1 style={{ margin: 0, fontSize: 22, fontWeight: 800, color: "var(--ink)" }}>
-          One studio, four clear jobs
-        </h1>
-        <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--ink-3)", lineHeight: 1.6, maxWidth: 760 }}>
-          Report Studio now groups the existing features into cleaner workspaces.
-          You still have matrix design, KPI work, dashboarding, report composition,
-          governed matrix runs, snapshots, and what-if analysis, but with less route sprawl.
-        </p>
-      </div>
+      <PageHeader
+        title="Report Studio"
+        subtitle="One studio, four clear jobs — build analytics, produce reports, run governed matrix logic, and model scenarios, without the route sprawl."
+      />
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 20 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "16px 0 20px" }}>
         <span style={pill}><Table2 size={12} /> Builder = matrix + KPI + dashboard</span>
         <span style={pill}><FileStack size={12} /> Reports = library + compose + document + designer</span>
         <span style={pill}><Scale size={12} /> Engine = governed matrix logic and run mode</span>
@@ -59,7 +55,7 @@ export default function ReportStudioHub() {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(250px, 1fr))", gap: 12, marginBottom: 22 }}>
-        <Link href="/report-studio/builder" style={card}>
+        <Link href="/report-studio/builder" className="rs-card" style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
             <Table2 size={18} /> <b style={{ fontSize: 14 }}>Builder</b>
           </div>
@@ -71,7 +67,7 @@ export default function ReportStudioHub() {
           </span>
         </Link>
 
-        <Link href="/report-studio/templates" style={card}>
+        <Link href="/report-studio/templates" className="rs-card" style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
             <FileStack size={18} /> <b style={{ fontSize: 14 }}>Reports</b>
           </div>
@@ -83,7 +79,7 @@ export default function ReportStudioHub() {
           </span>
         </Link>
 
-        <Link href="/report-studio/matrix" style={card}>
+        <Link href="/report-studio/matrix" className="rs-card" style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
             <Scale size={18} /> <b style={{ fontSize: 14 }}>Engine</b>
           </div>
@@ -95,7 +91,7 @@ export default function ReportStudioHub() {
           </span>
         </Link>
 
-        <Link href="/report-studio/tools" style={card}>
+        <Link href="/report-studio/tools" className="rs-card" style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--steel)" }}>
             <FlaskConical size={18} /> <b style={{ fontSize: 14 }}>Scenarios</b>
           </div>

@@ -57,17 +57,19 @@ export default function TemplatesPage() {
   const [tab, setTab] = useState<Tab>("library");
 
   const btn = (active: boolean): CSSProperties => ({
-    border: "1px solid var(--line)",
+    border: active ? "1px solid var(--steel-dim)" : "1px solid transparent",
     cursor: "pointer",
     padding: "8px 14px",
-    borderRadius: 10,
+    borderRadius: 9,
     fontSize: 12.5,
     fontWeight: 750,
-    background: active ? "var(--steel-soft)" : "var(--panel)",
+    background: active ? "var(--panel)" : "transparent",
     color: active ? "var(--steel)" : "var(--ink-3)",
+    boxShadow: active ? "var(--shadow)" : "none",
     display: "inline-flex",
     alignItems: "center",
     gap: 6,
+    transition: "background .15s, color .15s",
   });
 
   return (
@@ -100,7 +102,12 @@ export default function TemplatesPage() {
           </p>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <div
+          style={{
+            display: "inline-flex", gap: 4, flexWrap: "wrap", alignItems: "center",
+            padding: 4, borderRadius: 12, border: "1px solid var(--line)", background: "var(--panel-2)", width: "fit-content",
+          }}
+        >
           <button style={btn(tab === "library")} onClick={() => setTab("library")}><FileStack size={13} /> Library</button>
           <button style={btn(tab === "compose")} onClick={() => setTab("compose")}><Sparkles size={13} /> Compose</button>
           <button style={btn(tab === "document")} onClick={() => setTab("document")}><FileText size={13} /> Document</button>

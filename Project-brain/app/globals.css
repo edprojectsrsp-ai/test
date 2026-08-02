@@ -411,6 +411,13 @@ button {
   .ui-spin { animation-duration: 1.4s; }
 }
 
+/* Report Studio hub cards — lift on hover (inline styles can't do :hover) */
+.rs-card:hover {
+  border-color: var(--steel) !important;
+  box-shadow: var(--shadow-lg) !important;
+  transform: translateY(-2px);
+}
+
 /* Sidebar nav — hover + keyboard focus (inline styles can't express these) */
 .sidebar-link:hover:not([aria-current="page"]) {
   background: color-mix(in srgb, var(--steel-soft) 60%, transparent);
