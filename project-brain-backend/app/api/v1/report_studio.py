@@ -204,7 +204,16 @@ class ReportIn(BaseModel):
     sections: list[SectionIn]
 
 
+_reports_table_ready = False
+
+
 def _ensure_reports_table(db: Session):
+    # Run the CREATE TABLE IF NOT EXISTS once per process, not on every request.
+    # It was firing (plus a commit) on every list/get/run/export call — needless
+    # DB chatter on the hottest endpoints.
+    global _reports_table_ready
+    if _reports_table_ready:
+        return
     db.execute(text(
         "CREATE TABLE IF NOT EXISTS rs_reports ("
         " report_id SERIAL PRIMARY KEY,"
@@ -216,6 +225,7 @@ def _ensure_reports_table(db: Session):
         " updated_at TIMESTAMP NOT NULL DEFAULT now())"
     ))
     db.commit()
+    _reports_table_ready = True
 
 
 def _validate_sections(payload: ReportIn):

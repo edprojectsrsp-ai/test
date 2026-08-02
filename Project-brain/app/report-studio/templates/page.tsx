@@ -44,6 +44,12 @@ const NAMES: Record<string, string> = {
   "BF5-STOVE4": "BF-5 4th Stove",
 };
 
+// Module-level constant so its reference is STABLE across renders. Passing an
+// inline [] literal here gave ReportDocument a new prop reference every render,
+// which recreated its load() callback and re-fired POST /document in a loop —
+// the repeated-query storm that crashed the Document tab.
+const ALL_PROJECTS = ["OXY-1000", "COB7-PKG2", "TS2", "PELLET-2MTPA", "BF5-STOVE4"];
+
 type Tab = "library" | "compose" | "document" | "designer";
 
 const INTRO: Record<Tab, string> = {
@@ -126,7 +132,7 @@ export default function TemplatesPage() {
         <ReportDocument
           project="COB7-PKG2"
           month={new Date().toISOString().slice(0, 7)}
-          allProjects={["OXY-1000", "COB7-PKG2", "TS2", "PELLET-2MTPA", "BF5-STOVE4"]}
+          allProjects={ALL_PROJECTS}
           projectNames={NAMES}
         />
       )}

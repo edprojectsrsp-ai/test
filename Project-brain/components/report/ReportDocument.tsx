@@ -106,19 +106,27 @@ export default function ReportDocument({ project = "COB7-PKG2", month = "2026-06
   const fileRef = useRef(null);
   const say = (m) => { setToast(m); setTimeout(() => setToast(""), 2500); };
 
+  // Keep the object/array props in a ref so they're readable in load() without
+  // being effect dependencies. Including them caused an infinite POST /document
+  // loop whenever a caller passed inline literals (a new reference each render).
+  const objProps = useRef({ allProjects, projectNames, figuresCtx });
+  objProps.current = { allProjects, projectNames, figuresCtx };
+
   const load = useCallback(async () => {
     setBusy(true);
     try {
+      const { allProjects: ap, projectNames: pn, figuresCtx: fc } = objProps.current;
       const perProject = ["do", "agenda", "capex"].includes(family);
       const d = await jpost("/document", {
         family, project: selectedProject, month: reportMonth,
-        all_projects: perProject ? (allProjects.length ? allProjects : [selectedProject]) : [],
-        figures_ctx: figuresCtx, project_names: projectNames,
+        all_projects: perProject ? (ap.length ? ap : [selectedProject]) : [],
+        figures_ctx: fc, project_names: pn,
       });
       setDoc(d);
     } catch { say("load failed — is the backend running?"); }
     setBusy(false);
-  }, [family, selectedProject, reportMonth, allProjects, projectNames, figuresCtx]);
+    // Re-run only when the primitive selection changes, never on object identity.
+  }, [family, selectedProject, reportMonth]);
   useEffect(() => { load(); }, [load]);
 
   const editBullet = async (section, proj, before, after) => {

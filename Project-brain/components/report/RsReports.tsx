@@ -13,7 +13,7 @@
  *     Reports → MoS CAPEX page.
  */
 
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   ArrowDown, ArrowUp, ChevronDown, ChevronRight, Download, Eye, FileSpreadsheet,
   FileStack, FileText, Loader2, RefreshCw, Sparkles, Trash2,
@@ -171,7 +171,18 @@ export function RsReportCard({ meta, onDeleted, defaultOpen = false }: {
     finally { setBusy(false); }
   }, [meta.report_id]);
 
-  useEffect(() => { if (open && !data && !busy) run(); }, [open, data, busy, run]);
+  // Auto-run once when the card is first opened. Guarded by a ref so a FAILED
+  // run does not re-fire the effect on every busy/data change — that turned a
+  // single failing report into an infinite POST /run loop (the DB query storm
+  // that crashed Report Studio). Re-opening a closed card runs again.
+  const autoRanFor = useRef<number | null>(null);
+  useEffect(() => {
+    if (open && !data && !busy && autoRanFor.current !== meta.report_id) {
+      autoRanFor.current = meta.report_id;
+      run();
+    }
+    if (!open) autoRanFor.current = null;
+  }, [open, data, busy, run, meta.report_id]);
 
   const doExport = async (fmt: "xlsx" | "docx") => {
     setExporting(fmt); setErr("");
