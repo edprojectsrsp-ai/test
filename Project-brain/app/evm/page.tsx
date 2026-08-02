@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
+  CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import {
   Activity, AlertTriangle, ArrowLeft, HelpCircle, IndianRupee,
@@ -124,6 +124,15 @@ export default function EvmStudio() {
     name: MONTH_NAMES[s.month_no],
     PV: s.pv, EV: s.ev, AC: s.ac,
   })), [detail]);
+
+  // CPI/SPI over time — the "is performance improving?" trend. Only months
+  // that actually have an index value are plotted (skip pre-start nulls).
+  const indexTrend = useMemo(
+    () => (detail?.series || [])
+      .filter((s) => s.cpi != null || s.spi != null)
+      .map((s) => ({ name: MONTH_NAMES[s.month_no], CPI: s.cpi, SPI: s.spi })),
+    [detail],
+  );
 
   const latest = detail?.latest || null;
   const schemeName = schemes.find((s) => s.scheme_id === schemeId)?.scheme_name || `Scheme ${schemeId}`;
@@ -280,6 +289,32 @@ export default function EvmStudio() {
               </ResponsiveContainer>
             </div>
           </div>
+
+          {/* CPI / SPI trend — is performance improving? */}
+          {indexTrend.length > 0 && (
+            <div style={{ ...panel, padding: 14, marginBottom: 14 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 800, marginBottom: 2, color: "var(--ink-2)" }}>
+                CPI &amp; SPI trend — {schemeName} · FY {detail.fy}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ink-4)", marginBottom: 8 }}>
+                &ge; 1.00 = on or ahead (cost / schedule). The 1.00 line is the target; a rising line means performance is improving.
+              </div>
+              <div style={{ height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={indexTrend} margin={{ top: 6, right: 10, bottom: 0, left: 4 }}>
+                    <CartesianGrid stroke="var(--line)" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="name" tick={{ fontSize: 11, fill: "var(--ink-4)" }} tickLine={false} axisLine={{ stroke: "var(--line)" }} />
+                    <YAxis domain={[0.6, 1.4]} tick={{ fontSize: 11, fill: "var(--ink-4)" }} tickFormatter={(v: any) => Number(v).toFixed(2)} width={44} tickLine={false} axisLine={false} />
+                    <Tooltip formatter={(v: any) => (v == null ? "—" : Number(v).toFixed(3))} contentStyle={{ background: "var(--panel)", border: "1px solid var(--line)", borderRadius: 8, fontSize: 11.5 }} labelStyle={{ color: "var(--ink-2)", fontWeight: 700 }} />
+                    <Legend wrapperStyle={{ fontSize: 11.5 }} />
+                    <ReferenceLine y={1} stroke="var(--ink-4)" strokeDasharray="4 4" strokeWidth={1.2} />
+                    <Line dataKey="CPI" stroke="#3fb950" strokeWidth={2.4} dot={{ r: 2.5 }} connectNulls />
+                    <Line dataKey="SPI" stroke="#d97706" strokeWidth={2.4} dot={{ r: 2.5 }} connectNulls />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
 
           {/* monthly table */}
           <div style={{ ...panel, overflow: "auto" }}>
