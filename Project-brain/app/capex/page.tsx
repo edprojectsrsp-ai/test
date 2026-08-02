@@ -19,7 +19,7 @@ const API_BASE = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api
 type MonthValue = { be: number; re: number; actual: number; _re_auto_filled?: boolean };
 type RowLevel = "Header" | "SubHeader" | "Item" | "Package";
 type PlanType = "BE" | "RE";
-type TabKey = "BE" | "RE" | "ACTUALS" | "SCHEMES";
+type TabKey = "BE" | "RE" | "ACTUALS" | "SCHEMES" | "PVA";
 type GridView = "monthly" | "quarterly" | "fy";
 
 type CapexRow = {
@@ -235,6 +235,7 @@ export default function CapexWorkspace() {
           <TabButton active={tab === "RE"} onClick={() => setTab("RE")} icon={<RefreshCw size={14} />} label="RE Plan" color="amber" />
           <TabButton active={tab === "ACTUALS"} onClick={() => setTab("ACTUALS")} icon={<Wallet size={14} />} label="Actuals" color="emerald" />
           <TabButton active={tab === "SCHEMES"} onClick={() => setTab("SCHEMES")} icon={<BarChart2 size={14} />} label="Scheme-wise" color="violet" />
+          <TabButton active={tab === "PVA"} onClick={() => setTab("PVA")} icon={<Wallet size={14} />} label="Plan vs Actual" color="cyan" />
         </div>
       </div>
 
@@ -242,6 +243,7 @@ export default function CapexWorkspace() {
       {tab === "RE" && <PlanEditor key={`re-${fy}`} fy={fy} planType="RE" />}
       {tab === "ACTUALS" && <ActualsEditor key={`act-${fy}`} fy={fy} />}
       {tab === "SCHEMES" && <SchemeMonthlyView fy={fy} onOpenPlan={() => setTab("BE")} />}
+      {tab === "PVA" && <PlanVsActualView fy={fy} />}
     </div>
   );
 }
@@ -1091,4 +1093,72 @@ function ActualRow({ row, selectedMonth, disabled, cumulative, onSave }: {
 function monthLabel(m: number): string {
   const i = FY_MONTH_ORDER.indexOf(m);
   return i >= 0 ? MONTH_LABELS[i] : `M${m}`;
+}
+
+// Month-wise CAPEX plan (BE) vs actual, in a clean comparison table with
+// running cumulative and variance. Reads the portfolio /capex-monthly series.
+function PlanVsActualView({ fy }: { fy: string }) {
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API_BASE}/dashboard/capex-monthly?fy_year=${encodeURIComponent(fy)}&plan_type=BE`, { headers: authHeaders() })
+      .then((r) => r.json()).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, [fy]);
+
+  const months: any[] = data?.months || [];
+  const fmt = (n: number) => `₹${(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
+  let cumBe = 0, cumAct = 0;
+  const totBe = months.reduce((s, m) => s + (m.be || 0), 0);
+  const totAct = months.reduce((s, m) => s + (m.actual || 0), 0);
+
+  if (loading) return <div className="p-10 text-center text-zinc-500 text-sm">Loading plan vs actual…</div>;
+  if (!data?.has_plan) return <div className="p-10 text-center text-zinc-500 text-sm">No CAPEX plan found for {fy}.</div>;
+
+  return (
+    <div className="capex-surface rounded-2xl border p-5" style={{ borderColor: "var(--line)", background: "var(--panel)" }}>
+      <div className="mb-3 flex items-center gap-2">
+        <h2 className="text-sm font-bold" style={{ color: "var(--ink)" }}>Plan vs Actual — Month-wise (FY {data.fy_year})</h2>
+        <span className="ml-auto text-xs" style={{ color: "var(--ink-3)" }}>
+          Plan {fmt(totBe)} Cr · Actual {fmt(totAct)} Cr · Variance <b style={{ color: totAct - totBe >= 0 ? "var(--verdigris)" : "var(--molten)" }}>{fmt(totAct - totBe)} Cr</b>
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm" style={{ borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "var(--table-head)" }}>
+              {["Month", "BE Plan (₹ Cr)", "Actual (₹ Cr)", "Variance", "Cum. Plan", "Cum. Actual"].map((h, i) => (
+                <th key={h} className="p-2.5 font-semibold" style={{ textAlign: i === 0 ? "left" : "right", color: "var(--ink)", borderBottom: "1px solid var(--line-2)" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {months.map((m, idx) => {
+              cumBe += m.be || 0; cumAct += m.actual || 0;
+              const varv = (m.actual || 0) - (m.be || 0);
+              return (
+                <tr key={m.month_no} style={{ background: idx % 2 ? "var(--panel-2)" : "transparent" }}>
+                  <td className="p-2.5 font-semibold" style={{ color: "var(--ink)" }}>{m.label}</td>
+                  <td className="p-2.5 text-right font-mono" style={{ color: "var(--steel)" }}>{fmt(m.be)}</td>
+                  <td className="p-2.5 text-right font-mono" style={{ color: m.actual ? "var(--verdigris)" : "var(--ink-4)" }}>{fmt(m.actual)}</td>
+                  <td className="p-2.5 text-right font-mono" style={{ color: varv >= 0 ? "var(--verdigris)" : "var(--molten)" }}>{fmt(varv)}</td>
+                  <td className="p-2.5 text-right font-mono" style={{ color: "var(--ink-3)" }}>{fmt(cumBe)}</td>
+                  <td className="p-2.5 text-right font-mono" style={{ color: "var(--ink-3)" }}>{fmt(cumAct)}</td>
+                </tr>
+              );
+            })}
+            <tr style={{ background: "var(--table-head)", fontWeight: 800 }}>
+              <td className="p-2.5" style={{ color: "var(--ink)" }}>Total</td>
+              <td className="p-2.5 text-right font-mono" style={{ color: "var(--steel-deep)" }}>{fmt(totBe)}</td>
+              <td className="p-2.5 text-right font-mono" style={{ color: "var(--verdigris)" }}>{fmt(totAct)}</td>
+              <td className="p-2.5 text-right font-mono" style={{ color: totAct - totBe >= 0 ? "var(--verdigris)" : "var(--molten)" }}>{fmt(totAct - totBe)}</td>
+              <td className="p-2.5 text-right font-mono" style={{ color: "var(--ink-3)" }}>{fmt(totBe)}</td>
+              <td className="p-2.5 text-right font-mono" style={{ color: "var(--ink-3)" }}>{fmt(totAct)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
