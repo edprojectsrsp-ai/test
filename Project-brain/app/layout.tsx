@@ -11,6 +11,7 @@ import ContextBar from "../components/layout/ContextBar";
 import AmbientFx from "../components/layout/AmbientFx";
 import ProtectedRoute from "../components/layout/ProtectedRoute";
 import AuthFetchBridge from "../components/layout/AuthFetchBridge";
+import CommandPalette from "../components/layout/CommandPalette";
 import { MosProvider } from "../components/brain/MosContext";
 import ThemeStudio from "../components/furnace/theme-studio";
 import { ThemeProvider } from "../theme/ThemeProvider";
@@ -84,6 +85,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </main>
               <ThemeStudio />
               <ToastHost />
+              <CommandPalette />
             </div>
           </MosProvider>
         </ThemeProvider>
