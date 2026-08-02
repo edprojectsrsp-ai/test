@@ -17,6 +17,7 @@ import {
   Tooltip, XAxis, YAxis, Bar, BarChart,
 } from "recharts";
 import { Activity, IndianRupee, MessageSquare, TrendingUp, Users } from "lucide-react";
+import { authHeaders } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -59,6 +60,7 @@ export default function ProjectWiseDashboard({
 }: { schemeId: number; month: string }) {
   const [detail, setDetail] = useState<Detail | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [selectedPlans, setSelectedPlans] = useState<string[]>([]);
   const [activityFilter, setActivityFilter] = useState("Overall");
 
@@ -66,16 +68,26 @@ export default function ProjectWiseDashboard({
     if (!schemeId) return;
     let alive = true;
     setLoading(true);
-    fetch(`${API}/board/project-details/${schemeId}?month=${month}`)
-      .then((r) => r.json())
+    // /board/* is an authenticated router — without the bearer token every
+    // call 401s and the whole project-wise view silently shows no data.
+    fetch(`${API}/board/project-details/${schemeId}?month=${month}`, { headers: authHeaders() })
+      .then(async (r) => {
+        if (!r.ok) {
+          throw new Error(r.status === 401 || r.status === 403
+            ? "Session expired — please sign in again."
+            : `Failed to load project details (${r.status})`);
+        }
+        return r.json();
+      })
       .then((d) => {
         if (!alive) return;
         setDetail(d);
+        setLoadErr(null);
         const active = (d.scurve?.plans || []).filter((p: PlanOption) => p.isActive).map((p: PlanOption) => p.planName);
         setSelectedPlans(active.length ? active : (d.scurve?.plans || []).slice(0, 1).map((p: PlanOption) => p.planName));
         setActivityFilter("Overall");
       })
-      .catch(() => {})
+      .catch((e) => { if (alive) setLoadErr(e.message || "Failed to load"); })
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, [schemeId, month]);
@@ -105,6 +117,11 @@ export default function ProjectWiseDashboard({
   }, [shownPlans, activityFilter]);
 
   if (!schemeId) return <p className="text-sm text-zinc-500">Select a scheme above.</p>;
+  if (loadErr) return (
+    <div className="rounded-xl border border-red-500/40 bg-red-500/10 p-4 text-sm text-red-300">
+      {loadErr}
+    </div>
+  );
   if (loading || !detail) return <p className="text-sm text-zinc-500">Loading project details…</p>;
 
   const overall = (detail.dprSummary?.summaryRows || []).find((r) => r.overall);
