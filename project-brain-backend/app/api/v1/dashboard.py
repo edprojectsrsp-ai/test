@@ -958,3 +958,62 @@ def get_corporate_capex(db: Session = Depends(get_db)):
         return {"schemes": schemes, "total": total}
     except Exception as e:
         raise HTTPException(500, f"Corporate CAPEX failed: {e}")
+
+
+# FY month_no 1..12 = April..March.
+_FY_MONTH_LABELS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep",
+                    "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+
+
+@router.get("/capex-monthly")
+def get_capex_monthly(fy_year: Optional[str] = None, plan_type: str = "BE",
+                      db: Session = Depends(get_db)):
+    """Month-wise portfolio CAPEX plan vs achieved (₹ Cr), April→March.
+
+    Aggregates capex_month_values (be/re/actual per plan row per FY month)
+    across the plan for the FY. Feeds the dashboard's monthly BE-vs-actual
+    chart. Returns a 12-row series so months with no plan/actual show as 0
+    rather than a 'no plan' gap."""
+    try:
+        # Pick the plan: latest matching header for the FY + type (falls back to
+        # the most recent plan of that type when fy_year is not given).
+        params: dict = {"pt": plan_type}
+        where = "h.plan_type = :pt AND h.plan_status <> 'Archived'"
+        if fy_year:
+            where += " AND h.fy_year = :fy"
+            params["fy"] = fy_year
+        header = db.execute(text(
+            f"SELECT id, fy_year FROM capex_plan_header h WHERE {where} "
+            "ORDER BY h.created_at DESC, h.id DESC LIMIT 1"
+        ), params).mappings().first()
+        if not header:
+            return {"fy_year": fy_year, "plan_type": plan_type, "has_plan": False,
+                    "months": [{"month_no": i + 1, "label": _FY_MONTH_LABELS[i],
+                                "be": 0.0, "re": 0.0, "actual": 0.0} for i in range(12)]}
+
+        rows = db.execute(text("""
+            SELECT mv.month_no,
+                   COALESCE(SUM(mv.be_amount), 0)     AS be,
+                   COALESCE(SUM(mv.re_amount), 0)     AS re,
+                   COALESCE(SUM(mv.actual_amount), 0) AS actual
+            FROM capex_month_values mv
+            JOIN capex_plan_rows r ON r.id = mv.plan_row_id
+            WHERE r.plan_id = :pid
+            GROUP BY mv.month_no
+        """), {"pid": header["id"]}).mappings().all()
+        by_month = {int(r["month_no"]): r for r in rows}
+
+        months = []
+        for i in range(12):
+            m = i + 1
+            r = by_month.get(m)
+            months.append({
+                "month_no": m, "label": _FY_MONTH_LABELS[i],
+                "be": round(float(r["be"]), 2) if r else 0.0,
+                "re": round(float(r["re"]), 2) if r else 0.0,
+                "actual": round(float(r["actual"]), 2) if r else 0.0,
+            })
+        return {"fy_year": header["fy_year"], "plan_type": plan_type,
+                "has_plan": True, "months": months}
+    except Exception as e:
+        raise HTTPException(500, f"Monthly CAPEX failed: {e}")

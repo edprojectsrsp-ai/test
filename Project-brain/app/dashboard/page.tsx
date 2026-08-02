@@ -11,7 +11,10 @@ import {
   ClipboardList, CreditCard, BookOpen, Cpu, Calendar,
   MapPin, Hash,
 } from "lucide-react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, LabelList,
+} from "recharts";
 import ExecutiveView from "@/components/furnace/dashboard";
 import PhysicalProgressSummary from "./PhysicalProgressSummary";
 import ProjectWiseDashboard from "./ProjectWiseDashboard";
@@ -185,6 +188,7 @@ export default function DashboardPage() {
 
   // Corporate CAPEX
   const [corpCapex, setCorpCapex] = useState<any>(null);
+  const [capexMonthly, setCapexMonthly] = useState<any>(null);
   const [corpOpen, setCorpOpen] = useState(false);
 
   // Export engine
@@ -215,11 +219,13 @@ export default function DashboardPage() {
       fetch(`${API}/dashboard/summary`).then((r) => r.json()),
       fetch(`${API}/dashboard/scheme-cards`).then((r) => r.json()),
       fetch(`${API}/dashboard/corporate-capex`).then((r) => r.json()),
+      fetch(`${API}/dashboard/capex-monthly`).then((r) => r.json()).catch(() => null),
     ])
-      .then(([sum, cds, cc]) => {
+      .then(([sum, cds, cc, cm]) => {
         setSummary(sum);
         setCards(Array.isArray(cds) ? cds : []);
         setCorpCapex(cc);
+        setCapexMonthly(cm);
       })
       .catch(() => setError(`Failed to load dashboard. Check backend connectivity: ${API}`))
       .finally(() => setLoading(false));
@@ -425,6 +431,9 @@ export default function DashboardPage() {
               );
             })}
           </div>
+
+          {/* ── MONTH-WISE CAPEX: BE plan vs achieved ── */}
+          <CapexMonthlyChart data={capexMonthly} />
 
           {/* ── ANALYTICS ROW: Delay donut + By Status + By Type ── */}
           <div className="grid grid-cols-5 gap-3">
@@ -994,6 +1003,68 @@ function ViewToggle({ view, setView }: { view: "command" | "executive"; setView:
         onClick={() => setView("command")}>Command View</button>
       <button className={base} style={view === "executive" ? activeStyle : idleStyle}
         onClick={() => setView("executive")}>Executive View</button>
+    </div>
+  );
+}
+
+// Month-wise CAPEX: BE plan vs achieved (₹ Cr), April→March. Gradient bars with
+// a soft drop-shadow give a 3D-histogram feel while staying a readable chart.
+function CapexMonthlyChart({ data }: { data: any }) {
+  const months: any[] = data?.months || [];
+  const totalBe = months.reduce((s, m) => s + (m.be || 0), 0);
+  const totalAct = months.reduce((s, m) => s + (m.actual || 0), 0);
+  const hasAnyActual = totalAct > 0;
+
+  return (
+    <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+      <div className="mb-1 flex items-center gap-2">
+        <IndianRupee className="h-3.5 w-3.5 text-cyan-400" />
+        <h3 className="text-xs font-semibold text-zinc-300">Month-wise CAPEX — BE Plan vs Achieved</h3>
+        <span className="ml-auto text-[10px] text-zinc-500">
+          FY {data?.fy_year || "—"} · Plan ₹{Math.round(totalBe).toLocaleString("en-IN")} Cr · Achieved ₹{Math.round(totalAct).toLocaleString("en-IN")} Cr
+        </span>
+      </div>
+      {!data?.has_plan ? (
+        <div className="py-10 text-center text-xs text-zinc-500">No CAPEX plan found for this FY.</div>
+      ) : (
+        <>
+          <div style={{ height: 240 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={months} margin={{ top: 14, right: 8, bottom: 0, left: 0 }} barGap={4}>
+                <defs>
+                  <linearGradient id="capBe" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#60a5fa" /><stop offset="100%" stopColor="#2563eb" />
+                  </linearGradient>
+                  <linearGradient id="capAct" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#34d399" /><stop offset="100%" stopColor="#059669" />
+                  </linearGradient>
+                  <filter id="capShadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="2" stdDeviation="2" floodColor="#000" floodOpacity="0.35" />
+                  </filter>
+                </defs>
+                <CartesianGrid stroke="#27272a" strokeDasharray="3 3" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#a1a1aa" }} tickLine={false} axisLine={{ stroke: "#3f3f46" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#a1a1aa" }} tickLine={false} axisLine={false} width={44}
+                  tickFormatter={(v: any) => `₹${Number(v).toLocaleString("en-IN")}`} />
+                <Tooltip
+                  formatter={(v: any, n: any) => [`₹${Number(v).toLocaleString("en-IN")} Cr`, n]}
+                  contentStyle={{ background: "#18181b", border: "1px solid #3f3f46", borderRadius: 8, fontSize: 11 }}
+                  labelStyle={{ color: "#e4e4e7", fontWeight: 700 }} cursor={{ fill: "rgba(255,255,255,.04)" }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="be" name="BE Plan" fill="url(#capBe)" radius={[4, 4, 0, 0]} filter="url(#capShadow)" maxBarSize={26} />
+                <Bar dataKey="actual" name="Achieved" fill="url(#capAct)" radius={[4, 4, 0, 0]} filter="url(#capShadow)" maxBarSize={26}>
+                  <LabelList dataKey="actual" position="top" formatter={(v: any) => (v ? Math.round(v) : "")} style={{ fontSize: 9, fill: "#34d399" }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+          {!hasAnyActual && (
+            <div className="mt-1 text-center text-[10px] text-zinc-500">
+              BE plan shown across all months · no monthly actuals booked yet for this FY
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
