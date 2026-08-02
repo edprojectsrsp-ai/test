@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   ComposedChart, Line, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, ReferenceLine,
+  Tooltip, Legend, ResponsiveContainer, ReferenceLine, LabelList,
 } from "recharts";
 import { TrendingUp, AlertTriangle, Activity, Calendar, Target, Package } from "lucide-react";
 
@@ -263,16 +263,25 @@ function SCurveReportContent() {
                     <stop offset="100%" stopColor="#dbeafe" stopOpacity={0.05} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 4" stroke={C.grid} vertical={false} />
-                <XAxis dataKey="month" stroke={C.border} tick={{ fontSize: 11, fill: C.tick, fontWeight: 600 }} axisLine={{ stroke: C.border }} tickLine={false} />
-                <YAxis domain={[0, 100]} stroke={C.border} tick={{ fontSize: 11, fill: C.tick, fontWeight: 600 }} axisLine={false} tickLine={false}
-                  label={{ value: "%", angle: -90, position: "insideLeft", fill: C.muted, fontSize: 11, fontWeight: 700 }} />
-                <Tooltip contentStyle={tipStyle} formatter={(val: any, name: string) => [`${Number(val).toFixed(1)}%`, name]} />
+                {/* Excel-style S-curve: full grid, markers + value labels on every point */}
+                <CartesianGrid strokeDasharray="3 3" stroke={C.grid} vertical={true} horizontal={true} />
+                <XAxis dataKey="month" stroke={C.border} tick={{ fontSize: 11, fill: C.tick, fontWeight: 600 }} axisLine={{ stroke: C.border }} tickLine={{ stroke: C.border }} />
+                <YAxis domain={[0, 100]} ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
+                  stroke={C.border} tick={{ fontSize: 11, fill: C.tick, fontWeight: 600 }} axisLine={{ stroke: C.border }} tickLine={{ stroke: C.border }}
+                  label={{ value: "Cumulative %", angle: -90, position: "insideLeft", fill: C.muted, fontSize: 11, fontWeight: 700 }} />
+                <Tooltip contentStyle={tipStyle} formatter={(val: any, name: string) => [val == null ? "—" : `${Number(val).toFixed(1)}%`, name]} />
                 <Legend wrapperStyle={{ color: C.ink, fontWeight: 650, fontSize: 12 }} />
-                <ReferenceLine y={100} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: "100%", fill: C.muted, fontSize: 10 }} />
-                <Area type="monotone" dataKey="planned" stroke={C.plan} fill="url(#repScPlan)" strokeWidth={2.6} dot={false} name="Planned %" />
-                <Line type="monotone" dataKey="actual" stroke={C.actual} strokeWidth={3}
-                  dot={{ fill: "#10b981", r: 3.5, stroke: "#fff", strokeWidth: 2 }} connectNulls={false} name="Actual %" />
+                <ReferenceLine y={100} stroke="#94a3b8" strokeDasharray="4 4" label={{ value: "Target 100%", fill: C.muted, fontSize: 10, position: "right" }} />
+                <Area type="monotone" dataKey="planned" stroke={C.plan} fill="url(#repScPlan)" strokeWidth={2.4}
+                  dot={{ fill: "#fff", stroke: C.plan, strokeWidth: 2, r: 3.5 }} name="Planned %">
+                  <LabelList dataKey="planned" position="top" formatter={(v: any) => (v != null ? Math.round(v) : "")}
+                    style={{ fontSize: 9, fill: C.plan, fontWeight: 700 }} />
+                </Area>
+                <Line type="monotone" dataKey="actual" stroke={C.actual} strokeWidth={3} connectNulls={false} name="Actual %"
+                  dot={{ fill: C.actual, r: 4, stroke: "#fff", strokeWidth: 2 }} activeDot={{ r: 6 }}>
+                  <LabelList dataKey="actual" position="bottom" formatter={(v: any) => (v != null ? Math.round(v) : "")}
+                    style={{ fontSize: 9, fill: C.actual, fontWeight: 800 }} />
+                </Line>
               </ComposedChart>
             </ResponsiveContainer>
           </div>
