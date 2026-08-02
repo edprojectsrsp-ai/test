@@ -5,6 +5,7 @@
 // bullet with its source citation + grounding flag -> edit inline (feeds the
 // learning loop) -> Generate the report family (downloadable docx).
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Upload, FileText } from "lucide-react";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 const rb = (p: string) => `${API}/report-brain${p}`;
@@ -144,11 +145,12 @@ export default function ReportStudio() {
         {/* left: sources + projects */}
         <div style={{ display: "grid", gap: 14 }}>
           <div onDrop={(e) => { e.preventDefault(); onUpload(e.dataTransfer.files); }} onDragOver={(e) => e.preventDefault()}
-            style={{ background: C.panel, border: `1px dashed ${C.line}`, borderRadius: 12, padding: 18, textAlign: "center" }}>
-            <div style={{ fontSize: 13, fontWeight: 600 }}>Drop sources here</div>
-            <div style={{ fontSize: 11.5, color: C.dim, margin: "4px 0 10px" }}>WhatsApp .txt · DPR .xlsx · Record Notes .docx</div>
+            style={{ background: "var(--steel-soft)", border: `1.5px dashed var(--steel-dim)`, borderRadius: 12, padding: "22px 18px", textAlign: "center" }}>
+            <Upload size={22} style={{ color: C.steel, marginBottom: 6 }} />
+            <div style={{ fontSize: 13, fontWeight: 700 }}>Drop report sources here</div>
+            <div style={{ fontSize: 11.5, color: C.dim, margin: "4px 0 12px" }}>WhatsApp .txt · DPR .xlsx · Record Notes / prior report .docx</div>
             <input ref={fileRef} type="file" multiple hidden suppressHydrationWarning onChange={(e) => onUpload(e.target.files)} />
-            <button onClick={() => fileRef.current?.click()} style={{ border: "none", background: C.steel, color: "#05222b", borderRadius: 8, padding: "7px 16px", fontWeight: 800, cursor: "pointer" }}>Browse files</button>
+            <button onClick={() => fileRef.current?.click()} style={{ border: "none", background: C.steel, color: "#fff", borderRadius: 8, padding: "8px 18px", fontWeight: 800, cursor: "pointer" }}>Browse files</button>
           </div>
 
           <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 12 }}>
@@ -176,8 +178,12 @@ export default function ReportStudio() {
         {/* right: review + generate */}
         <div style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 12, padding: 16, minHeight: 400 }}>
           {!composed ? (
-            <div style={{ color: C.dim, fontSize: 13, display: "grid", placeItems: "center", height: 360 }}>
-              Ingest sources, then pick a project to compose its monthly sections.
+            <div style={{ color: C.dim, fontSize: 13, display: "grid", placeItems: "center", height: 360, textAlign: "center" }}>
+              <div>
+                <FileText size={30} style={{ opacity: 0.5, marginBottom: 8 }} />
+                <div style={{ fontWeight: 700, color: C.ink, marginBottom: 4 }}>Nothing composed yet</div>
+                <div style={{ maxWidth: 320 }}>Ingest sources on the left (or a prior report), then pick a project to compose its monthly sections with citations.</div>
+              </div>
             </div>
           ) : (
             <>

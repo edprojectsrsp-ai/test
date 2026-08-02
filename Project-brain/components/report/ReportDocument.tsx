@@ -201,12 +201,14 @@ export default function ReportDocument({ project = "COB7-PKG2", month = "2026-06
         {busy ? <span style={{ color: P.steel, fontSize: 12 }}>working…</span> : null}
         {toast ? <span style={{ background: P.soft, borderRadius: 8, padding: "5px 12px", fontSize: 12, color: P.steel }}>{toast}</span> : null}
         {doc?.reference ? (
-          <span style={{ background: "#eef3f9", borderRadius: 8, padding: "5px 12px", fontSize: 12, color: P.steel }}>
-            Approved baseline: {doc.reference.month} · {doc.reference.changed_blocks} changed block(s)
+          <span style={{ background: "#eef3f9", border: `1px solid ${P.steel}33`, borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, color: P.steel, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: P.steel }} />
+            Baseline {doc.reference.month} · <b style={{ color: P.steel }}>{doc.reference.changed_blocks}</b> change{doc.reference.changed_blocks === 1 ? "" : "s"} in blue
           </span>
         ) : (
-          <span style={{ background: "#f7f3e7", borderRadius: 8, padding: "5px 12px", fontSize: 12, color: P.warn }}>
-            No approved baseline yet
+          <span style={{ background: "#f7f3e7", border: `1px solid ${P.warn}33`, borderRadius: 999, padding: "5px 12px", fontSize: 12, fontWeight: 700, color: P.warn, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 999, background: P.warn }} />
+            No approved baseline — approve one to track changes
           </span>
         )}
         <input ref={fileRef} type="file" accept=".doc,.docx" hidden onChange={(e) => uploadReference(e.target.files?.[0])} />
@@ -254,8 +256,13 @@ export default function ReportDocument({ project = "COB7-PKG2", month = "2026-06
           </>
         )}
       </div>
-      <div style={{ textAlign: "center", fontSize: 11, color: P.dim }}>
-        ● grounded to source · ▲ unverified · <span style={{ color: P.warn }}>amber</span> = auto-draft · <span style={{ color: P.steel }}>blue</span> = changed vs approved baseline · click any cell or bullet to edit
+      <div style={{ maxWidth: 860, margin: "10px auto 0", display: "flex", flexWrap: "wrap", gap: 14, justifyContent: "center",
+        fontSize: 11, color: P.dim, padding: "8px 12px", border: `1px solid ${P.line}`, borderRadius: 10, background: "#fff" }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ color: P.ok }}>●</span> grounded to source</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ color: P.hot }}>▲</span> unverified</span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: "#fdf6e3", border: `1px solid ${P.warn}` }} /> <span style={{ color: P.warn }}>auto-draft</span></span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><span style={{ width: 12, height: 12, borderRadius: 3, background: "#e9f2ff", border: `1px solid ${P.steel}` }} /> <b style={{ color: P.steel }}>blue = changed vs approved baseline</b></span>
+        <span>· click any cell or bullet to edit</span>
       </div>
     </div>
   );

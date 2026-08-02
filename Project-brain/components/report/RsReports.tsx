@@ -16,10 +16,11 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import {
   ArrowDown, ArrowUp, ChevronDown, ChevronRight, Download, Eye, FileSpreadsheet,
-  FileText, Loader2, RefreshCw, Sparkles, Trash2,
+  FileStack, FileText, Loader2, RefreshCw, Sparkles, Trash2,
 } from "lucide-react";
 import { authFetch } from "@/lib/auth";
 import { exportRsReport } from "@/lib/export";
+import { LoadingState, EmptyState } from "@/ui";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000/api/v1").replace(/\/$/, "");
 const rs = (p: string) => `${API}/report-studio${p}`;
@@ -285,11 +286,9 @@ export function CapexPackPanel() {
       {err && <div style={{ color: "var(--slag, #e5534b)", fontSize: 12, marginBottom: 8 }}>{err}</div>}
       {recon && <MosReconPanel data={recon} />}
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-3)", fontSize: 12, padding: 22 }}>
-          <Loader2 size={14} className="spin" /> Loading CAPEX report pack…
-        </div>
+        <LoadingState label="Loading CAPEX report pack…" rows={3} />
       ) : reports.length === 0 ? (
-        <div style={{ color: "var(--ink-4)", fontSize: 12, padding: 18 }}>No reports in the pack yet.</div>
+        <EmptyState title="No reports in the pack yet" hint="Seed the CAPEX pack to populate the standard three-format set." />
       ) : (
         reports.map((m, i) => <RsReportCard key={m.report_id} meta={m} defaultOpen={i === 0} />)
       )}
@@ -415,13 +414,13 @@ export default function CustomReportsTab() {
       </div>
       {err && <div style={{ color: "var(--slag, #e5534b)", fontSize: 12, marginBottom: 8 }}>{err}</div>}
       {loading ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-3)", fontSize: 12, padding: 22 }}>
-          <Loader2 size={14} className="spin" /> Loading…
-        </div>
+        <LoadingState label="Loading report templates…" rows={3} />
       ) : reports.length === 0 ? (
-        <div style={{ border: "1px dashed var(--line)", borderRadius: 10, padding: 28, textAlign: "center", color: "var(--ink-4)", fontSize: 13 }}>
-          No templates yet. Seed the CAPEX pack, or design in Matrix Builder and “Add to report”.
-        </div>
+        <EmptyState
+          icon={<FileStack size={26} />}
+          title="No report templates yet"
+          hint="Seed the CAPEX pack above, or design a matrix in Matrix Builder and use “Add to report”."
+        />
       ) : (
         reports.map((m) => (
           <div key={m.report_id}>
