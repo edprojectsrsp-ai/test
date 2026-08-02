@@ -9,6 +9,7 @@
 
 import { useEffect, useState } from "react";
 import { BarChart2, Calendar, RefreshCw, Users } from "lucide-react";
+import { authHeaders } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -191,7 +192,7 @@ export default function PhysicalProgressSummary() {
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    fetch(`${API}/board/physical-progress-summary?as_of=${asOf}`)
+    fetch(`${API}/board/physical-progress-summary?as_of=${asOf}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => { if (alive) setData(d); })
       .catch(() => {})

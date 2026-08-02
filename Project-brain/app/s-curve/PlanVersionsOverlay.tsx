@@ -7,6 +7,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { authHeaders } from "@/lib/auth";
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -33,7 +34,7 @@ export default function PlanVersionsOverlay({ schemeId }: { schemeId: number }) 
     if (!schemeId) return;
     let alive = true;
     setLoading(true);
-    fetch(`${API}/board/project-details/${schemeId}`)
+    fetch(`${API}/board/project-details/${schemeId}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
         if (!alive) return;

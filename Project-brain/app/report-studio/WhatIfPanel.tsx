@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, FlaskConical, TrendingUp, IndianRupee, Zap } from "lucide-react";
 import { exportPayload } from "@/lib/export";
+import { authHeaders } from "@/lib/auth";
 import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -71,7 +72,7 @@ export default function WhatIfPanel() {
     let alive = true;
     fetch(`${API}/report-templates-data?scheme_id=${schemeId}`)
       .then((r) => r.json()).then((d) => alive && setCtx(d)).catch(() => {});
-    fetch(`${API}/delay/schedule/${schemeId}`).then((r) => r.json())
+    fetch(`${API}/delay/schedule/${schemeId}`, { headers: authHeaders() }).then((r) => r.json())
       .then((d) => {
         if (!alive) return;
         setDelayRows((d.rows || []).map((r: any) => ({ aid: r.aid, name: r.name })));
@@ -84,7 +85,7 @@ export default function WhatIfPanel() {
   const runTia = useCallback(() => {
     if (!schemeId) return;
     fetch(`${API}/delay/tia/${schemeId}`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ activity_id: Number(fragAid) || -1, name: "What-if fragnet", party: "employer", days: fragDays }),
     }).then((r) => r.json()).then((d) => setTia(d.result || null)).catch(() => setTia(null));
   }, [schemeId, fragAid, fragDays]);

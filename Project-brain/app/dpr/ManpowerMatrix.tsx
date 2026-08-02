@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Plus, Save, Trash2, Users } from "lucide-react";
+import { authHeaders } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -32,7 +33,7 @@ export default function ManpowerMatrix({ schemeId }: { schemeId: number }) {
 
   const load = useCallback(() => {
     if (!schemeId) return;
-    fetch(`${API}/board/manpower/${schemeId}?date=${date}`)
+    fetch(`${API}/board/manpower/${schemeId}?date=${date}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => { setRows(d.rows || []); setAgency(d.agencyName || ""); })
       .catch(() => {});
@@ -49,7 +50,7 @@ export default function ManpowerMatrix({ schemeId }: { schemeId: number }) {
     try {
       const r = await fetch(`${API}/board/manpower/${schemeId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({
           report_date: date,
           rows: rows.map((row) => ({
@@ -75,7 +76,7 @@ export default function ManpowerMatrix({ schemeId }: { schemeId: number }) {
     if (!name) return;
     await fetch(`${API}/board/manpower/${schemeId}/contractors`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ contractorName: name }),
     }).catch(() => {});
     setNewContractor("");
@@ -85,7 +86,7 @@ export default function ManpowerMatrix({ schemeId }: { schemeId: number }) {
   const removeContractor = async (name: string) => {
     await fetch(
       `${API}/board/manpower/${schemeId}/contractors?contractorName=${encodeURIComponent(name)}`,
-      { method: "DELETE" },
+      { method: "DELETE", headers: authHeaders() },
     ).catch(() => {});
     load();
   };

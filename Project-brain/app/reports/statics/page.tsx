@@ -13,6 +13,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Download, FileSpreadsheet, Printer, Table2 } from "lucide-react";
 import { exportStatics } from "@/lib/export";
+import { authHeaders } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -150,7 +151,7 @@ function StaticsReport() {
     let alive = true;
     setLoading(true);
     const pkgQuery = packageId ? `&package_id=${packageId}` : "";
-    fetch(`${API}/board/scheme-summary/${schemeId}?month=${month}${pkgQuery}`)
+    fetch(`${API}/board/scheme-summary/${schemeId}?month=${month}${pkgQuery}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => alive && setData(d))
       .catch(() => {})

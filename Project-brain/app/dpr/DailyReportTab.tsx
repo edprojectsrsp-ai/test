@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { FileText, Users } from "lucide-react";
+import { authHeaders } from "@/lib/auth";
 
 const API = (process.env.NEXT_PUBLIC_API_BASE || "http://localhost:8000/api/v1").replace(/\/$/, "");
 
@@ -32,7 +33,7 @@ export default function DailyReportTab({ schemeId }: { schemeId: number }) {
     if (!schemeId) return;
     let alive = true;
     setLoading(true);
-    fetch(`${API}/board/daily-report/${schemeId}`)
+    fetch(`${API}/board/daily-report/${schemeId}`, { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => {
         if (!alive) return;
