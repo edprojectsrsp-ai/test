@@ -565,7 +565,12 @@ function PlanEditor({ fy, planType }: { fy: string; planType: PlanType }) {
       setPlanStatus(saved.status || "Draft");
       setRows(recomputeRollups((saved.rows || []).map(serverRowToLocal)));
       setIsDirty(false);
-      speakAndChat(`${planType} plan saved`, "ðŸ’¾");
+      const warns = saved.sanction_warnings || [];
+      if (warns.length) {
+        speakAndChat(`${planType} plan saved — ${warns.length} row(s) exceed sanctioned scope (review advised)`, "⚠️");
+      } else {
+        speakAndChat(`${planType} plan saved`, "💾");
+      }
       refreshPlanList();
     } catch (e: any) {
       speakAndChat(`Save failed: ${e.message}`, "âŒ");

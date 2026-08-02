@@ -216,7 +216,7 @@ def _is_pre_effective(month_no: int, effective_month: int) -> bool:
     return m_idx < e_idx
 
 
-def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> None:
+def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> list:
     """Wipe & re-insert plan rows + values + months.
     Validates row_level. Does NOT touch capex_actuals (those belong to row
     cascade — if a row is replaced with a new id, its actuals are lost.
@@ -234,7 +234,12 @@ def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> None:
         {
             "gross": r.gross,
             "cumLast": r.cumLast,
-            "sanctioned": (r.reFY or r.beFY),
+            # The sanction ceiling is the project's GROSS (whole-life) cost, not
+            # a single FY's BE/RE. Using beFY/reFY here made the check circular
+            # and blocked every save where a grouping row or a project with
+            # prior-year spend had beFY/reFY == 0. Fall back to BE/RE only when
+            # gross is absent.
+            "sanctioned": (r.gross or r.reFY or r.beFY),
             "months": {
                 int(k): {"be": v.be, "re": v.re, "actual": v.actual}
                 for k, v in (r.months or {}).items()
@@ -244,8 +249,11 @@ def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> None:
         if r.level in ("Item", "Package")
     ]
     validation = validate_capex_plan(validation_rows, header.plan_type, header.effective_from_month)
-    if not validation["ok"]:
-        raise HTTPException(status_code=422, detail={"detail": "CAPEX exceeds sanction", "errors": validation["errors"]})
+    # Exceeding sanction is a WARNING, not a save-block: a project that already
+    # overspent its gross in prior years can't be fixed by editing this year's
+    # plan, and a hard 422 there makes the plan unsaveable. Surface the warnings
+    # with the saved response instead so the planner still sees them.
+    sanction_warnings = [] if validation["ok"] else validation["errors"]
 
     row_ids = [r.id for r in db.query(CapexPlanRow.id).filter(CapexPlanRow.plan_id == plan_id).all()]
     if row_ids:
@@ -294,6 +302,8 @@ def _replace_rows(plan_id: int, rows: list[RowIn], db: Session) -> None:
                     re_amount=m_val.re,
                     actual_amount=m_val.actual,
                 ))
+
+    return sanction_warnings
 
 
 def _username(user):
@@ -406,10 +416,13 @@ def create_plan(body: PlanBodyIn, db: Session = Depends(get_db), user=Depends(op
     except IntegrityError as e:
         db.rollback()
         raise HTTPException(409, f"Could not create plan: {e.orig}")
-    _replace_rows(h.id, body.rows, db)
+    warnings = _replace_rows(h.id, body.rows, db)
     db.commit()
     db.refresh(h)
-    return _serialize_plan_full(h, db)
+    out = _serialize_plan_full(h, db)
+    if warnings:
+        out["sanction_warnings"] = warnings
+    return out
 
 
 @router.put("/plans/{plan_id}")
@@ -426,10 +439,13 @@ def update_plan(plan_id: int, body: PlanBodyIn, db: Session = Depends(get_db), u
         h.effective_from_month = body.effMonth
     if body.planVersion:
         h.plan_version = body.planVersion
-    _replace_rows(plan_id, body.rows, db)
+    warnings = _replace_rows(plan_id, body.rows, db)
     db.commit()
     db.refresh(h)
-    return _serialize_plan_full(h, db)
+    out = _serialize_plan_full(h, db)
+    if warnings:
+        out["sanction_warnings"] = warnings
+    return out
 
 
 @router.post("/plans/{plan_id}/approve")
