@@ -250,6 +250,15 @@ async def violation_image(
     ev = await session.get(ViolationEvent, violation_id)
     if ev is None:
         raise HTTPException(404, "violation not found")
+
+    # Cloud role: image_path points at a plant PC filesystem this process cannot
+    # see, and there is no OpenCV here to draw the box with. The pushed
+    # thumbnail is the evidence — the agent burnt the annotation in before
+    # sending, so it is the same picture the operator reviewed locally.
+    if getattr(ev, "thumb_jpeg", None):
+        return Response(content=ev.thumb_jpeg, media_type="image/jpeg",
+                        headers={"Cache-Control": "private, max-age=3600"})
+
     predictions = None
     path = Path(ev.image_path) if ev.image_path else None
     # Pull the linked capture for its stored predictions (and a fallback image).

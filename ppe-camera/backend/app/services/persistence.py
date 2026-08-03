@@ -40,6 +40,7 @@ class PersistenceService:
         track_id: int | None,
         confidence: float,
         person_box: list | tuple | None,
+        person_key: str = "",
         capture_id: str | None = None,
         image_path: str = "",
         department: str = "",

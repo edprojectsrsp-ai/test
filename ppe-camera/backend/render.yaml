@@ -1,3 +1,8 @@
+# Cloud role: violations dashboard + sync receiver only.
+#
+# No model, no cameras, no video. PPE_BOOT_MODEL_KEY and PPE_BASE_WEIGHTS are
+# gone deliberately -- loading a checkpoint here is what exhausted the free
+# instance's 512 MB. Inference runs on the plant PC (see installer/).
 services:
   - type: web
     name: project-brain-ppe-lite
@@ -7,13 +12,20 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      - key: PPE_ROLE
+        value: cloud
       - key: PPE_DEVICE
         value: cpu
-      - key: PPE_BOOT_MODEL_KEY
-        value: nduka1999
-      - key: PPE_BASE_WEIGHTS
-        value: yolo11n.pt
+      # Comma-separated "agentid:token" pairs -- the plant PCs allowed to push.
+      # Seeded (hashed) into sync_agents on boot. Set this in the dashboard,
+      # never in the repo.
+      - key: PPE_SYNC_AGENTS
+        sync: false
       - key: PPE_CORS_ORIGINS
         sync: false
+      # Point at Postgres. Free Render instances have no persistent disk, so
+      # SQLite here is wiped on every deploy.
       - key: PPE_DATABASE_URL
         sync: false
+      - key: PPE_CLOUD_RETENTION_DAYS
+        value: "90"

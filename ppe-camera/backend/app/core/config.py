@@ -28,6 +28,15 @@ def _detect_device() -> str:
 
 
 class Settings:
+    # ---- deployment role -------------------------------------------------
+    # "edge"  -- the plant PC: cameras, inference, live view, recording, training.
+    #            Everything heavy. Uses the local GPU/CPU and local disk.
+    # "cloud" -- the free-tier dashboard: violations feed + the sync receiver,
+    #            nothing else. Never imports torch/ultralytics/opencv, which is
+    #            the whole point: the ML stack alone is ~500 MB resident and a
+    #            512 MB instance is out of memory before it serves a request.
+    ROLE: str = os.getenv("PPE_ROLE", "edge").strip().lower()
+
     # ---- paths -----------------------------------------------------------
     ROOT: Path = Path(os.getenv("PPE_ROOT", Path(__file__).resolve().parents[3]))
     DATA_DIR: Path = ROOT / "data"
@@ -162,6 +171,51 @@ class Settings:
     # evidence clip a contractor disputes should show the scene, not our boxes.
     RECORD_OVERLAY: bool = os.getenv("PPE_RECORD_OVERLAY", "0") not in (
         "0", "", "false", "False")
+
+    # ---- cloud sync (edge -> cloud, outbound only) ------------------------
+    # The agent never accepts an inbound connection from the cloud. It pushes
+    # violations out over HTTPS and that is the entire coupling, which is what
+    # makes this deployable inside a plant network with no firewall change.
+    SYNC_URL: str = os.getenv("PPE_SYNC_URL", "").strip().rstrip("/")
+    AGENT_ID: str = os.getenv("PPE_AGENT_ID", "").strip()
+    AGENT_TOKEN: str = os.getenv("PPE_AGENT_TOKEN", "").strip()
+    # OFF by default, deliberately. Pushing plant surveillance data to a public
+    # cloud is a decision an operator makes, not a default they discover after
+    # the fact. Manual push is the primary path; the timer is opt-in.
+    AUTO_SYNC: bool = os.getenv("PPE_AUTO_SYNC", "0") not in (
+        "0", "", "false", "False")
+    SYNC_INTERVAL_S: int = int(os.getenv("PPE_SYNC_INTERVAL_S", str(4 * 3600)))
+    # Rows per HTTP request. A four-hour backlog on a busy site is thousands of
+    # violations; one request carrying all of them times out and retries forever.
+    SYNC_BATCH: int = int(os.getenv("PPE_SYNC_BATCH", "100"))
+    SYNC_TIMEOUT_S: float = float(os.getenv("PPE_SYNC_TIMEOUT_S", "60"))
+    # The thumbnail is the ONLY evidence the cloud ever sees — full-res stills,
+    # GIFs and clips stay on the agent — so it has to stay legible. 640px q75 is
+    # ~45 KB, which keeps a 100-row batch around 5 MB.
+    SYNC_THUMB_WIDTH: int = int(os.getenv("PPE_SYNC_THUMB_WIDTH", "640"))
+    SYNC_THUMB_QUALITY: int = int(os.getenv("PPE_SYNC_THUMB_QUALITY", "75"))
+
+    # ---- cloud-side agent credentials -------------------------------------
+    # "agentid:token,agentid2:token2". Seeded into the sync_agents table at
+    # boot, hashed. Env rather than an admin UI because there is exactly one
+    # plant PC today, and a login screen nobody uses is a bigger liability than
+    # an environment variable. Revoke by removing the entry and redeploying, or
+    # by flipping sync_agents.enabled.
+    SYNC_AGENTS: str = os.getenv("PPE_SYNC_AGENTS", "").strip()
+
+    # ---- cloud-side retention --------------------------------------------
+    # The cloud is a dashboard, not an archive: the agent holds the system of
+    # record. Free Postgres is ~1 GB, which is ~20k thumbnails, so old cloud
+    # rows are pruned while the originals stay on the plant PC.
+    CLOUD_RETENTION_DAYS: int = int(os.getenv("PPE_CLOUD_RETENTION_DAYS", "90"))
+
+    @property
+    def is_edge(self) -> bool:
+        return self.ROLE != "cloud"
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.ROLE == "cloud"
 
     def ensure_dirs(self) -> None:
         for d in (

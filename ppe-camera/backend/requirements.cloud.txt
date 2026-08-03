@@ -1,0 +1,29 @@
+# Cloud role (PPE_ROLE=cloud) -- the violations dashboard + sync receiver.
+#
+# What is NOT here is the entire point. ultralytics pulls torch (~800 MB on
+# disk, ~400 MB resident before a single frame is decoded), and opencv-python
+# adds another ~90 MB plus the ffmpeg/libgl system libraries. Installing them
+# put a 512 MB instance out of memory at import time, which is why live view
+# and model management never worked in the hosted build.
+#
+# The cloud does not decode video, run a model, or read a frame from disk. It
+# receives already-annotated thumbnails from the plant PC and serves them.
+# Keep it that way: if something here needs cv2, it belongs on the agent.
+#
+# Edge (plant PC) uses requirements.txt -- the full stack, installed by the
+# Windows installer under installer/.
+
+fastapi>=0.115
+uvicorn[standard]>=0.30
+sqlalchemy>=2.0
+greenlet>=3.0
+pydantic>=2.7
+python-dotenv>=1.0
+
+# Postgres in production (Render), SQLite for a local cloud-role smoke test.
+asyncpg>=0.29
+aiosqlite>=0.20
+
+# Used by the agent's push client; harmless here and keeps one httpx version
+# across both roles.
+httpx>=0.27

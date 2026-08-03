@@ -1,0 +1,8 @@
+# Build output: a multi-GB venv with torch in it.
+build/
+Output/
+
+# Third-party binaries, fetched by whoever builds the installer.
+# nssm: https://nssm.cc/download   python: https://python.org/downloads
+nssm.exe
+redist/

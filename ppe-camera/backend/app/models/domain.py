@@ -40,6 +40,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     JSON,
+    LargeBinary,
     String,
     Text,
 )
@@ -163,6 +164,23 @@ class ViolationEvent(Base):
     )
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
 
+    # ---- cloud sync ------------------------------------------------------
+    # These three carry one row from the plant PC to the cloud dashboard. `id`
+    # is already a uuid4 minted at the edge, so it doubles as the idempotency
+    # key: a re-push of a batch that half-succeeded is an upsert, not a
+    # duplicate, which is what makes retrying safe with no bookkeeping.
+    #
+    # EDGE: synced_at is the outbound queue -- NULL means "not pushed yet".
+    #       agent_id/thumb_jpeg stay empty; the real image is on local disk.
+    # CLOUD: agent_id says which plant PC sent it, thumb_jpeg IS the evidence
+    #       (the cloud has no cv2 to annotate with and no disk to read from),
+    #       and synced_at is when it arrived.
+    agent_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    synced_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, index=True
+    )
+    thumb_jpeg: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+
 
 # ---------------------------------------------------------------------- alerts
 class AlertStatus(str, enum.Enum):
@@ -226,6 +244,29 @@ class AuditLog(Base):
     target: Mapped[str] = mapped_column(String(200), default="")
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
+
+
+# ----------------------------------------------------------------- sync agents
+class AgentRecord(Base):
+    """A registered edge agent -- one plant PC. Cloud-side only.
+
+    Only the SHA-256 of the token is stored. A leaked cloud database should not
+    hand an attacker the credential that lets them post fabricated violations
+    into the plant's safety record.
+    """
+
+    __tablename__ = "sync_agents"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)  # agent_id
+    name: Mapped[str] = mapped_column(String(128), default="")
+    token_hash: Mapped[str] = mapped_column(String(64), default="")
+    # Revocation without deletion: turning an agent off must not orphan the
+    # violations it already pushed, which are part of the safety record.
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_push_count: Mapped[int] = mapped_column(Integer, default=0)
+    total_pushed: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
 # --------------------------------------------------------------------- settings

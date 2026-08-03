@@ -16,14 +16,33 @@ from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
 
+from app.core.config import get_settings
 from app.core.db import init_db
-from app.routers import (alerts, analytics, cameras, modelops, models, nvr,
-                         review, stream, training, violations)
+
+# NOTE: routers are imported inside create_app(), not here. In the "cloud" role
+# torch/ultralytics/opencv are not installed at all, and a module-level import
+# of app.routers.stream would pull them in transitively and crash on boot.
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # The cloud role is a dashboard and a sync receiver. It has no cameras, no
+    # detector, no recorder and no local disk worth keeping — every block below
+    # is edge-only, and running any of it on a 512 MB instance is what put the
+    # service out of memory in the first place.
+    if get_settings().is_cloud:
+        try:
+            from app.routers.ingest import seed_agents
+
+            await seed_agents()
+        except Exception as exc:  # noqa: BLE001 - never block boot
+            import logging
+            logging.getLogger(__name__).warning("agent seeding skipped: %s", exc)
+        yield
+        return
+
     # hand the running loop to the runtime so camera worker threads can
     # schedule async DB writes for captures
     import asyncio
@@ -80,9 +99,26 @@ async def lifespan(app: FastAPI):
                 print(f"[ppe] boot model failed ({boot_model_key}): {e}")
 
         boot_task = asyncio.create_task(_boot_model())
+
+    # Opt-in only (PPE_AUTO_SYNC). Off by default: pushing plant surveillance
+    # data to a public cloud is a decision an operator makes, not a default.
+    try:
+        from app.services.push_service import start_auto_sync
+
+        start_auto_sync()
+    except Exception as exc:  # noqa: BLE001 - sync must never block boot
+        import logging
+        logging.getLogger(__name__).warning("auto-sync not started: %s", exc)
+
     try:
         yield
     finally:
+        try:
+            from app.services.push_service import stop_auto_sync
+
+            stop_auto_sync()
+        except Exception:
+            pass
         if boot_task is not None and not boot_task.done():
             boot_task.cancel()
         from app.services.runtime import get_manager
@@ -99,7 +135,10 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="PPE Detection API", version="0.1.0", lifespan=lifespan)
+    settings = get_settings()
+    role = settings.ROLE
+    app = FastAPI(title=f"PPE Detection API ({role})", version="0.2.0",
+                  lifespan=lifespan)
 
     origins = os.getenv(
         "PPE_CORS_ORIGINS",
@@ -113,16 +152,50 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.include_router(review.router)
-    app.include_router(cameras.router)
-    app.include_router(stream.router)
-    app.include_router(models.router)
-    app.include_router(analytics.router)
-    app.include_router(violations.router)
-    app.include_router(alerts.router)
-    app.include_router(training.router)
-    app.include_router(nvr.router)
-    app.include_router(modelops.router)
+    if settings.is_edge:
+        # Chrome's Private Network Access check. The control-room page is served
+        # from Vercel over HTTPS but talks to this agent on http://127.0.0.1, so
+        # Chrome sends a preflight carrying Access-Control-Request-Private-Network
+        # and drops the request unless the reply grants it. CORSMiddleware knows
+        # nothing about this header, so every camera and live-view call fails with
+        # an opaque CORS error that looks like the agent is down.
+        from starlette.middleware.base import BaseHTTPMiddleware
+
+        class _PrivateNetworkMiddleware(BaseHTTPMiddleware):
+            async def dispatch(self, request, call_next):
+                response = await call_next(request)
+                if request.headers.get("access-control-request-private-network"):
+                    response.headers["Access-Control-Allow-Private-Network"] = "true"
+                return response
+
+        app.add_middleware(_PrivateNetworkMiddleware)
+
+    if settings.is_cloud:
+        # Dashboard + receiver only. Deliberately NOT mounted: cameras, stream,
+        # models, training, nvr, modelops, review, alerts -- all of them reach
+        # for the detector, the recorder or the local filesystem, none of which
+        # exist here.
+        from app.routers import analytics, ingest, violations
+
+        app.include_router(violations.router)
+        app.include_router(analytics.router)
+        app.include_router(ingest.router)
+    else:
+        from app.routers import (alerts, analytics, cameras, modelops, models,
+                                 nvr, push, review, stream, training,
+                                 violations)
+
+        app.include_router(review.router)
+        app.include_router(cameras.router)
+        app.include_router(stream.router)
+        app.include_router(models.router)
+        app.include_router(analytics.router)
+        app.include_router(violations.router)
+        app.include_router(alerts.router)
+        app.include_router(training.router)
+        app.include_router(nvr.router)
+        app.include_router(modelops.router)
+        app.include_router(push.router)
 
     @app.get("/health")
     async def health() -> dict:
@@ -132,10 +205,15 @@ def create_app() -> FastAPI:
         s = get_settings()
         out: dict = {
             "status": "ok",
+            "role": s.ROLE,
             "device": s.DEVICE,
             "db": s.DATABASE_URL.split("://")[0],
             "version": app.version,
         }
+        if s.is_cloud:
+            # Nothing below applies: no fleet, no detector, no recorder. Probing
+            # for them would import the ML stack this role exists to avoid.
+            return out
         try:
             from app.services.runtime import get_manager
 
