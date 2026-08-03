@@ -2,6 +2,7 @@
  * Unified PPE API client — timeouts, clearer errors, offline-friendly.
  */
 import { getPpeApiBase, buildPpeUrl } from "./ppeApi";
+import { ensureAgent } from "./ppeAgent";
 
 export {
   getPpeApiBase,
@@ -11,6 +12,15 @@ export {
   PPE_DIRECT_BASE,
 } from "./ppeApi";
 
+export {
+  ensureAgent,
+  refreshAgent,
+  getAgentBase,
+  agentStatus,
+  agentHealth,
+  subscribeAgent,
+} from "./ppeAgent";
+
 const DEFAULT_TIMEOUT_MS = 20000;
 
 /**
@@ -19,6 +29,12 @@ const DEFAULT_TIMEOUT_MS = 20000;
  */
 export async function ppeFetch(path, options = {}) {
   const { timeoutMs = DEFAULT_TIMEOUT_MS, raw = false, ...init } = options;
+
+  // Settle "is there a local agent?" before building the URL, so the very
+  // first request already goes to the right place. Cached after the first
+  // call, so this costs nothing on subsequent ones.
+  if (!path.startsWith("http")) await ensureAgent();
+
   const url = path.startsWith("http") ? path : buildPpeUrl(path);
 
   const ctrl = new AbortController();
@@ -111,10 +127,15 @@ export function ppeDelete(path, opts = {}) {
 
 /** Fleet meta for shell badges */
 export async function fetchPpeShellMeta() {
+  const agent = await ensureAgent();
+  const onAgent = agent.status === "online";
+
   const health = await ppeFetch("/health", { timeoutMs: 8000 }).catch(() => null);
   if (!health || health.status !== "ok") {
     return {
       health: "offline",
+      agent: agent.status,
+      role: null,
       camRunning: 0,
       camTotal: 0,
       openAlerts: 0,
@@ -125,15 +146,20 @@ export async function fetchPpeShellMeta() {
     };
   }
 
+  // Cameras and the review queue exist only on the agent — the cloud role does
+  // not mount those routers at all. Asking for them from a remote browser is a
+  // guaranteed 404, so don't: an empty badge is honest, a failed request is noise.
   const [cams, types, pending] = await Promise.all([
-    ppeFetch("/api/cameras", { timeoutMs: 8000 }).catch(() => []),
+    onAgent ? ppeFetch("/api/cameras", { timeoutMs: 8000 }).catch(() => []) : [],
     ppeFetch("/api/violations/types", { timeoutMs: 8000 }).catch(() => null),
-    ppeFetch("/api/review/pending", { timeoutMs: 8000 }).catch(() => []),
+    onAgent ? ppeFetch("/api/review/pending", { timeoutMs: 8000 }).catch(() => []) : [],
   ]);
 
   const list = Array.isArray(cams) ? cams : [];
   return {
     health: "online",
+    agent: agent.status,
+    role: health.role || (onAgent ? "edge" : "cloud"),
     camRunning: list.filter((c) => c.state === "running").length,
     camTotal: list.length,
     openAlerts: Number(types?.total) || 0,
@@ -143,6 +169,35 @@ export async function fetchPpeShellMeta() {
     armed: health.recording_armed ?? null,
     fleet: health.fleet || null,
   };
+}
+
+/**
+ * Cloud-sync controls. Agent-only: the push queue lives on the plant PC, and
+ * the cloud is the destination, so none of this is meaningful remotely.
+ */
+export function fetchSyncStatus(opts) {
+  return ppeFetch("/api/sync/status", { timeoutMs: 8000, ...opts });
+}
+
+export function fetchSyncPending(params = {}, opts) {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v != null && v !== ""),
+  ).toString();
+  return ppeFetch(`/api/sync/pending${qs ? `?${qs}` : ""}`, {
+    timeoutMs: 12000,
+    ...opts,
+  });
+}
+
+/**
+ * Send queued violations to the cloud.
+ * @param {{camera_id?:string, rule_type?:string, since?:string, until?:string,
+ *          limit?:number, dry_run?:boolean}} [filters]
+ */
+export function pushToCloud(filters = {}, opts = {}) {
+  // A backlog of thousands is chunked server-side but still one HTTP call from
+  // here, and it uploads an image per violation. Minutes, not seconds.
+  return ppePost("/api/sync/push", filters, { timeoutMs: 300000, ...opts });
 }
 
 function anySignal(signals) {

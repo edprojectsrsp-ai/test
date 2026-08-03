@@ -1,7 +1,16 @@
+import { getAgentBase } from "./ppeAgent";
+
+const DEFAULT_LOCAL_PPE_BASE = "http://127.0.0.1:8004";
+const DEFAULT_PROD_PPE_BASE = "https://project-brain-ppe-lite.onrender.com";
+const IS_PROD_RUNTIME =
+  process.env.NODE_ENV === "production" ||
+  process.env.VERCEL === "1" ||
+  Boolean(process.env.VERCEL_URL);
+
 const RAW_PPE_BASE =
   process.env.PPE_API_URL ||
   process.env.NEXT_PUBLIC_PPE_API_URL ||
-  "http://127.0.0.1:8004";
+  (IS_PROD_RUNTIME ? DEFAULT_PROD_PPE_BASE : DEFAULT_LOCAL_PPE_BASE);
 
 export const PPE_PROXY_BASE = "/api/ppe";
 export const PPE_DIRECT_BASE = RAW_PPE_BASE.replace(/\/$/, "");
@@ -27,12 +36,19 @@ export function normalizePpePath(path = "") {
 }
 
 export function getPpeApiBase() {
-  return PPE_PROXY_BASE;
+  // When this page is open ON the plant PC, the local agent is the real
+  // backend: it has the cameras, the detector and the video. The cloud has
+  // violations and analytics only. See lib/ppeAgent.js.
+  return getAgentBase() || PPE_PROXY_BASE;
 }
 
 export function buildPpeUrl(path = "") {
   if (/^https?:\/\//i.test(path)) return path;
-  return `${getPpeApiBase()}${normalizePpePath(path)}`;
+  const agent = getAgentBase();
+  // Straight to the agent: FastAPI does not want the trailing slash that the
+  // Next proxy requires, and adding one earns a 307 that can drop a POST body.
+  if (agent) return `${agent}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${PPE_PROXY_BASE}${normalizePpePath(path)}`;
 }
 
 export function buildDirectPpeUrl(path = "") {

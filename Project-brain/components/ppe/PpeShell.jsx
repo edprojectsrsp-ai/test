@@ -1,18 +1,28 @@
 "use client";
 /**
- * Industrial PPE shell — shared command bar + module nav + offline banner.
- * Wraps every PPE surface (embedded + desktop) in the dark control-room theme.
+ * Industrial PPE shell — command bar + grouped module nav + offline banner.
+ * Wraps every PPE surface (embedded + desktop).
  */
-import React, { useCallback, useEffect, useState } from "react";
-import { getPpeApiBase, fetchPpeShellMeta } from "../../lib/ppeClient";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  agentStatus,
+  fetchPpeShellMeta,
+  getPpeApiBase,
+  refreshAgent,
+  subscribeAgent,
+} from "../../lib/ppeClient";
+import CloudPushPanel from "./CloudPushPanel";
+import ModuleNav, { flattenModuleNav } from "../layout/ModuleNav";
 
 /**
  * @typedef {"connecting"|"online"|"offline"} HealthState
+ * @typedef {{id:string,label:string,hint?:string,role?:string}} FlatTab
  */
 
 /**
  * @param {object} props
- * @param {Array<{id:string,label:string,hint?:string,role?:string}>} props.tabs
+ * @param {FlatTab[]} [props.tabs] — flat list for label/hint lookup (optional if nav provided)
+ * @param {import("../layout/ModuleNav").ModuleNavEntry[]} [props.nav] — grouped primary nav
  * @param {string} props.tab
  * @param {(id:string)=>void} props.onTab
  * @param {React.ReactNode} props.children
@@ -26,6 +36,7 @@ import { getPpeApiBase, fetchPpeShellMeta } from "../../lib/ppeClient";
  */
 export default function PpeShell({
   tabs,
+  nav,
   tab,
   onTab,
   children,
@@ -37,6 +48,9 @@ export default function PpeShell({
   extraMeta = null,
   onMeta,
 }) {
+  const [agent, setAgent] = useState(/** @type {string} */ (agentStatus()));
+  // getPpeApiBase() flips from the cloud proxy to the local agent once
+  // discovery resolves, so it must be read during render, not captured once.
   const API_BASE = getPpeApiBase();
   const [health, setHealth] = useState(/** @type {HealthState} */ ("connecting"));
   const [camRunning, setCamRunning] = useState(0);
@@ -45,6 +59,8 @@ export default function PpeShell({
   const [pendingReview, setPendingReview] = useState(0);
   const [device, setDevice] = useState(null);
   const [clock, setClock] = useState("");
+  const [openMenu, setOpenMenu] = useState(false);
+  const openMenuRef = useRef(/** @type {HTMLDivElement|null} */ (null));
 
   const refreshMeta = useCallback(async () => {
     try {
@@ -67,6 +83,10 @@ export default function PpeShell({
     return () => clearInterval(t);
   }, [refreshMeta]);
 
+  // Discovery resolves asynchronously and flips every URL the page builds, so
+  // re-render when it lands rather than leaving the UI on the cloud fallback.
+  useEffect(() => subscribeAgent((s) => setAgent(s.status)), []);
+
   useEffect(() => {
     if (!fullscreen) return undefined;
     const tick = () =>
@@ -83,40 +103,69 @@ export default function PpeShell({
     return () => clearInterval(t);
   }, [fullscreen]);
 
-  // Keyboard: 1–9 jump tabs, R refresh
+  // R = refresh only (tab keys handled by ModuleNav)
   useEffect(() => {
     const onKey = (e) => {
       if (e.target && ["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-      if (e.key === "r" && (e.metaKey || e.ctrlKey)) return; // browser refresh
-      if (e.key === "R" || e.key === "r") {
-        if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-          e.preventDefault();
-          refreshMeta();
-        }
-        return;
-      }
-      const n = Number(e.key);
-      if (n >= 1 && n <= tabs.length && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      if (e.key === "r" && (e.metaKey || e.ctrlKey)) return;
+      if ((e.key === "R" || e.key === "r") && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        onTab(tabs[n - 1].id);
+        refreshMeta();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [tabs, onTab, refreshMeta]);
+  }, [refreshMeta]);
 
-  const active = tabs.find((t) => t.id === tab);
-  const healthLabel =
-    health === "online" ? "Service online" : health === "offline" ? "Service offline" : "Connecting…";
+  useEffect(() => {
+    if (!openMenu) return;
+    const onDoc = (e) => {
+      if (!openMenuRef.current?.contains(e.target)) setOpenMenu(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [openMenu]);
 
-  const badge = (n, tone = "mute") => {
-    if (!n) return null;
-    return (
-      <span className={`ppe-badge ppe-badge--${tone}`}>
-        {n > 99 ? "99+" : n}
-      </span>
+  const navEntries = useMemo(() => {
+    if (nav && nav.length) {
+      // Inject live badges into known destinations
+      return nav.map((entry) => {
+        if (entry.kind === "group") {
+          return {
+            ...entry,
+            items: entry.items.map((item) => annotateItem(item, openAlerts, pendingReview)),
+          };
+        }
+        return annotateItem(entry, openAlerts, pendingReview);
+      });
+    }
+    // Fallback: flat tabs as primary tabs
+    return (tabs || []).map((t) =>
+      annotateItem(
+        { id: t.id, label: t.label, hint: t.hint ? `${t.hint}${t.role ? ` · ${t.role}` : ""}` : t.role },
+        openAlerts,
+        pendingReview,
+      ),
     );
-  };
+  }, [nav, tabs, openAlerts, pendingReview]);
+
+  const flat = useMemo(() => {
+    const fromNav = flattenModuleNav(navEntries);
+    if (fromNav.length) return fromNav;
+    return (tabs || []).map((t) => ({ id: t.id, label: t.label, hint: t.hint }));
+  }, [navEntries, tabs]);
+
+  const active = flat.find((t) => t.id === tab) || (tabs || []).find((t) => t.id === tab);
+  const activeRole = (tabs || []).find((t) => t.id === tab)?.role;
+  const onAgent = agent === "online";
+  const healthLabel =
+    health === "online"
+      ? onAgent
+        ? "Agent online"
+        : "Cloud only"
+      : health === "offline"
+        ? "Service offline"
+        : "Connecting…";
 
   const chipTone = (kind) => {
     if (kind === "cams") return camRunning > 0 ? "ok" : "mute";
@@ -124,6 +173,8 @@ export default function PpeShell({
     if (kind === "review") return pendingReview > 0 ? "warn" : "mute";
     return "mute";
   };
+
+  const topLevelCount = navEntries.length;
 
   return (
     <div className={`ppe-industrial ppe-shell${fullscreen ? " ppe-shell--fullscreen" : ""}`}>
@@ -164,10 +215,17 @@ export default function PpeShell({
                 <span className="ppe-chip__value">{String(device).toUpperCase()}</span>
               </div>
             ) : null}
+            <CloudPushPanel compact />
             {extraMeta}
             <div
               className={`ppe-health ppe-health--${health}`}
-              title={health === "offline" ? `Cannot reach ${API_BASE}` : API_BASE}
+              title={
+                health === "offline"
+                  ? `Cannot reach ${API_BASE}`
+                  : onAgent
+                    ? `Local agent: ${API_BASE}`
+                    : `Cloud dashboard via ${API_BASE} — no local agent on this machine`
+              }
             >
               <span className="ppe-health__dot" />
               {healthLabel}
@@ -178,24 +236,42 @@ export default function PpeShell({
               </span>
             ) : null}
             {!fullscreen ? (
-              <>
-                <button
-                  type="button"
-                  className="ppe-btn"
-                  title="Plant TV wall — live video + alert ticker"
-                  onClick={() => window.open("/ppe/desktop?tab=wall", "_blank", "noopener,noreferrer")}
-                >
-                  🖥 Wall
-                </button>
+              <div className="mshell-open-menu" ref={openMenuRef}>
                 <button
                   type="button"
                   className="ppe-btn ppe-btn--primary"
-                  title="Full desktop control center (no sidebar)"
-                  onClick={() => window.open("/ppe/desktop", "_blank", "noopener,noreferrer")}
+                  aria-haspopup="menu"
+                  aria-expanded={openMenu}
+                  onClick={() => setOpenMenu((v) => !v)}
+                  title="Open wall or full desktop layout"
                 >
-                  ⛶ Desktop
+                  Open ▾
                 </button>
-              </>
+                {openMenu ? (
+                  <div className="mshell-open-menu__panel" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenMenu(false);
+                        window.open("/ppe/desktop?tab=wall", "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      🖥 Plant TV wall
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setOpenMenu(false);
+                        window.open("/ppe/desktop", "_blank", "noopener,noreferrer");
+                      }}
+                    >
+                      ⛶ Desktop control center
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : (
               <a href="/ppe" className="ppe-btn" style={{ textDecoration: "none" }}>
                 ← Embedded
@@ -204,39 +280,28 @@ export default function PpeShell({
           </div>
         </div>
 
-        <nav className="ppe-nav" role="tablist" aria-label="PPE modules">
-          {tabs.map((t, i) => (
-            <button
-              key={t.id}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.id}
-              className="ppe-nav__tab"
-              title={`${t.hint || t.label}${t.role ? ` · ${t.role}` : ""} · shortcut ${i + 1}`}
-              onClick={() => onTab(t.id)}
-            >
-              {t.label}
-              {(t.id === "alerts" || t.id === "wall") && badge(openAlerts, "danger")}
-              {t.id === "review" && badge(pendingReview, "warn")}
-            </button>
-          ))}
-        </nav>
+        <ModuleNav
+          entries={navEntries}
+          activeId={tab}
+          onSelect={onTab}
+          label="PPE modules"
+        />
       </header>
 
       {showContext && active && tab !== "wall" ? (
-        <div className="ppe-context">
+        <div className="ppe-context mshell-context">
           <span>
             <b>{active.label}</b>
             {active.hint ? ` — ${active.hint}` : ""}
           </span>
-          {active.role ? (
+          {activeRole ? (
             <>
               <span style={{ opacity: 0.35 }}>·</span>
-              <span>{active.role}</span>
+              <span>{activeRole}</span>
             </>
           ) : null}
-          <span style={{ marginLeft: "auto", opacity: 0.5, fontSize: 11 }}>
-            Keys 1–{Math.min(9, tabs.length)} switch · R refresh
+          <span className="mshell-context__meta">
+            Keys 1–{Math.min(9, topLevelCount)} switch · R refresh
           </span>
         </div>
       ) : null}
@@ -250,8 +315,33 @@ export default function PpeShell({
             PPE backend unreachable at <code>{API_BASE}</code>. Start the service to enable live
             detection, recording, and alerts.
           </span>
-          <button type="button" className="ppe-btn ppe-btn--danger" onClick={refreshMeta}>
+          <button
+            type="button"
+            className="ppe-btn ppe-btn--danger"
+            onClick={() => refreshAgent().then(refreshMeta)}
+          >
             Retry
+          </button>
+        </div>
+      ) : !onAgent && agent !== "probing" && agent !== "unknown" ? (
+        // Not an error. Cameras, live video and model management run on the
+        // plant PC; this browser simply is not that PC. Say so plainly rather
+        // than showing a failure for the normal remote case.
+        <div className="ppe-banner ppe-banner--info">
+          <span style={{ fontSize: 16 }} aria-hidden>
+            ☁
+          </span>
+          <span style={{ flex: 1 }}>
+            Viewing the cloud dashboard — violations and analytics only. Live cameras, recording
+            and model tools run on the plant PC and are hidden here.
+          </span>
+          <button
+            type="button"
+            className="ppe-btn"
+            onClick={() => refreshAgent().then(refreshMeta)}
+            title="Re-check for a PPE agent on this machine"
+          >
+            Detect agent
           </button>
         </div>
       ) : null}
@@ -259,6 +349,19 @@ export default function PpeShell({
       <div className={fill ? "ppe-main ppe-main--fill" : "ppe-main"}>{children}</div>
     </div>
   );
+}
+
+/** @param {import("../layout/ModuleNav").ModuleNavItem} item */
+function annotateItem(item, openAlerts, pendingReview) {
+  const next = { ...item };
+  if (item.id === "alerts" || item.id === "wall") {
+    next.badge = openAlerts || null;
+    next.badgeTone = "danger";
+  } else if (item.id === "review") {
+    next.badge = pendingReview || null;
+    next.badgeTone = "warn";
+  }
+  return next;
 }
 
 /** Small reusable KPI strip item (class-based) */
