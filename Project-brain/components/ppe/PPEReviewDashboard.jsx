@@ -67,7 +67,6 @@ function drawPlaceholder(ctx, w, h) {
 }
 
 const HANDLE = 8;
-const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const response = await fetch(buildPpeUrl(path), options);
@@ -248,7 +247,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
         paintBoxes();
       };
       image.onerror = paintBoxes;
-      image.src = `${API_BASE}${active.image_url}`;
+      image.src = `${getPpeApiBase()}${active.image_url}`;
     } else {
       paintBoxes();
     }

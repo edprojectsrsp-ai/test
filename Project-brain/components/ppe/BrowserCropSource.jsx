@@ -15,7 +15,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 const LS_URL = "ppe.browserCrop.nvrUrl";
 
@@ -160,7 +159,7 @@ export default function BrowserCropSource({ cameraId, fps = 6, onClose, onLive }
     fd.append("file", blob, "frame.jpg");
     try {
       const r = await fetch(
-        `${API_BASE}/api/cameras/${encodeURIComponent(cameraId)}/push-frame`,
+        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cameraId)}/push-frame`,
         { method: "POST", body: fd },
       );
       if (!r.ok) {

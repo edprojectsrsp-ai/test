@@ -5,7 +5,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path) {
   const r = await fetch(buildPpeUrl(path), { cache: "no-store" });
@@ -74,7 +73,7 @@ export default function PPEReports({ embedded = false }) {
     if (to) p.set("date_to", to);
     if (status) p.set("status", status);
     if (!from && !to) p.set("hours", String(24 * 90));
-    window.open(`${API_BASE}/api/violations/export.csv?${p}`, "_blank");
+    window.open(`${getPpeApiBase()}/api/violations/export.csv?${p}`, "_blank");
   };
 
   const maxDay = useMemo(() => Math.max(1, ...series.map((s) => s.count || 0)), [series]);

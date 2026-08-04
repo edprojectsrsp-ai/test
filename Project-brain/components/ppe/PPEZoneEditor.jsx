@@ -21,7 +21,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const r = await fetch(buildPpeUrl(path), { cache: "no-store", ...options });
@@ -208,7 +207,7 @@ export default function PPEZoneEditor({ cameraId, onClose }) {
           <img
             key={imgKey}
             alt={`${cameraId} live`}
-            src={`${API_BASE}/api/cameras/${encodeURIComponent(cameraId)}/stream.mjpg?k=${imgKey}`}
+            src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cameraId)}/stream.mjpg?k=${imgKey}`}
             draggable={false}
             onError={() => setTimeout(() => setImgKey((k) => k + 1), 2000)}
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}

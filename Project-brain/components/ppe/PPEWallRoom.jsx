@@ -8,7 +8,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const r = await fetch(buildPpeUrl(path), options);
@@ -72,7 +71,7 @@ function WallTile({ cam, focused, onFocus, onFlag }) {
           <img
             key={key}
             alt={cam.camera_id}
-            src={`${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=${focused ? 12 : 6}&k=${key}`}
+            src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=${focused ? 12 : 6}&k=${key}`}
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
             onError={() => {
               setOk(false);
@@ -172,7 +171,7 @@ function AlertRow({ v, onStatus, onOpen }) {
         {v.has_image ? (
           <img
             alt=""
-            src={`${API_BASE}${v.image_url}`}
+            src={`${getPpeApiBase()}${v.image_url}`}
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
             loading="lazy"
           />
@@ -497,7 +496,7 @@ export default function PPEWallRoom({ onNavigate }) {
           >
             <img
               alt={lightbox.label}
-              src={`${API_BASE}${lightbox.image_url}`}
+              src={`${getPpeApiBase()}${lightbox.image_url}`}
               style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#05080c" }}
             />
             <div style={{ padding: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>

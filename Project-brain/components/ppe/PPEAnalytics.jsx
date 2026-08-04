@@ -4,9 +4,9 @@
  * KPIs, timeseries, shift/dept breakdown, heatmap, model coverage.
  */
 import React, { useCallback, useEffect, useState } from "react";
-import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl } from "../../lib/ppeApi";
+import { ensureAgent, subscribeAgent } from "../../lib/ppeAgent";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path) {
   const r = await fetch(buildPpeUrl(path), { cache: "no-store" });
@@ -142,6 +142,9 @@ function DistList({ title, data, empty }) {
 }
 
 export default function PPEAnalytics({ embedded = false }) {
+  // Start true so the plant PC — the common case — never flashes "unavailable"
+  // while discovery is still in flight.
+  const [onAgent, setOnAgent] = useState(true);
   const [cams, setCams] = useState([]);
   const [types, setTypes] = useState([]);
   const [total, setTotal] = useState(0);
@@ -156,11 +159,16 @@ export default function PPEAnalytics({ embedded = false }) {
 
   const load = useCallback(async () => {
     try {
+      // Cameras, the review queue and the model registry live on the plant PC;
+      // the cloud role does not mount those routers. Viewed remotely, asking
+      // for them is a guaranteed 404 every 8 seconds — so don't ask, and record
+      // the answer as "unavailable" rather than zero. A dashboard that reports
+      // "0 cameras" to a manager is worse than one that admits it cannot see.
       const [c, t, p, m, sum, ts, dept, shift, rep] = await Promise.all([
-        api("/api/cameras").catch(() => []),
+        onAgent ? api("/api/cameras").catch(() => []) : null,
         api("/api/violations/types").catch(() => ({ types: [], total: 0 })),
-        api("/api/review/pending").catch(() => []),
-        api("/api/models").catch(() => ({})),
+        onAgent ? api("/api/review/pending").catch(() => []) : null,
+        onAgent ? api("/api/models").catch(() => ({})) : null,
         api("/api/analytics/summary").catch(() => null),
         api("/api/analytics/timeseries?days=30").catch(() => ({ series: [] })),
         api("/api/analytics/by-department").catch(() => ({})),
@@ -170,8 +178,8 @@ export default function PPEAnalytics({ embedded = false }) {
       setCams(Array.isArray(c) ? c : []);
       setTypes(t.types || []);
       setTotal(t.total || 0);
-      setPending(Array.isArray(p) ? p.length : 0);
-      setLiveModel((m.live_weights || "").split(/[\\/]/).pop() || "—");
+      setPending(p == null ? null : Array.isArray(p) ? p.length : 0);
+      setLiveModel(m == null ? null : (m.live_weights || "").split(/[\\/]/).pop() || "—");
       setSummary(sum);
       setSeries(ts.series || ts.points || ts.data || []);
       {
@@ -187,6 +195,11 @@ export default function PPEAnalytics({ embedded = false }) {
     } catch (e) {
       setErr(e.message);
     }
+  }, [onAgent]);
+
+  useEffect(() => {
+    ensureAgent().then((s) => setOnAgent(s.status === "online"));
+    return subscribeAgent((s) => setOnAgent(s.status === "online"));
   }, []);
 
   useEffect(() => {
@@ -208,15 +221,28 @@ export default function PPEAnalytics({ embedded = false }) {
       ? `${Math.round((openViol / Math.max(1, totalViol)) * 100)}%`
       : "—";
 
+  // Live-fleet figures are meaningless without the agent — "—" says we cannot
+  // see them, which is the truth; "0" would be a claim we have not earned.
   const kpis = [
-    { label: "Cameras live", value: `${running}/${cams.length}`, tone: running ? "ok" : "mute" },
+    onAgent
+      ? { label: "Cameras live", value: `${running}/${cams.length}`, tone: running ? "ok" : "mute" }
+      : { label: "Cameras live", value: "—", tone: "mute", hint: "Only visible on the plant PC" },
     { label: "Violations logged", value: String(totalViol), tone: totalViol ? "danger" : "mute" },
     { label: "Open", value: openViol != null ? String(openViol) : "—", tone: openViol ? "warn" : "mute" },
     { label: "Open rate", value: openRate, tone: "warn" },
     { label: "Last 24h", value: String(summary?.violations_24h ?? "—"), tone: "brand" },
-    { label: "Fired (session)", value: String(violations), tone: violations ? "danger" : "mute" },
-    { label: "Frames inferred", value: String(inferred), tone: "brand" },
-    { label: "Review queue", value: String(pending), tone: pending ? "warn" : "mute" },
+    onAgent
+      ? { label: "Fired (session)", value: String(violations), tone: violations ? "danger" : "mute" }
+      : { label: "Fired (session)", value: "—", tone: "mute", hint: "Only visible on the plant PC" },
+    onAgent
+      ? { label: "Frames inferred", value: String(inferred), tone: "brand" }
+      : { label: "Frames inferred", value: "—", tone: "mute", hint: "Only visible on the plant PC" },
+    {
+      label: "Review queue",
+      value: pending == null ? "—" : String(pending),
+      tone: pending ? "warn" : "mute",
+      hint: pending == null ? "Only visible on the plant PC" : undefined,
+    },
   ];
 
   const toneMap = {
@@ -243,9 +269,15 @@ export default function PPEAnalytics({ embedded = false }) {
           </p>
         </div>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, color: C.sub }}>
-          Model <span style={{ ...mono, color: C.ink, fontWeight: 700 }}>{liveModel}</span>
-        </span>
+        {liveModel != null ? (
+          <span style={{ fontSize: 12, color: C.sub }}>
+            Model <span style={{ ...mono, color: C.ink, fontWeight: 700 }}>{liveModel}</span>
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: C.sub }} title="The detector runs on the plant PC">
+            Cloud view — live fleet, model and review figures unavailable
+          </span>
+        )}
       </div>
 
       {err ? (

@@ -29,7 +29,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 const C = {
   panel: "var(--panel)", panel2: "var(--panel-2)", ink: "var(--ink)",
@@ -827,7 +826,7 @@ function ShadowTab() {
                 <div style={{ position: "relative", aspectRatio: "16 / 9",
                   background: "#0b0f14" }}>
                   {v.has_image ? (
-                    <img src={`${API_BASE}/api/modelops/shadow/verdicts/${v.id}/image.jpg`}
+                    <img src={`${getPpeApiBase()}/api/modelops/shadow/verdicts/${v.id}/image.jpg`}
                       alt="" loading="lazy"
                       style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                   ) : null}

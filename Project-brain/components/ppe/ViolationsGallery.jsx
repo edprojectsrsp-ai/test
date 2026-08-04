@@ -7,8 +7,8 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
+import { ensureAgent, subscribeAgent } from "../../lib/ppeAgent";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path, options) {
   const r = await fetch(buildPpeUrl(path), options);
@@ -107,7 +107,7 @@ function ViolationCard({ v, onStatus, onOpen }) {
         {v.has_image ? (
           <img
             alt={v.label}
-            src={`${API_BASE}${v.image_url}`}
+            src={`${getPpeApiBase()}${v.image_url}`}
             loading="lazy"
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={(e) => { e.currentTarget.style.display = "none"; }}
@@ -223,6 +223,13 @@ export default function ViolationsGallery({ embedded = false }) {
   const [lightbox, setLightbox] = useState(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(true);
+  // True until discovery says otherwise, so the plant PC never flickers.
+  const [onAgent, setOnAgent] = useState(true);
+
+  useEffect(() => {
+    ensureAgent().then((s) => setOnAgent(s.status === "online"));
+    return subscribeAgent((s) => setOnAgent(s.status === "online"));
+  }, []);
 
   const loadTypes = useCallback(async () => {
     try {
@@ -395,17 +402,23 @@ export default function ViolationsGallery({ embedded = false }) {
         >
           🗑 Clear {filter || from || to ? "filtered" : "all"}
         </button>
-        <button
-          type="button"
-          onClick={clearPhotos}
-          title="Delete all stored photos from disk + database (frees space)"
-          style={{
-            border: `1px solid ${C.crit}`, background: C.crit, color: "#fff",
-            borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer",
-          }}
-        >
-          🧹 Clear photos
-        </button>
+        {/* Deletes image FILES from the plant PC's disk, via a router the cloud
+            role does not mount. Remotely it would 404 — but only after the user
+            has already confirmed an irreversible-sounding prompt, which is the
+            worst moment to discover a button was never going to work. */}
+        {onAgent ? (
+          <button
+            type="button"
+            onClick={clearPhotos}
+            title="Delete all stored photos from disk + database (frees space)"
+            style={{
+              border: `1px solid ${C.crit}`, background: C.crit, color: "#fff",
+              borderRadius: 9, padding: "8px 14px", fontSize: 12.5, fontWeight: 800, cursor: "pointer",
+            }}
+          >
+            🧹 Clear photos
+          </button>
+        ) : null}
       </div>
 
       {/* summary tiles */}
@@ -476,7 +489,7 @@ export default function ViolationsGallery({ embedded = false }) {
           color: C.high, fontSize: 13, marginBottom: 12, padding: "10px 14px",
           background: C.highSoft, borderRadius: 10, border: `1px solid #f5c2c8`,
         }}>
-          Could not load: {err} — is the backend running on {API_BASE}?
+          Could not load: {err} — is the backend running on {getPpeApiBase()}?
         </div>
       ) : null}
 
@@ -539,7 +552,7 @@ export default function ViolationsGallery({ embedded = false }) {
           >
             <img
               alt={lightbox.label}
-              src={`${API_BASE}${lightbox.image_url}`}
+              src={`${getPpeApiBase()}${lightbox.image_url}`}
               style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#0b0f14" }}
             />
             <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>

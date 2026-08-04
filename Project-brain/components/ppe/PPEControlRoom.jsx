@@ -13,7 +13,6 @@ import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 import TeachCanvas from "./TeachCanvas";
 import BrowserCropSource from "./BrowserCropSource";
 
-const API_BASE = getPpeApiBase();
 
 function formatApiDetail(detail) {
   if (detail == null) return "";
@@ -1307,7 +1306,7 @@ function FullscreenViewer({ cam, onClose }) {
   const drag = useRef(null);
   const shell = useRef(null);
 
-  const base = `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}`;
+  const base = `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}`;
   const src = playing ? `${base}/stream.mjpg?fps=12&k=${key}` : `${base}/snapshot.jpg?t=${key}`;
 
   const clampPan = (p, z) => {
@@ -1496,7 +1495,7 @@ function CameraCard({
       if (freezePollRef.current) return;
       try {
         const r = await fetch(
-          `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/live-labels`);
+          `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/live-labels`);
         if (!r.ok) throw new Error(String(r.status));
         const j = await r.json();
         if (alive && !freezePollRef.current) setLiveBoxes(j);
@@ -1591,7 +1590,7 @@ function CameraCard({
     }));
     try {
       const r = await fetch(
-        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
+        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ frame_id, boxes: payloadBoxes }),
@@ -1612,7 +1611,7 @@ function CameraCard({
     setFrozenSaving(true);
     try {
       const r = await fetch(
-        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-freeze`,
+        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-freeze`,
         { method: "POST" });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.detail || `HTTP ${r.status}`);
@@ -1637,7 +1636,7 @@ function CameraCard({
     if (fid != null) {
       try {
         await fetch(
-          `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}`
+          `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}`
           + `/teach-release?frame_id=${fid}`, { method: "POST" });
       } catch { /* the pin's TTL will collect it */ }
     }
@@ -1648,7 +1647,7 @@ function CameraCard({
     setFrozenSaving(true);
     try {
       const r = await fetch(
-        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
+        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/teach-live`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -1674,7 +1673,7 @@ function CameraCard({
     setPosing(true);
     try {
       const r = await fetch(
-        `${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/pose`, {
+        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/pose`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ enabled: !cam.pose_enabled }),
@@ -1695,7 +1694,7 @@ function CameraCard({
     setClipping(true);
     try {
       const r = await fetch(
-        `${API_BASE}/api/nvr/cameras/${encodeURIComponent(cam.camera_id)}/record-now`, {
+        `${getPpeApiBase()}/api/nvr/cameras/${encodeURIComponent(cam.camera_id)}/record-now`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ seconds: 30 }),
@@ -1751,7 +1750,7 @@ function CameraCard({
               key={streamKey}
               alt=""
               draggable={false}
-              src={`${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=6&k=${streamKey}`}
+              src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=6&k=${streamKey}`}
               style={{ width: "100%", height: "100%", objectFit: "cover", pointerEvents: "none" }}
               onError={() => {
                 setImgOk(false);
@@ -1938,7 +1937,7 @@ function CameraCard({
             key={streamKey}
             alt={`Live feed ${cam.camera_id}`}
             draggable={false}
-            src={`${API_BASE}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=10&k=${streamKey}`}
+            src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=10&k=${streamKey}`}
             onMouseDown={onDown}
             onMouseMove={onMove}
             onMouseUp={onUp}
@@ -2609,7 +2608,7 @@ function FreezeTeachModal({ cameraId, frozen, boxes, setBoxes, saving, onSave, o
 
         <TeachCanvas
           onVideoOverlay
-          imgUrl={`${API_BASE}${frozen.image_url}`}
+          imgUrl={`${getPpeApiBase()}${frozen.image_url}`}
           width={frozen.width}
           height={frozen.height}
           boxes={boxes}

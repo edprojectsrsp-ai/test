@@ -25,7 +25,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 import TeachCanvas from "./TeachCanvas";
 
-const API_BASE = getPpeApiBase();
 
 const C = {
   panel: "var(--panel)", panel2: "var(--panel-2)", ink: "var(--ink)",
@@ -379,8 +378,8 @@ function Player({ segment, onChanged, onClose, seekTo }) {
   const seek = (v) => { setT(v); if (playing) setStreamKey((k) => k + 1); };
 
   const src = playing
-    ? `${API_BASE}/api/nvr/segments/${segment.id}/play.mjpg?t=${t}&speed=${speed}&fps=12&k=${streamKey}`
-    : `${API_BASE}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`;
+    ? `${getPpeApiBase()}/api/nvr/segments/${segment.id}/play.mjpg?t=${t}&speed=${speed}&fps=12&k=${streamKey}`
+    : `${getPpeApiBase()}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`;
 
   /* ---- teach on this frame ------------------------------------------- */
   const startTeach = async () => {
@@ -462,7 +461,7 @@ function Player({ segment, onChanged, onClose, seekTo }) {
             <b style={{ color: C.ink }}>Train &amp; go live</b> in Review.
           </div>
           <TeachCanvas
-            imgUrl={`${API_BASE}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`}
+            imgUrl={`${getPpeApiBase()}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`}
             width={teachData.width} height={teachData.height}
             boxes={boxes} setBoxes={setBoxes}
             palette={teachData.display_names || {}}
@@ -546,7 +545,7 @@ function Player({ segment, onChanged, onClose, seekTo }) {
               {segment.locked ? "🔓 Unlock" : "🔒 Lock"}
             </Btn>
             <Btn small onClick={() => window.open(
-              `${API_BASE}/api/nvr/segments/${segment.id}/download`, "_blank", "noopener")}>
+              `${getPpeApiBase()}/api/nvr/segments/${segment.id}/download`, "_blank", "noopener")}>
               ⭳ Export
             </Btn>
             <Btn small tone="danger" onClick={remove} disabled={busy || segment.locked}
@@ -933,7 +932,7 @@ export default function PPENVR() {
                     >
                       <div style={{ position: "relative", aspectRatio: "16 / 9", background: "#0b0f14" }}>
                         <img
-                          src={`${API_BASE}/api/nvr/segments/${s.id}/thumb.jpg`}
+                          src={`${getPpeApiBase()}/api/nvr/segments/${s.id}/thumb.jpg`}
                           alt="" loading="lazy"
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />

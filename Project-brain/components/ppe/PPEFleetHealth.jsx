@@ -15,7 +15,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
-const API_BASE = getPpeApiBase();
 
 async function api(path) {
   const r = await fetch(buildPpeUrl(path), { cache: "no-store" });
