@@ -86,3 +86,8 @@ friend project/
 *.avi
 *.mov
 *.webm
+.vercel
+.env*
+
+# Build toolchain downloads (multi-hundred-MB installers)
+.toolchain/

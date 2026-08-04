@@ -10,35 +10,40 @@
 [CmdletBinding()]
 param([Parameter(Mandatory = $true)][string]$InstallDir)
 
-$ServiceName = "PPEAgent"
-$Nssm = Join-Path $InstallDir "nssm.exe"
+$VenvPy = Join-Path $InstallDir "python\Scripts\python.exe"
+$Services = @(
+    @{ Name = "PPEAgent";   Cmd = "remove-agent" },
+    @{ Name = "PPEConsole"; Cmd = "remove-console" }
+)
 
 function Write-Step($m) { Write-Host "[ppe-agent] $m" }
 
-$svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if (-not $svc) {
-    Write-Step "service not installed, nothing to remove"
-    exit 0
+foreach ($svc in $Services) {
+    $existing = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+    if (-not $existing) { continue }
+    try {
+        Write-Step "stopping $($svc.Name)"
+        Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        if (Test-Path $VenvPy) {
+            Push-Location $InstallDir
+            try { & $VenvPy -m app.service_win $svc.Cmd 2>&1 | Out-Null } finally { Pop-Location }
+        }
+        # The interpreter may already be gone (partial install); sc.exe still
+        # knows how to delete the registration.
+        if (Get-Service -Name $svc.Name -ErrorAction SilentlyContinue) {
+            & sc.exe delete $svc.Name | Out-Null
+        }
+    } catch {
+        Write-Warning "could not fully remove $($svc.Name): $_"
+        Write-Warning "remove it manually with: sc.exe delete $($svc.Name)"
+    }
 }
 
-try {
-    if (Test-Path $Nssm) {
-        Write-Step "stopping $ServiceName"
-        & $Nssm stop $ServiceName confirm | Out-Null
-        Start-Sleep -Seconds 3
-        Write-Step "removing $ServiceName"
-        & $Nssm remove $ServiceName confirm | Out-Null
-    } else {
-        # nssm is gone (partial install, manual deletion). sc.exe still works.
-        Write-Step "nssm.exe missing -- falling back to sc.exe"
-        Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 2
-        & sc.exe delete $ServiceName | Out-Null
-    }
-    Write-Step "service removed"
-} catch {
-    Write-Warning "could not fully remove the service: $_"
-    Write-Warning "remove it manually with: sc.exe delete $ServiceName"
+# Firewall rules were added only for LAN access; leaving them behind would
+# keep holes open for a service that no longer exists.
+foreach ($p in @(8004, 3000)) {
+    try { Remove-NetFirewallRule -DisplayName "PPE Agent $p" -ErrorAction SilentlyContinue } catch {}
 }
 
 Write-Step "data\ left in place (violations, evidence, recordings, weights)"

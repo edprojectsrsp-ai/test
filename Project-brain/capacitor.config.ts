@@ -19,28 +19,30 @@ import type { CapacitorConfig } from '@capacitor/cli';
  * tab, can be told to permit http — which is what lets a phone on plant WiFi
  * reach the agent at all.
  */
-const APP_URL = process.env.PPE_APP_URL || '';
-
 const config: CapacitorConfig = {
   appId: 'in.projectbrain.diary',
   appName: 'Project Brain PPE',
-  // Kept only to satisfy the CLI when no server URL is given. Nothing is built
-  // into it; set PPE_APP_URL.
+  // The bundled bootstrap screen (mobile/index.html, staged into out/ by
+  // scripts/build-apk.ps1). It asks for the server address once, stores it, and
+  // navigates there. Deliberately NOT server.url: that bakes an address in at
+  // build time, which means one APK per site and a rebuild whenever an address
+  // changes. One build now installs on any phone at any site.
   webDir: 'out',
   android: {
+    // The plant PC serves the console over plain http and has no certificate;
+    // a WebView, unlike a browser tab, can be told to allow that.
     allowMixedContent: true,
     backgroundColor: '#09090b',  // matches dark theme
   },
-  ...(APP_URL
-    ? {
-        server: {
-          url: APP_URL,
-          // Plain http is required for the on-site LAN case; the agent has no
-          // certificate and a plant PC cannot easily get one.
-          cleartext: APP_URL.startsWith('http://'),
-        },
-      }
-    : {}),
+  server: {
+    // http so the local bootstrap page and an http LAN console share a scheme.
+    androidScheme: 'http',
+    cleartext: true,
+    // Let the WebView navigate to whichever server the user entered instead of
+    // handing it to the system browser, which would leave the app on a blank
+    // screen behind it.
+    allowNavigation: ['*'],
+  },
   plugins: {
     Camera: {
       // ask Android permission on first use, not at startup

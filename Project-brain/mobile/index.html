@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PPE Control Room</title>
+<!--
+  Bootstrap screen for the Android shell.
+
+  The APK ships this page, not the console itself. Baking a server URL in at
+  build time would mean one APK per deployment -- a different file for the plant
+  LAN than for the cloud, and a rebuild every time an address changes. Instead
+  the phone asks once, stores the answer, and goes there from then on.
+
+  That is what makes a single APK installable on any phone at any site.
+-->
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; background: #09090b; color: #e7eef6;
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: grid; place-items: center; padding: 24px;
+  }
+  .card { width: 100%; max-width: 420px; }
+  h1 { font-size: 19px; margin: 0 0 6px; font-weight: 800; letter-spacing: -.2px; }
+  p  { margin: 0 0 18px; color: #9bb0c3; font-size: 13.5px; }
+  label { display:block; font-size: 11px; text-transform: uppercase;
+          letter-spacing: .06em; color: #7a8fa3; font-weight: 700; margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 13px 14px; border-radius: 10px; font-size: 16px;
+    border: 1px solid #263445; background: #0f1621; color: #e7eef6;
+    font-family: inherit;
+  }
+  input:focus { outline: 2px solid #3b82f6; outline-offset: 1px; }
+  button {
+    width: 100%; margin-top: 14px; padding: 13px; border-radius: 10px;
+    border: none; background: #3b82f6; color: #fff; font-size: 15px;
+    font-weight: 700; font-family: inherit; cursor: pointer;
+  }
+  button:disabled { opacity: .5; }
+  .alt { background: transparent; color: #9bb0c3; border: 1px solid #263445;
+         margin-top: 8px; font-weight: 600; }
+  .hint { margin-top: 16px; font-size: 12px; color: #6d8296; }
+  .hint code { color: #9bb0c3; background: #0f1621; padding: 1px 5px;
+               border-radius: 4px; font-size: 11.5px; }
+  .err { color: #ff8a95; font-size: 13px; margin-top: 12px; min-height: 18px; }
+  .row { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .dot { width: 8px; height: 8px; border-radius: 99px; background: #3dd68c; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Connect to PPE</h1>
+  <p>Enter the address of your control room. You only need to do this once.</p>
+
+  <label for="url">Server address</label>
+  <input id="url" type="url" inputmode="url" autocapitalize="off"
+         autocorrect="off" spellcheck="false"
+         placeholder="http://192.168.1.50:3000">
+
+  <button id="go">Connect</button>
+  <button id="forget" class="alt" hidden>Use a different server</button>
+  <div class="err" id="err"></div>
+
+  <div class="hint">
+    <div class="row"><span class="dot"></span><span>On the plant network</span></div>
+    <code>http://&lt;plant-pc&gt;:3000</code> — full console with live cameras.
+    <div class="row" style="margin-top:12px"><span class="dot" style="background:#f0b429"></span><span>Off-site</span></div>
+    your cloud dashboard URL — violations and analytics only.
+  </div>
+</div>
+
+<script>
+  var KEY = "ppe_server_url";
+  var input = document.getElementById("url");
+  var err = document.getElementById("err");
+
+  function normalize(raw) {
+    var v = (raw || "").trim();
+    if (!v) return "";
+    // A bare host or IP is what people actually type; assume http, since the
+    // plant PC has no certificate and that is the common case here.
+    if (!/^https?:\/\//i.test(v)) v = "http://" + v;
+    return v.replace(/\/+$/, "");
+  }
+
+  function go(url) {
+    try { localStorage.setItem(KEY, url); } catch (e) {}
+    // Land on the PPE section directly rather than the app root: on a phone
+    // the point of this shell is the violations feed, not the site nav.
+    window.location.replace(url + "/ppe/");
+  }
+
+  var saved = null;
+  try { saved = localStorage.getItem(KEY); } catch (e) {}
+  if (saved) {
+    // Already configured: go straight there. The form only appears if the
+    // stored address stops working and the user comes back.
+    go(saved);
+  }
+
+  document.getElementById("go").addEventListener("click", function () {
+    var url = normalize(input.value);
+    if (!url) { err.textContent = "Enter a server address."; return; }
+    try { new URL(url); } catch (e) {
+      err.textContent = "That does not look like a valid address.";
+      return;
+    }
+    err.textContent = "";
+    go(url);
+  });
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") document.getElementById("go").click();
+  });
+
+  if (saved) {
+    var f = document.getElementById("forget");
+    f.hidden = false;
+    f.addEventListener("click", function () {
+      try { localStorage.removeItem(KEY); } catch (e) {}
+      location.reload();
+    });
+  }
+</script>
+</body>
+</html>

@@ -16,7 +16,9 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$AppUrl,
+    # Optional. The APK asks for the server address on first launch, so one
+    # build works at any site; this only pre-fills the box as a convenience.
+    [string]$AppUrl = "",
     [switch]$Release
 )
 
@@ -24,7 +26,7 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 
 Write-Host "== PPE APK build ==" -ForegroundColor Cyan
-Write-Host "   target URL : $AppUrl"
+if ($AppUrl) { Write-Host "   prefilled URL : $AppUrl" } else { Write-Host "   prefilled URL : (none - asked on first launch)" }
 
 # Fail early and specifically. "gradle failed" fifty lines into a build tells
 # you nothing; "your JDK is 11 and Capacitor needs 17" tells you everything.
@@ -43,25 +45,25 @@ if (-not $env:ANDROID_HOME -and -not $env:ANDROID_SDK_ROOT) {
 
 Push-Location $Root
 try {
-    $env:PPE_APP_URL = $AppUrl
-
     if (-not (Test-Path (Join-Path $Root "node_modules"))) {
         Write-Host "-- npm install" -ForegroundColor Yellow
         & npm install
         if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
     }
 
-    # webDir must exist for the CLI even though the shell loads a remote URL.
+    # Stage the bootstrap screen as the app's bundled web content.
     $out = Join-Path $Root "out"
-    if (-not (Test-Path $out)) {
-        New-Item -ItemType Directory -Force -Path $out | Out-Null
-        Set-Content -Path (Join-Path $out "index.html") -Encoding utf8 -Value @"
-<!doctype html><meta charset="utf-8"><title>PPE</title>
-<body style="background:#09090b;color:#e7eef6;font:14px system-ui;display:grid;place-items:center;height:100vh;margin:0">
-Loading PPE console…
-</body>
-"@
+    New-Item -ItemType Directory -Force -Path $out | Out-Null
+    $boot = Join-Path $Root "mobile\index.html"
+    if (-not (Test-Path $boot)) { throw "missing mobile\index.html (the bootstrap screen)" }
+    $html = Get-Content $boot -Raw
+    if ($AppUrl) {
+        # Pre-fill the address box only. It is still editable, and still stored
+        # per device, so the APK stays site-independent.
+        $html = $html.Replace('placeholder="http://192.168.1.50:3000"',
+                              'placeholder="http://192.168.1.50:3000" value="' + $AppUrl + '"')
     }
+    Set-Content -Path (Join-Path $out "index.html") -Value $html -Encoding utf8
 
     if (-not (Test-Path (Join-Path $Root "android"))) {
         Write-Host "-- adding android platform" -ForegroundColor Yellow
@@ -75,6 +77,16 @@ Loading PPE console…
 
     Push-Location (Join-Path $Root "android")
     try {
+        # The wrapper downloads Gradle from services.gradle.org on first run.
+        # If that host is blocked, set GRADLE_DISTRIBUTION_URL to a mirror you
+        # trust, or install Gradle and build with it directly.
+        if ($env:GRADLE_DISTRIBUTION_URL) {
+            $props = "gradle\wrapper\gradle-wrapper.properties"
+            (Get-Content $props) -replace '^distributionUrl=.*',
+                ("distributionUrl=" + $env:GRADLE_DISTRIBUTION_URL.Replace(":", "\:")) |
+                Set-Content $props -Encoding ascii
+            Write-Host "-- gradle distribution overridden" -ForegroundColor Yellow
+        }
         $task = if ($Release) { "assembleRelease" } else { "assembleDebug" }
         Write-Host "-- gradlew $task" -ForegroundColor Yellow
         & .\gradlew.bat $task
@@ -98,6 +110,5 @@ Loading PPE console…
         Write-Warning "build reported success but no .apk was found"
     }
 } finally {
-    Remove-Item Env:\PPE_APP_URL -ErrorAction SilentlyContinue
     Pop-Location
 }

@@ -33,6 +33,12 @@ vidgear>=0.3.3         # CamGear (RTSP) + ScreenGear (fallback)
 # --- Alerts (optional channels; wire as needed) ---
 # httpx already present -> used for WhatsApp Cloud API / webhooks
 
+# --- Windows service host (installer only) ---
+# Registers the agent as a native Windows service (app/service_win.py). From
+# PyPI rather than bundling NSSM/WinSW: those are binaries from download hosts
+# that plant networks frequently block, and PyPI is already required.
+pywin32>=306; sys_platform == "win32"
+
 # testing
 pytest>=8.0
 pytest-asyncio>=0.23

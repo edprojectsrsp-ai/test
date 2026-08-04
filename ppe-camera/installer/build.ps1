@@ -7,7 +7,8 @@
           python/      a full venv with torch + ultralytics + opencv
           app/         the FastAPI application
           weights/     model checkpoints (optional, see -IncludeWeights)
-          nssm.exe     service wrapper (fetched or supplied)
+          ppeagent.exe / ppeconsole.exe   WinSW service hosts
+          redist/      CPython installer, so the target needs no internet
 
     Deliberately NOT PyInstaller. Freezing torch and ultralytics means chasing
     hidden imports, CUDA DLL discovery and ultralytics' runtime importlib calls
@@ -219,22 +220,32 @@ if ($IncludeConsole) {
     }
 }
 
-# ---------------------------------------------------------------- nssm
-$Nssm = Join-Path $Payload "nssm.exe"
-$NssmLocal = Join-Path $PSScriptRoot "nssm.exe"
-if (Test-Path $NssmLocal) {
-    Copy-Item -Force $NssmLocal $Nssm
-    Write-Host "-- nssm.exe taken from installer/"
-} else {
-    Write-Warning @"
-nssm.exe not found.
+# ------------------------------------------------------------- service host
+# No third-party service wrapper is bundled. The agent registers itself as a
+# native Windows service through pywin32 (app/service_win.py), which comes from
+# PyPI -- the one download host a plant network is guaranteed to allow, since
+# nothing here installs without it. NSSM and WinSW would both mean fetching a
+# binary from a site that is frequently blocked.
+Write-Host "-- service host: native (pywin32)"
 
-Download the 64-bit binary from https://nssm.cc/download and place it at:
-    $NssmLocal
-
-It is not vendored here because it is a third-party binary and should be
-fetched and checksummed by whoever builds the installer.
-"@
+# ------------------------------------------------------------- python redist
+# Bundle CPython so the installer works on a machine with no Python and no
+# internet -- a plant PC is frequently both.
+$RedistDir = Join-Path $PSScriptRoot "redist"
+New-Item -ItemType Directory -Force -Path $RedistDir | Out-Null
+$pyVerFull = (& $VenvPy -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
+$redistExe = Join-Path $RedistDir "python-$pyVerFull-amd64.exe"
+if (-not (Test-Path $redistExe)) {
+    Write-Host "-- fetching CPython $pyVerFull installer" -ForegroundColor Yellow
+    $url = "https://www.python.org/ftp/python/$pyVerFull/python-$pyVerFull-amd64.exe"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $redistExe -UseBasicParsing -TimeoutSec 300
+        Write-Host ("   + {0:N0} MB" -f ((Get-Item $redistExe).Length / 1MB))
+    } catch {
+        Write-Warning "could not fetch CPython $pyVerFull ($_)."
+        Write-Warning "The installer will need Python $pyVer already present on the target."
+        Remove-Item $redistExe -ErrorAction SilentlyContinue
+    }
 }
 
 $size = (Get-ChildItem -Recurse $Payload | Measure-Object -Property Length -Sum).Sum / 1GB

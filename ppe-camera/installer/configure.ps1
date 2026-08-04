@@ -221,40 +221,47 @@ try {
 }
 
 # --------------------------------------------------------------- 3. service
-$Nssm = Join-Path $InstallDir "nssm.exe"
-if (-not (Test-Path $Nssm)) { throw "nssm.exe missing from $InstallDir" }
-
-$existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
-if ($existing) {
-    Write-Step "stopping existing service"
-    & $Nssm stop $ServiceName confirm | Out-Null
-    Start-Sleep -Seconds 2
-    & $Nssm remove $ServiceName confirm | Out-Null
-    Start-Sleep -Seconds 1
+# A native Windows service via pywin32, not a third-party wrapper. NSSM and
+# WinSW are both fine, but both are binaries fetched from a download host, and
+# this has to install on plant networks that block them. pywin32 comes from
+# PyPI, which is already required to install anything here.
+function Remove-ServiceIfPresent([string]$Name, [string]$RemoveCmd) {
+    $svc = Get-Service -Name $Name -ErrorAction SilentlyContinue
+    if (-not $svc) { return }
+    Write-Step "removing existing service $Name"
+    try {
+        Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        & $VenvPy -m app.service_win $RemoveCmd 2>&1 | Out-Null
+        Start-Sleep -Seconds 1
+        if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
+            & sc.exe delete $Name | Out-Null
+        }
+    } catch { Write-Warning "could not remove ${Name}: $_" }
 }
 
+Write-Step "ensuring pywin32 is present"
+& $VenvPy -c "import win32serviceutil" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    # Bundled in the payload normally; this is the offline-install fallback.
+    & $VenvPy -m pip install --no-index --find-links (Join-Path $InstallDir "wheels") pywin32 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { & $VenvPy -m pip install pywin32 2>&1 | Out-Null }
+    & $VenvPy -c "import win32serviceutil" 2>$null
+    if ($LASTEXITCODE -ne 0) { throw "pywin32 is required to register the service" }
+    # pywin32 needs its post-install to register the DLLs it hosts services with.
+    & $VenvPy (Join-Path $VenvDir "Scripts\pywin32_postinstall.py") -install 2>&1 | Out-Null
+}
+
+Remove-ServiceIfPresent $ServiceName "remove-agent"
+
 Write-Step "registering service $ServiceName"
-& $Nssm install $ServiceName $VenvPy | Out-Null
+Push-Location $InstallDir
+try {
+    & $VenvPy -m app.service_win install-agent "--root=$InstallDir" "--port=$Port" "--host=$bindHost"
+    if ($LASTEXITCODE -ne 0) { throw "service registration failed ($LASTEXITCODE)" }
+} finally { Pop-Location }
 
-# Loopback unless -LanAccess. The cloud is push-only and never dials in, so the
-# only reason to open this to the plant network is wall TVs and phones -- and
-# that is a decision with a real cost, since it exposes live camera feeds.
-& $Nssm set $ServiceName AppParameters "-m uvicorn app.main:app --host $bindHost --port $Port" | Out-Null
-& $Nssm set $ServiceName AppDirectory $InstallDir | Out-Null
-& $Nssm set $ServiceName DisplayName "PPE Detection Agent" | Out-Null
-& $Nssm set $ServiceName Description "Local PPE detection: cameras, inference, recording. Pushes violations to the cloud dashboard on request." | Out-Null
-& $Nssm set $ServiceName Start SERVICE_AUTO_START | Out-Null
-& $Nssm set $ServiceName AppStdout (Join-Path $DataDir "agent.log") | Out-Null
-& $Nssm set $ServiceName AppStderr (Join-Path $DataDir "agent.err.log") | Out-Null
-& $Nssm set $ServiceName AppRotateFiles 1 | Out-Null
-& $Nssm set $ServiceName AppRotateBytes 10485760 | Out-Null
-& $Nssm set $ServiceName AppExit Default Restart | Out-Null
-# A camera that drops at 3am should not leave the service flapping in a tight
-# restart loop and filling the disk with logs.
-& $Nssm set $ServiceName AppRestartDelay 5000 | Out-Null
-
-Write-Step "starting service"
-& $Nssm start $ServiceName | Out-Null
+Start-Service -Name $ServiceName -ErrorAction SilentlyContinue
 
 Start-Sleep -Seconds 5
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
@@ -312,34 +319,16 @@ $ConsoleService = "PPEConsole"
 $ConsoleRoot = Join-Path $InstallDir "console"
 $NodeExe = Join-Path $InstallDir "node.exe"
 
-$existingConsole = Get-Service -Name $ConsoleService -ErrorAction SilentlyContinue
-if ($existingConsole) {
-    & $Nssm stop $ConsoleService confirm | Out-Null
-    Start-Sleep -Seconds 2
-    & $Nssm remove $ConsoleService confirm | Out-Null
-    Start-Sleep -Seconds 1
-}
+Remove-ServiceIfPresent $ConsoleService "remove-console"
 
 if ((Test-Path (Join-Path $ConsoleRoot "server.js")) -and (Test-Path $NodeExe)) {
     Write-Step "registering console service on port $ConsolePort"
-    & $Nssm install $ConsoleService $NodeExe | Out-Null
-    & $Nssm set $ConsoleService AppParameters "server.js" | Out-Null
-    & $Nssm set $ConsoleService AppDirectory $ConsoleRoot | Out-Null
-    & $Nssm set $ConsoleService DisplayName "PPE Control Room (local web console)" | Out-Null
-    & $Nssm set $ConsoleService Description "Serves the PPE console over http so wall displays and phones on the plant network can use it." | Out-Null
-    & $Nssm set $ConsoleService Start SERVICE_AUTO_START | Out-Null
-    # 0.0.0.0 regardless of -LanAccess: a console nobody else can open is the
-    # same as no console. The AGENT binding is the security decision, and it is
-    # the one gated by the key.
-    & $Nssm set $ConsoleService AppEnvironmentExtra `
-        "HOSTNAME=0.0.0.0" "PORT=$ConsolePort" "NODE_ENV=production" `
-        "NEXT_PUBLIC_PPE_AGENT_PORT=$Port" "NEXT_PUBLIC_PPE_LAN_KEY=$LanKey" | Out-Null
-    & $Nssm set $ConsoleService AppStdout (Join-Path $DataDir "console.log") | Out-Null
-    & $Nssm set $ConsoleService AppStderr (Join-Path $DataDir "console.err.log") | Out-Null
-    & $Nssm set $ConsoleService AppRotateFiles 1 | Out-Null
-    & $Nssm set $ConsoleService AppExit Default Restart | Out-Null
-    & $Nssm set $ConsoleService AppRestartDelay 5000 | Out-Null
-    & $Nssm start $ConsoleService | Out-Null
+    Push-Location $InstallDir
+    try {
+        & $VenvPy -m app.service_win install-console "--root=$InstallDir" `
+            "--port=$ConsolePort" "--agent-port=$Port" "--lan-key=$LanKey"
+    } finally { Pop-Location }
+    Start-Service -Name $ConsoleService -ErrorAction SilentlyContinue
 
     Start-Sleep -Seconds 4
     $c = Get-Service -Name $ConsoleService -ErrorAction SilentlyContinue
