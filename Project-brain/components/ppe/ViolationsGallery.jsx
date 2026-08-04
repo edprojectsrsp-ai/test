@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 import { ensureAgent, subscribeAgent } from "../../lib/ppeAgent";
+import AssignPanel from "./AssignPanel";
 
 
 async function api(path, options) {
@@ -107,7 +108,7 @@ function ViolationCard({ v, onStatus, onOpen }) {
         {v.has_image ? (
           <img
             alt={v.label}
-            src={`${getPpeApiBase()}${v.image_url}`}
+            src={buildPpeUrl(v.image_url)}
             loading="lazy"
             style={{ width: "100%", height: "100%", objectFit: "contain" }}
             onError={(e) => { e.currentTarget.style.display = "none"; }}
@@ -152,6 +153,23 @@ function ViolationCard({ v, onStatus, onOpen }) {
             <span title={v.occurred_at || ""}>{timeAgo(v.occurred_at)}</span>
           </span>
         </div>
+        {/* Ownership on the card itself. Who is fixing this is a more useful
+            thing to see while scanning a wall of photos than the track id. */}
+        {v.assigned_to ? (
+          <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11,
+                        marginTop: 6, flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 800, color: C.ink }}>👤 {v.assigned_to}</span>
+            {v.due_at ? (
+              <span style={{
+                fontWeight: 800, padding: "1px 6px", borderRadius: 5,
+                color: v.overdue ? "#fff" : C.sub,
+                background: v.overdue ? C.crit : "transparent",
+              }}>
+                {v.overdue ? "OVERDUE" : `due ${new Date(v.due_at).toLocaleDateString()}`}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         <div style={{ display: "flex", gap: 8, fontSize: 11, color: C.sub, marginTop: 4, flexWrap: "wrap" }}>
           {v.department ? <span>dept {v.department}</span> : null}
           {v.track_id != null ? <span>track {v.track_id}</span> : null}
@@ -552,7 +570,7 @@ export default function ViolationsGallery({ embedded = false }) {
           >
             <img
               alt={lightbox.label}
-              src={`${getPpeApiBase()}${lightbox.image_url}`}
+              src={buildPpeUrl(lightbox.image_url)}
               style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#0b0f14" }}
             />
             <div style={{ padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -608,6 +626,28 @@ export default function ViolationsGallery({ embedded = false }) {
               >
                 Close
               </button>
+            </div>
+            {/* Accountability. Only on the agent: assignment is made where the
+                safety officer is standing, and the cloud mirrors it. */}
+            <div style={{ padding: "0 18px 16px", borderTop: `1px solid ${C.line}`, paddingTop: 14 }}>
+              {onAgent ? (
+                <AssignPanel
+                  violation={lightbox}
+                  onChange={(updated) => {
+                    setLightbox(updated);
+                    setItems((list) =>
+                      list.map((it) => (it.id === updated.id ? updated : it)));
+                    loadTypes();
+                  }}
+                />
+              ) : (
+                <div style={{ fontSize: 12.5, color: C.sub }}>
+                  {lightbox.assigned_to
+                    ? `Assigned to ${lightbox.assigned_to}${lightbox.due_at ? ` · due ${new Date(lightbox.due_at).toLocaleDateString()}` : ""}`
+                    : "Unassigned"}
+                  {" — assign from the plant PC console."}
+                </div>
+              )}
             </div>
           </div>
         </div>

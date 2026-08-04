@@ -144,9 +144,15 @@ def create_app() -> FastAPI:
         "PPE_CORS_ORIGINS",
         "http://localhost:3000,http://127.0.0.1:3000",
     ).split(",")
+    # A wall TV reaches the console at http://192.168.x.x:3000, and that IP is
+    # not knowable at install time on a DHCP network — so LAN deployments match
+    # by pattern instead of by list. Access is still gated by PPE_LAN_TOKEN;
+    # CORS decides which page may ask, not who is allowed in.
+    origin_regex = os.getenv("PPE_CORS_ORIGIN_REGEX", "").strip() or None
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[o.strip() for o in origins],
+        allow_origins=[o.strip() for o in origins if o.strip()],
+        allow_origin_regex=origin_regex,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -169,6 +175,38 @@ def create_app() -> FastAPI:
                 return response
 
         app.add_middleware(_PrivateNetworkMiddleware)
+
+        if settings.LAN_TOKEN:
+            # Gate everything except /health and CORS preflight. Loopback is
+            # exempt: the operator sitting at this PC already has the machine,
+            # and requiring a key there would break the desktop console for no
+            # gain. This guards the LAN surface — the wall TVs and phones.
+            import hmac as _hmac
+
+            from starlette.middleware.base import BaseHTTPMiddleware
+            from starlette.responses import JSONResponse
+
+            _OPEN_PATHS = {"/health", "/docs", "/openapi.json", "/redoc"}
+
+            class _LanTokenMiddleware(BaseHTTPMiddleware):
+                async def dispatch(self, request, call_next):
+                    if request.method == "OPTIONS" or request.url.path in _OPEN_PATHS:
+                        return await call_next(request)
+                    client = (request.client.host if request.client else "") or ""
+                    if client in ("127.0.0.1", "::1", "localhost"):
+                        return await call_next(request)
+                    # Header for fetch/XHR, query param for <img src> MJPEG —
+                    # an image tag cannot send headers. Named ppe_key, not k:
+                    # the stream URLs already use ?k= as a cache-buster.
+                    supplied = (request.headers.get("x-ppe-key")
+                                or request.query_params.get("ppe_key") or "")
+                    if not _hmac.compare_digest(supplied, settings.LAN_TOKEN):
+                        return JSONResponse(
+                            {"detail": "missing or invalid PPE LAN key"},
+                            status_code=401)
+                    return await call_next(request)
+
+            app.add_middleware(_LanTokenMiddleware)
 
     if settings.is_cloud:
         # Dashboard + receiver only. Deliberately NOT mounted: cameras, stream,
@@ -213,6 +251,21 @@ def create_app() -> FastAPI:
         if s.is_cloud:
             # Nothing below applies: no fleet, no detector, no recorder. Probing
             # for them would import the ML stack this role exists to avoid.
+            warnings: list[str] = []
+            if s.DATABASE_URL.startswith("sqlite"):
+                warnings.append(
+                    "cloud role is using SQLite; free Render web services wipe "
+                    "local files on restart/deploy, so PPE_DATABASE_URL should "
+                    "point at Postgres"
+                )
+            if not s.SYNC_AGENTS:
+                warnings.append(
+                    "PPE_SYNC_AGENTS is empty; no plant PC can authenticate to "
+                    "push violations"
+                )
+            out["sync_agents_configured"] = bool(s.SYNC_AGENTS)
+            if warnings:
+                out["warnings"] = warnings
             return out
         try:
             from app.services.runtime import get_manager

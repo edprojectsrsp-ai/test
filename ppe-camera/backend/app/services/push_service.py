@@ -124,6 +124,20 @@ async def _serialize(session, ev) -> dict:
         "status": ev.status.value if hasattr(ev.status, "value") else str(ev.status),
         "occurred_at": ev.occurred_at.isoformat() if ev.occurred_at else None,
         "thumb_b64": base64.b64encode(jpeg).decode("ascii") if jpeg else None,
+        # Accountability travels with the violation. Assignment happens on the
+        # agent (that is where the safety officer is standing); the cloud shows
+        # management who owns what. Re-assigning clears synced_at, so the row
+        # comes back through this queue and the cloud copy stays current.
+        "assigned_to": ev.assigned_to or "",
+        "assigned_to_id": ev.assigned_to_id,
+        "contractor_id": ev.contractor_id,
+        "assigned_by": ev.assigned_by or "",
+        "assigned_at": ev.assigned_at.isoformat() if ev.assigned_at else None,
+        "due_at": ev.due_at.isoformat() if ev.due_at else None,
+        "assignment_note": ev.assignment_note or "",
+        "resolution_note": ev.resolution_note or "",
+        "resolved_by": ev.resolved_by or "",
+        "resolved_at": ev.resolved_at.isoformat() if ev.resolved_at else None,
     }
 
 

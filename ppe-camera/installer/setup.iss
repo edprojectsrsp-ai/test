@@ -17,6 +17,7 @@
 #define AppPublisher   "Project Brain"
 #define ServiceName    "PPEAgent"
 #define DefaultPort    "8004"
+#define DefaultConsolePort "3000"
 
 [Setup]
 AppId={{8F3C1A24-6B7E-4D19-9E2A-1C5B7A9D4E30}
@@ -60,7 +61,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut to the control room
 
 [Run]
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure.ps1"" -InstallDir ""{app}"" -RedistDir ""{tmp}"" -Port ""{code:GetPort}"" -AgentId ""{code:GetAgentId}"" -AgentToken ""{code:GetAgentToken}"" -SyncUrl ""{code:GetSyncUrl}"" -CorsOrigins ""{code:GetCorsOrigins}"" {code:GetAutoSyncFlag}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure.ps1"" -InstallDir ""{app}"" -RedistDir ""{tmp}"" -Port ""{code:GetPort}"" -ConsolePort ""{code:GetConsolePort}"" -AgentId ""{code:GetAgentId}"" -AgentToken ""{code:GetAgentToken}"" -SyncUrl ""{code:GetSyncUrl}"" -CorsOrigins ""{code:GetCorsOrigins}"" {code:GetAutoSyncFlag} {code:GetLanFlag}"; \
   StatusMsg: "Configuring the agent and registering the service..."; \
   Flags: runhidden waituntilterminated
 
@@ -73,6 +74,8 @@ Filename: "powershell.exe"; \
 var
   SyncPage: TInputQueryWizardPage;
   OptionsPage: TInputOptionWizardPage;
+  LanPage: TInputOptionWizardPage;
+  LanPortPage: TInputQueryWizardPage;
 
 procedure InitializeWizard;
 begin
@@ -83,10 +86,10 @@ begin
     'you can fill them in later by editing .env in the install folder.' + #13#10 +
     'The Agent ID and token must match an entry in the cloud service''s ' +
     'PPE_SYNC_AGENTS setting.');
-  SyncPage.Add('Cloud URL (e.g. https://your-app.onrender.com):', False);
+  SyncPage.Add('Cloud sync URL (e.g. https://your-app.onrender.com):', False);
   SyncPage.Add('Agent ID (e.g. rsp-plant-01):', False);
   SyncPage.Add('Agent token:', True);
-  SyncPage.Add('Control room URL (the web dashboard):', False);
+  SyncPage.Add('Control room URL (Vercel web dashboard):', False);
   SyncPage.Add('Local port:', False);
 
   SyncPage.Values[4] := '{#DefaultPort}';
@@ -101,6 +104,47 @@ begin
   OptionsPage.Add('Manual only — I press Push when I want to send (recommended)');
   OptionsPage.Add('Also sync automatically every 4 hours');
   OptionsPage.SelectedValueIndex := 0;
+
+  LanPage := CreateInputOptionPage(OptionsPage.ID,
+    'Wall displays and phones',
+    'Should other devices on the plant network reach this PC?',
+    'Off, only this PC can see the cameras and the console.' + #13#10 +
+    'On, any browser on the plant network can open the control room at ' +
+    'http://<this-pc>:3000 — wall TVs and phones included, with nothing to ' +
+    'install on them. A random access key is generated and written to .env; ' +
+    'live camera feeds are behind it.',
+    False, False);
+  LanPage.Add('This PC only (recommended if you have no wall display)');
+  LanPage.Add('Allow wall TVs and phones on the plant network');
+  LanPage.SelectedValueIndex := 0;
+
+  LanPortPage := CreateInputQueryPage(LanPage.ID,
+    'Console port',
+    'Which port should the control room be served on?',
+    'Only used when wall/phone access is enabled above.');
+  LanPortPage.Add('Console port:', False);
+  LanPortPage.Values[0] := '{#DefaultConsolePort}';
+end;
+
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  { The port only matters if LAN access was chosen. }
+  Result := (PageID = LanPortPage.ID) and (LanPage.SelectedValueIndex <> 1);
+end;
+
+function GetLanFlag(Param: String): String;
+begin
+  if LanPage.SelectedValueIndex = 1 then
+    Result := '-LanAccess'
+  else
+    Result := '';
+end;
+
+function GetConsolePort(Param: String): String;
+begin
+  Result := Trim(LanPortPage.Values[0]);
+  if Result = '' then
+    Result := '{#DefaultConsolePort}';
 end;
 
 function GetSyncUrl(Param: String): String;

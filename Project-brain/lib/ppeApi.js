@@ -1,4 +1,4 @@
-import { getAgentBase } from "./ppeAgent";
+import { getAgentBase, withAgentKey } from "./ppeAgent";
 
 const DEFAULT_LOCAL_PPE_BASE = "http://127.0.0.1:8004";
 const DEFAULT_PROD_PPE_BASE = "https://project-brain-ppe-lite.onrender.com";
@@ -47,7 +47,11 @@ export function buildPpeUrl(path = "") {
   const agent = getAgentBase();
   // Straight to the agent: FastAPI does not want the trailing slash that the
   // Next proxy requires, and adding one earns a 307 that can drop a POST body.
-  if (agent) return `${agent}${path.startsWith("/") ? path : `/${path}`}`;
+  // withAgentKey is a no-op unless a LAN key is configured; when the agent is
+  // reachable from wall TVs and phones it is what authorises them.
+  if (agent) {
+    return withAgentKey(`${agent}${path.startsWith("/") ? path : `/${path}`}`);
+  }
   return `${PPE_PROXY_BASE}${normalizePpePath(path)}`;
 }
 

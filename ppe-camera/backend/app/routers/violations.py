@@ -79,8 +79,46 @@ def _to_out(ev: ViolationEvent) -> dict:
         "status": ev.status.value if hasattr(ev.status, "value") else ev.status,
         "occurred_at": ev.occurred_at.isoformat() if ev.occurred_at else None,
         "image_url": f"/api/violations/{ev.id}/image",
-        "has_image": bool(ev.image_path),
+        "has_image": bool(ev.image_path) or bool(getattr(ev, "thumb_jpeg", None)),
+        # accountability
+        "assigned_to": ev.assigned_to or "",
+        "assigned_to_id": ev.assigned_to_id,
+        "contractor_id": ev.contractor_id,
+        "assigned_by": ev.assigned_by or "",
+        "assigned_at": ev.assigned_at.isoformat() if ev.assigned_at else None,
+        "due_at": ev.due_at.isoformat() if ev.due_at else None,
+        "assignment_note": ev.assignment_note or "",
+        "resolution_note": ev.resolution_note or "",
+        "resolved_by": ev.resolved_by or "",
+        "resolved_at": ev.resolved_at.isoformat() if ev.resolved_at else None,
+        "overdue": _is_overdue(ev),
     }
+
+
+def _is_overdue(ev: ViolationEvent) -> bool:
+    """Past its due date and still not closed out.
+
+    Drives the red badge on the wall display: an assignment with a date nobody
+    met is the one piece of information a safety officer walking past the screen
+    actually needs.
+    """
+    if ev.due_at is None:
+        return False
+    if ev.status in (ViolationStatus.resolved, ViolationStatus.false_alarm):
+        return False
+    due = ev.due_at if ev.due_at.tzinfo else ev.due_at.replace(tzinfo=timezone.utc)
+    return due < datetime.now(timezone.utc)
+
+
+def _touch(ev: ViolationEvent) -> None:
+    """Mark a violation as needing to be pushed again.
+
+    The outbound queue is `synced_at IS NULL`, so clearing it re-enqueues the
+    row. Without this an assignment made after the first push would never reach
+    the cloud, and the dashboard management looks at would show the violation
+    permanently unowned — the exact opposite of what assigning it was for.
+    """
+    ev.synced_at = None
 
 
 @router.get("")
@@ -293,8 +331,190 @@ async def set_status(
         ev.status = ViolationStatus(payload.status)
     except ValueError:
         raise HTTPException(422, f"invalid status '{payload.status}'")
+    _touch(ev)
     await session.commit()
     return {"id": violation_id, "status": ev.status.value}
+
+
+# ------------------------------------------------------------- accountability
+class AssignIn(BaseModel):
+    assigned_to: str
+    assigned_to_id: str | None = None
+    contractor_id: str | None = None
+    assigned_by: str = ""
+    due_at: str | None = None       # ISO date or datetime
+    note: str = ""
+
+
+@router.post("/{violation_id}/assign")
+async def assign_violation(
+    violation_id: str, payload: AssignIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Give this violation an owner and a date.
+
+    Assigning also moves an untouched violation out of `open` into
+    `acknowledged`: somebody has now looked at it and accepted it, which is a
+    different state from nobody having seen it, and the open-alert count on the
+    wall should reflect that.
+    """
+    ev = await session.get(ViolationEvent, violation_id)
+    if ev is None:
+        raise HTTPException(404, "violation not found")
+    name = payload.assigned_to.strip()
+    if not name:
+        raise HTTPException(422, "assigned_to cannot be empty")
+
+    due = _parse_date(payload.due_at, end=True) if payload.due_at else None
+    if payload.due_at and due is None:
+        raise HTTPException(422, f"invalid due_at '{payload.due_at}'")
+
+    ev.assigned_to = name
+    ev.assigned_to_id = payload.assigned_to_id
+    ev.contractor_id = payload.contractor_id
+    ev.assigned_by = payload.assigned_by.strip()
+    ev.assigned_at = datetime.now(timezone.utc)
+    ev.due_at = due
+    ev.assignment_note = payload.note.strip()
+    if ev.status == ViolationStatus.open:
+        ev.status = ViolationStatus.acknowledged
+    _touch(ev)
+    await session.commit()
+    return _to_out(ev)
+
+
+@router.post("/{violation_id}/unassign")
+async def unassign_violation(
+    violation_id: str, session: AsyncSession = Depends(get_session)
+) -> dict:
+    """Drop the owner. The assignment history is not kept — this is a correction
+    path for assigning the wrong person, not an audit trail."""
+    ev = await session.get(ViolationEvent, violation_id)
+    if ev is None:
+        raise HTTPException(404, "violation not found")
+    ev.assigned_to = ""
+    ev.assigned_to_id = None
+    ev.contractor_id = None
+    ev.assigned_by = ""
+    ev.assigned_at = None
+    ev.due_at = None
+    ev.assignment_note = ""
+    _touch(ev)
+    await session.commit()
+    return _to_out(ev)
+
+
+class ResolveIn(BaseModel):
+    note: str = ""
+    resolved_by: str = ""
+    false_alarm: bool = False
+
+
+@router.post("/{violation_id}/resolve")
+async def resolve_violation(
+    violation_id: str, payload: ResolveIn,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Close a violation out with a note saying what was done.
+
+    The note is the point. "Resolved" with no account of the corrective action
+    is indistinguishable from someone clearing their queue, and it is the first
+    thing anyone asks about when the same violation recurs on the same camera.
+    """
+    ev = await session.get(ViolationEvent, violation_id)
+    if ev is None:
+        raise HTTPException(404, "violation not found")
+    ev.status = (ViolationStatus.false_alarm if payload.false_alarm
+                 else ViolationStatus.resolved)
+    ev.resolution_note = payload.note.strip()
+    ev.resolved_by = payload.resolved_by.strip()
+    ev.resolved_at = datetime.now(timezone.utc)
+    _touch(ev)
+    await session.commit()
+    return _to_out(ev)
+
+
+@router.get("/assignees")
+async def list_assignees(session: AsyncSession = Depends(get_session)) -> dict:
+    """Who a violation can be assigned to.
+
+    Union of the employee and contractor masters with whoever has actually been
+    assigned something before. That last part matters: the masters are usually
+    stale, and the names a site really uses emerge from use rather than from
+    anybody maintaining a directory.
+    """
+    from app.models.domain import Contractor, Employee
+
+    out: dict[str, dict] = {}
+
+    try:
+        emps = (await session.execute(
+            select(Employee).where(Employee.active.is_(True)).limit(500)
+        )).scalars().all()
+        for e in emps:
+            if e.name:
+                out[e.name] = {"name": e.name, "kind": "employee", "id": e.id,
+                               "department": e.department or "",
+                               "contractor_id": e.contractor_id}
+    except Exception:  # noqa: BLE001 - a missing master must not break assigning
+        pass
+
+    try:
+        cons = (await session.execute(
+            select(Contractor).where(Contractor.active.is_(True)).limit(500)
+        )).scalars().all()
+        for c in cons:
+            if c.name:
+                out.setdefault(c.name, {"name": c.name, "kind": "contractor",
+                                        "id": c.id, "department": "",
+                                        "contractor_id": c.id})
+    except Exception:  # noqa: BLE001
+        pass
+
+    recent = (await session.execute(
+        select(ViolationEvent.assigned_to)
+        .where(ViolationEvent.assigned_to != "")
+        .order_by(ViolationEvent.assigned_at.desc())
+        .limit(200)
+    )).scalars().all()
+    for name in recent:
+        if name:
+            out.setdefault(name, {"name": name, "kind": "recent", "id": None,
+                                  "department": "", "contractor_id": None})
+
+    items = sorted(out.values(), key=lambda a: (a["kind"] != "employee", a["name"]))
+    return {"count": len(items), "assignees": items}
+
+
+@router.get("/workload")
+async def assignment_workload(
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Open assignments per person — the "who is sitting on what" view."""
+    rows = (await session.execute(
+        select(ViolationEvent)
+        .where(ViolationEvent.assigned_to != "")
+        .where(ViolationEvent.status.in_(
+            [ViolationStatus.open, ViolationStatus.acknowledged]))
+        .limit(2000)
+    )).scalars().all()
+
+    by: dict[str, dict] = {}
+    for ev in rows:
+        b = by.setdefault(ev.assigned_to, {
+            "assigned_to": ev.assigned_to, "open": 0, "overdue": 0,
+            "next_due": None,
+        })
+        b["open"] += 1
+        if _is_overdue(ev):
+            b["overdue"] += 1
+        if ev.due_at:
+            iso = ev.due_at.isoformat()
+            if b["next_due"] is None or iso < b["next_due"]:
+                b["next_due"] = iso
+
+    items = sorted(by.values(), key=lambda b: (-b["overdue"], -b["open"]))
+    return {"count": len(items), "workload": items}
 
 
 @router.delete("")

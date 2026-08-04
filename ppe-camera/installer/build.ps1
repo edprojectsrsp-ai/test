@@ -25,7 +25,13 @@
 param(
     [switch]$Gpu,
     [switch]$IncludeWeights,
-    [string]$PythonExe = "python"
+    # Bundle the Next.js control room so wall TVs and phones on the plant
+    # network can open it over http. Without this the console is browser-only
+    # from the cloud, and the agent is reachable from the plant PC alone.
+    [switch]$IncludeConsole,
+    [string]$PythonExe = "python",
+    [string]$ConsoleDir = "",
+    [string]$NodeExe = "node"
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,6 +126,60 @@ if ($IncludeWeights) {
         if (Test-Path $reg) { Copy-Item -Force $reg $WeightsDst }
     } else {
         Write-Warning "no weights at $WeightsSrc -- the agent will download on first run"
+    }
+}
+
+# ---------------------------------------------------------------- console
+if ($IncludeConsole) {
+    if (-not $ConsoleDir) {
+        $ConsoleDir = Join-Path (Split-Path -Parent $Root) "Project-brain"
+    }
+    if (-not (Test-Path (Join-Path $ConsoleDir "package.json"))) {
+        throw "No Next.js project at $ConsoleDir (pass -ConsoleDir)"
+    }
+
+    Write-Host "-- building control room (standalone)" -ForegroundColor Yellow
+    Push-Location $ConsoleDir
+    try {
+        $env:PPE_STANDALONE = "1"
+        & npm run build
+        if ($LASTEXITCODE -ne 0) { throw "next build failed" }
+    } finally {
+        Remove-Item Env:\PPE_STANDALONE -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+
+    $standalone = Join-Path $ConsoleDir ".next\standalone"
+    if (-not (Test-Path $standalone)) {
+        throw "no .next\standalone -- is output:'standalone' active for PPE_STANDALONE=1?"
+    }
+
+    $ConsoleDst = Join-Path $Payload "console"
+    New-Item -ItemType Directory -Force -Path $ConsoleDst | Out-Null
+    Copy-Item -Recurse -Force (Join-Path $standalone "*") $ConsoleDst
+
+    # standalone deliberately omits these two -- Next documents that they must be
+    # copied alongside, and without them every asset and image 404s while the
+    # HTML still renders, which looks like a broken stylesheet rather than a
+    # packaging mistake.
+    $staticSrc = Join-Path $ConsoleDir ".next\static"
+    if (Test-Path $staticSrc) {
+        $staticDst = Join-Path $ConsoleDst ".next\static"
+        New-Item -ItemType Directory -Force -Path $staticDst | Out-Null
+        Copy-Item -Recurse -Force (Join-Path $staticSrc "*") $staticDst
+    }
+    $publicSrc = Join-Path $ConsoleDir "public"
+    if (Test-Path $publicSrc) {
+        Copy-Item -Recurse -Force $publicSrc (Join-Path $ConsoleDst "public")
+    }
+
+    # A Node runtime, so the plant PC needs nothing preinstalled.
+    $nodePath = (Get-Command $NodeExe -ErrorAction SilentlyContinue).Source
+    if ($nodePath) {
+        Copy-Item -Force $nodePath (Join-Path $Payload "node.exe")
+        Write-Host "-- bundled node.exe from $nodePath"
+    } else {
+        Write-Warning "node not found -- install Node 20+ or the console service cannot start"
     }
 }
 

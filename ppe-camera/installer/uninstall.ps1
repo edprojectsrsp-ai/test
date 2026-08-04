@@ -3,7 +3,7 @@
 
     Deliberately leaves data\ in place: it holds the violation database,
     evidence images, recordings and any fine-tuned weights. That is the plant's
-    safety record and the system of record for anything the cloud shows —
+    safety record and the system of record for anything the cloud shows --
     an uninstall (or an upgrade, which uninstalls first) must not destroy it.
     Deleting it is a separate, explicit act.
 #>

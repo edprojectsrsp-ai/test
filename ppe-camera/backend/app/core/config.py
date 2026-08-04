@@ -172,6 +172,22 @@ class Settings:
     RECORD_OVERLAY: bool = os.getenv("PPE_RECORD_OVERLAY", "0") not in (
         "0", "", "false", "False")
 
+    # ---- LAN access (wall TVs, phones on the plant network) ---------------
+    # The agent binds to loopback by default: on a single operator PC nothing
+    # else needs to reach it, and loopback is the one origin browsers exempt
+    # from mixed-content blocking.
+    #
+    # Wall displays and phones are different machines, so they need a real LAN
+    # bind. That is opt-in, because it moves the trust boundary from "this PC"
+    # to "anyone on the plant network" — which includes camera feeds.
+    HOST: str = os.getenv("PPE_HOST", "127.0.0.1")
+    # Optional shared secret for LAN access. Accepted as an X-PPE-Key header OR
+    # a ?ppe_key= query parameter — the query form is not laziness: an <img>
+    # tag streaming MJPEG cannot set headers, and the video wall is the entire
+    # reason for binding to the LAN in the first place. (?k= is already taken:
+    # the stream URLs use it as a cache-buster.)
+    LAN_TOKEN: str = os.getenv("PPE_LAN_TOKEN", "").strip()
+
     # ---- cloud sync (edge -> cloud, outbound only) ------------------------
     # The agent never accepts an inbound connection from the cloud. It pushes
     # violations out over HTTPS and that is the entire coupling, which is what

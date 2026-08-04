@@ -20,7 +20,13 @@ param(
     [string]$SyncUrl     = "",
     [string]$CorsOrigins = "",
     [string]$Port        = "8004",
-    [switch]$AutoSync
+    [switch]$AutoSync,
+    # Wall TVs and phones are different machines, so they need a real LAN bind
+    # rather than loopback. Opt-in: it moves the trust boundary from "this PC"
+    # to "anyone on the plant network", camera feeds included.
+    [switch]$LanAccess,
+    [string]$LanKey      = "",
+    [string]$ConsolePort = "3000"
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,6 +138,28 @@ if (Test-Path $EnvFile) {
 
 $autoVal = if ($AutoSync) { "1" } else { "0" }
 $cors = if ($CorsOrigins) { $CorsOrigins } else { "http://localhost:3000,http://127.0.0.1:3000" }
+$bindHost = if ($LanAccess) { "0.0.0.0" } else { "127.0.0.1" }
+
+# A LAN bind with no key would leave live camera feeds open to anyone on the
+# plant network. Generate one rather than asking, so the safe path is also the
+# default path.
+if ($LanAccess -and -not $LanKey) {
+    $bytes = New-Object byte[] 24
+    [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    $LanKey = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
+    Write-Step "generated a LAN key"
+}
+
+$corsRegex = ""
+if ($LanAccess) {
+    # A TV reaches the console at http://<ip-or-hostname>:<port>, and on DHCP
+    # that address is not knowable here -- so match private LAN origins by
+    # pattern. Only RFC1918 ranges and plain hostnames; a public origin still
+    # has to be listed explicitly.
+    $me = $env:COMPUTERNAME
+    $cors = "$cors,http://${me}:$ConsolePort,http://localhost:$ConsolePort"
+    $corsRegex = '^http://(localhost|127\.0\.0\.1|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|[A-Za-z0-9][A-Za-z0-9\-]*)(:\d+)?$'
+}
 
 $envLines = @(
     "# Written by the PPE Agent installer. Restart the PPEAgent service after editing.",
@@ -142,6 +170,12 @@ $envLines = @(
     "# The control-room page is served over HTTPS but calls this agent on",
     "# http://127.0.0.1:$Port, so its origin must appear here.",
     "PPE_CORS_ORIGINS=$cors",
+    "PPE_CORS_ORIGIN_REGEX=$corsRegex",
+    "",
+    "# 127.0.0.1 = this PC only. 0.0.0.0 = reachable from wall TVs and phones",
+    "# on the plant network, in which case PPE_LAN_TOKEN is what protects it.",
+    "PPE_HOST=$bindHost",
+    "PPE_LAN_TOKEN=$LanKey",
     "",
     "# --- cloud sync (outbound only) ---",
     "PPE_SYNC_URL=$SyncUrl",
@@ -182,10 +216,10 @@ if ($existing) {
 Write-Step "registering service $ServiceName"
 & $Nssm install $ServiceName $VenvPy | Out-Null
 
-# Bind to loopback. Nothing but the browser on this PC talks to the agent --
-# the cloud is push-only and never dials in -- so there is no reason to expose
-# camera streams to the plant LAN.
-& $Nssm set $ServiceName AppParameters "-m uvicorn app.main:app --host 127.0.0.1 --port $Port" | Out-Null
+# Loopback unless -LanAccess. The cloud is push-only and never dials in, so the
+# only reason to open this to the plant network is wall TVs and phones -- and
+# that is a decision with a real cost, since it exposes live camera feeds.
+& $Nssm set $ServiceName AppParameters "-m uvicorn app.main:app --host $bindHost --port $Port" | Out-Null
 & $Nssm set $ServiceName AppDirectory $InstallDir | Out-Null
 & $Nssm set $ServiceName DisplayName "PPE Detection Agent" | Out-Null
 & $Nssm set $ServiceName Description "Local PPE detection: cameras, inference, recording. Pushes violations to the cloud dashboard on request." | Out-Null
@@ -205,7 +239,77 @@ Write-Step "starting service"
 Start-Sleep -Seconds 5
 $svc = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($svc -and $svc.Status -eq "Running") {
-    Write-Step "service is running on http://127.0.0.1:$Port"
+    Write-Step "agent running on http://${bindHost}:$Port"
 } else {
     Write-Warning "service did not reach Running. Check $DataDir\agent.err.log"
+}
+
+# ------------------------------------------------------- 4. console service
+# The Next.js control room, served over plain http from this PC. This is what
+# makes a wall TV possible at all: an HTTPS page may call http://127.0.0.1
+# (browsers exempt loopback from mixed-content blocking) but never a LAN IP, so
+# a TV loading the cloud site could never reach this agent. Same-scheme, same
+# host, no such problem -- and nothing to install on the TV.
+$ConsoleService = "PPEConsole"
+$ConsoleRoot = Join-Path $InstallDir "console"
+$NodeExe = Join-Path $InstallDir "node.exe"
+
+$existingConsole = Get-Service -Name $ConsoleService -ErrorAction SilentlyContinue
+if ($existingConsole) {
+    & $Nssm stop $ConsoleService confirm | Out-Null
+    Start-Sleep -Seconds 2
+    & $Nssm remove $ConsoleService confirm | Out-Null
+    Start-Sleep -Seconds 1
+}
+
+if ((Test-Path (Join-Path $ConsoleRoot "server.js")) -and (Test-Path $NodeExe)) {
+    Write-Step "registering console service on port $ConsolePort"
+    & $Nssm install $ConsoleService $NodeExe | Out-Null
+    & $Nssm set $ConsoleService AppParameters "server.js" | Out-Null
+    & $Nssm set $ConsoleService AppDirectory $ConsoleRoot | Out-Null
+    & $Nssm set $ConsoleService DisplayName "PPE Control Room (local web console)" | Out-Null
+    & $Nssm set $ConsoleService Description "Serves the PPE console over http so wall displays and phones on the plant network can use it." | Out-Null
+    & $Nssm set $ConsoleService Start SERVICE_AUTO_START | Out-Null
+    # 0.0.0.0 regardless of -LanAccess: a console nobody else can open is the
+    # same as no console. The AGENT binding is the security decision, and it is
+    # the one gated by the key.
+    & $Nssm set $ConsoleService AppEnvironmentExtra `
+        "HOSTNAME=0.0.0.0" "PORT=$ConsolePort" "NODE_ENV=production" `
+        "NEXT_PUBLIC_PPE_AGENT_PORT=$Port" "NEXT_PUBLIC_PPE_LAN_KEY=$LanKey" | Out-Null
+    & $Nssm set $ConsoleService AppStdout (Join-Path $DataDir "console.log") | Out-Null
+    & $Nssm set $ConsoleService AppStderr (Join-Path $DataDir "console.err.log") | Out-Null
+    & $Nssm set $ConsoleService AppRotateFiles 1 | Out-Null
+    & $Nssm set $ConsoleService AppExit Default Restart | Out-Null
+    & $Nssm set $ConsoleService AppRestartDelay 5000 | Out-Null
+    & $Nssm start $ConsoleService | Out-Null
+
+    Start-Sleep -Seconds 4
+    $c = Get-Service -Name $ConsoleService -ErrorAction SilentlyContinue
+    if ($c -and $c.Status -eq "Running") {
+        $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+               Where-Object { $_.IPAddress -notlike "127.*" -and $_.IPAddress -notlike "169.254.*" } |
+               Select-Object -First 1).IPAddress
+        Write-Step "console running -- open http://${ip}:$ConsolePort on the wall TV"
+        if ($LanKey) { Write-Step "LAN key: $LanKey  (stored in .env)" }
+    } else {
+        Write-Warning "console did not start. Check $DataDir\console.err.log"
+    }
+
+    if ($LanAccess) {
+        # Without these the service is listening and completely unreachable,
+        # which presents as "the TV cannot see it" with nothing in any log.
+        Write-Step "opening firewall for ports $Port and $ConsolePort"
+        foreach ($p in @($Port, $ConsolePort)) {
+            $ruleName = "PPE Agent $p"
+            try {
+                Remove-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+                New-NetFirewallRule -DisplayName $ruleName -Direction Inbound `
+                    -Action Allow -Protocol TCP -LocalPort $p -Profile Private,Domain | Out-Null
+            } catch {
+                Write-Warning "could not add firewall rule for port ${p}: $_"
+            }
+        }
+    }
+} else {
+    Write-Step "no console bundled (build with -IncludeConsole) -- skipping"
 }

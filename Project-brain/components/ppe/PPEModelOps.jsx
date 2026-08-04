@@ -826,7 +826,7 @@ function ShadowTab() {
                 <div style={{ position: "relative", aspectRatio: "16 / 9",
                   background: "#0b0f14" }}>
                   {v.has_image ? (
-                    <img src={`${getPpeApiBase()}/api/modelops/shadow/verdicts/${v.id}/image.jpg`}
+                    <img src={buildPpeUrl(`/api/modelops/shadow/verdicts/${v.id}/image.jpg`)}
                       alt="" loading="lazy"
                       style={{ width: "100%", height: "100%", objectFit: "contain" }} />
                   ) : null}

@@ -13,7 +13,7 @@
  * (X-Frame-Options). Sharing the real tab is the reliable industrial approach.
  */
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { getPpeApiBase } from "../../lib/ppeApi";
+import { buildPpeUrl, getPpeApiBase } from "../../lib/ppeApi";
 
 
 const LS_URL = "ppe.browserCrop.nvrUrl";
@@ -159,7 +159,7 @@ export default function BrowserCropSource({ cameraId, fps = 6, onClose, onLive }
     fd.append("file", blob, "frame.jpg");
     try {
       const r = await fetch(
-        `${getPpeApiBase()}/api/cameras/${encodeURIComponent(cameraId)}/push-frame`,
+        buildPpeUrl(`/api/cameras/${encodeURIComponent(cameraId)}/push-frame`),
         { method: "POST", body: fd },
       );
       if (!r.ok) {

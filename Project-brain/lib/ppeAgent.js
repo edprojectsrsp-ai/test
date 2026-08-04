@@ -57,18 +57,49 @@ function isBrowser() {
 }
 
 function candidates() {
-  const configured =
-    (typeof process !== "undefined" &&
-      process.env &&
-      process.env.NEXT_PUBLIC_PPE_AGENT_URL) ||
-    "";
+  const env = (typeof process !== "undefined" && process.env) || {};
+  const configured = env.NEXT_PUBLIC_PPE_AGENT_URL || "";
+  const port = env.NEXT_PUBLIC_PPE_AGENT_PORT || "8004";
   const list = [];
   if (configured) list.push(configured.replace(/\/$/, ""));
+
+  // The wall TV and the phone on plant WiFi are NOT the plant PC, so loopback
+  // is the wrong guess for them. When this page is itself served from the plant
+  // PC (the agent-side console on :3000), the agent is on that same host — so
+  // try the serving hostname first. This is what makes one URL work on the
+  // desktop, the TV and a phone without three different builds.
+  if (isBrowser()) {
+    const { hostname, protocol } = window.location;
+    if (hostname && hostname !== "localhost" && hostname !== "127.0.0.1") {
+      // Only over http. An HTTPS page cannot call a plain-http LAN address —
+      // browsers exempt loopback from mixed-content blocking but never a LAN
+      // IP, so probing would fail and, worse, look like the agent is down.
+      if (protocol === "http:") list.push(`http://${hostname}:${port}`);
+    }
+  }
+
   list.push(DEFAULT_AGENT_URL);
   // 127.0.0.1 before localhost on purpose: "localhost" can resolve to ::1
   // first, and a v4-only listener then looks unreachable.
-  list.push("http://localhost:8004");
+  list.push(`http://localhost:${port}`);
   return [...new Set(list)];
+}
+
+/** The LAN key, when one is configured. Appended to agent URLs. */
+function lanKey() {
+  const env = (typeof process !== "undefined" && process.env) || {};
+  return env.NEXT_PUBLIC_PPE_LAN_KEY || "";
+}
+
+/**
+ * Add the LAN key to a URL when one is configured. Query param rather than a
+ * header because <img src> for the MJPEG wall cannot send headers, and the
+ * wall is the reason the LAN bind exists.
+ */
+export function withAgentKey(url) {
+  const key = lanKey();
+  if (!key || !url) return url;
+  return url + (url.includes("?") ? "&" : "?") + `ppe_key=${encodeURIComponent(key)}`;
 }
 
 function emit() {

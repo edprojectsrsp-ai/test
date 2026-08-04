@@ -207,7 +207,7 @@ export default function PPEZoneEditor({ cameraId, onClose }) {
           <img
             key={imgKey}
             alt={`${cameraId} live`}
-            src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cameraId)}/stream.mjpg?k=${imgKey}`}
+            src={buildPpeUrl(`/api/cameras/${encodeURIComponent(cameraId)}/stream.mjpg?k=${imgKey}`)}
             draggable={false}
             onError={() => setTimeout(() => setImgKey((k) => k + 1), 2000)}
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}

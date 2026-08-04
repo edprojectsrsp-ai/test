@@ -164,6 +164,26 @@ class ViolationEvent(Base):
     )
     occurred_at: Mapped[datetime] = mapped_column(DateTime, default=_now, index=True)
 
+    # ---- accountability --------------------------------------------------
+    # A violation nobody owns is a violation nobody fixes. Assignment is what
+    # turns this from a photo gallery into a workflow: someone is named, a date
+    # is set, and the close-out carries a note saying what was actually done.
+    #
+    # assigned_to is free text rather than a hard FK. On a contractor-heavy site
+    # the responsible person is often a supervisor who is not in any employee
+    # master, and refusing to record an assignment because the directory is
+    # incomplete would just push the workflow back into WhatsApp.
+    assigned_to: Mapped[str] = mapped_column(String(128), default="", index=True)
+    assigned_to_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    contractor_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    assigned_by: Mapped[str] = mapped_column(String(128), default="")
+    assigned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    assignment_note: Mapped[str] = mapped_column(Text, default="")
+    resolution_note: Mapped[str] = mapped_column(Text, default="")
+    resolved_by: Mapped[str] = mapped_column(String(128), default="")
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     # ---- cloud sync ------------------------------------------------------
     # These three carry one row from the plant PC to the cloud dashboard. `id`
     # is already a uuid4 minted at the edge, so it doubles as the idempotency

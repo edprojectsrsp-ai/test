@@ -107,6 +107,17 @@ class ViolationIn(BaseModel):
     status: str = "open"
     occurred_at: str | None = None
     thumb_b64: str | None = None
+    # accountability (owned by the agent; the cloud mirrors it)
+    assigned_to: str = ""
+    assigned_to_id: str | None = None
+    contractor_id: str | None = None
+    assigned_by: str = ""
+    assigned_at: str | None = None
+    due_at: str | None = None
+    assignment_note: str = ""
+    resolution_note: str = ""
+    resolved_by: str = ""
+    resolved_at: str | None = None
 
 
 class BatchIn(BaseModel):
@@ -121,6 +132,18 @@ def _parse_dt(s: str | None) -> datetime:
         d = datetime.fromisoformat(s)
     except ValueError:
         return _now()
+    return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
+
+
+def _opt_dt(s: str | None) -> datetime | None:
+    """Nullable variant: "not assigned" and "assigned just now" are different
+    facts, so an absent timestamp must stay absent rather than become now()."""
+    if not s:
+        return None
+    try:
+        d = datetime.fromisoformat(s)
+    except ValueError:
+        return None
     return d.replace(tzinfo=timezone.utc) if d.tzinfo is None else d
 
 
@@ -161,6 +184,16 @@ async def receive_violations(
                 ev.shift = v.shift
                 ev.status = status
                 ev.occurred_at = _parse_dt(v.occurred_at)
+                ev.assigned_to = v.assigned_to
+                ev.assigned_to_id = v.assigned_to_id
+                ev.contractor_id = v.contractor_id
+                ev.assigned_by = v.assigned_by
+                ev.assigned_at = _opt_dt(v.assigned_at)
+                ev.due_at = _opt_dt(v.due_at)
+                ev.assignment_note = v.assignment_note
+                ev.resolution_note = v.resolution_note
+                ev.resolved_by = v.resolved_by
+                ev.resolved_at = _opt_dt(v.resolved_at)
                 ev.agent_id = agent.id
                 ev.synced_at = _now()
                 # Never blank an image we already hold. A re-push whose

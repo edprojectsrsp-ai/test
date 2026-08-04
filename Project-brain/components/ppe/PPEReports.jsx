@@ -73,7 +73,7 @@ export default function PPEReports({ embedded = false }) {
     if (to) p.set("date_to", to);
     if (status) p.set("status", status);
     if (!from && !to) p.set("hours", String(24 * 90));
-    window.open(`${getPpeApiBase()}/api/violations/export.csv?${p}`, "_blank");
+    window.open(buildPpeUrl(`/api/violations/export.csv?${p}`), "_blank");
   };
 
   const maxDay = useMemo(() => Math.max(1, ...series.map((s) => s.count || 0)), [series]);

@@ -378,8 +378,8 @@ function Player({ segment, onChanged, onClose, seekTo }) {
   const seek = (v) => { setT(v); if (playing) setStreamKey((k) => k + 1); };
 
   const src = playing
-    ? `${getPpeApiBase()}/api/nvr/segments/${segment.id}/play.mjpg?t=${t}&speed=${speed}&fps=12&k=${streamKey}`
-    : `${getPpeApiBase()}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`;
+    ? buildPpeUrl(`/api/nvr/segments/${segment.id}/play.mjpg?t=${t}&speed=${speed}&fps=12&k=${streamKey}`)
+    : buildPpeUrl(`/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`);
 
   /* ---- teach on this frame ------------------------------------------- */
   const startTeach = async () => {
@@ -461,7 +461,7 @@ function Player({ segment, onChanged, onClose, seekTo }) {
             <b style={{ color: C.ink }}>Train &amp; go live</b> in Review.
           </div>
           <TeachCanvas
-            imgUrl={`${getPpeApiBase()}/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`}
+            imgUrl={buildPpeUrl(`/api/nvr/segments/${segment.id}/frame.jpg?t=${t}`)}
             width={teachData.width} height={teachData.height}
             boxes={boxes} setBoxes={setBoxes}
             palette={teachData.display_names || {}}
@@ -545,7 +545,7 @@ function Player({ segment, onChanged, onClose, seekTo }) {
               {segment.locked ? "🔓 Unlock" : "🔒 Lock"}
             </Btn>
             <Btn small onClick={() => window.open(
-              `${getPpeApiBase()}/api/nvr/segments/${segment.id}/download`, "_blank", "noopener")}>
+              buildPpeUrl(`/api/nvr/segments/${segment.id}/download`), "_blank", "noopener")}>
               ⭳ Export
             </Btn>
             <Btn small tone="danger" onClick={remove} disabled={busy || segment.locked}
@@ -932,7 +932,7 @@ export default function PPENVR() {
                     >
                       <div style={{ position: "relative", aspectRatio: "16 / 9", background: "#0b0f14" }}>
                         <img
-                          src={`${getPpeApiBase()}/api/nvr/segments/${s.id}/thumb.jpg`}
+                          src={buildPpeUrl(`/api/nvr/segments/${s.id}/thumb.jpg`)}
                           alt="" loading="lazy"
                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                         />

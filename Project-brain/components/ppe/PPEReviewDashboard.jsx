@@ -247,7 +247,7 @@ export default function PPEReviewDashboard({ embedded = false }) {
         paintBoxes();
       };
       image.onerror = paintBoxes;
-      image.src = `${getPpeApiBase()}${active.image_url}`;
+      image.src = buildPpeUrl(active.image_url);
     } else {
       paintBoxes();
     }

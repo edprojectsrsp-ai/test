@@ -71,7 +71,7 @@ function WallTile({ cam, focused, onFocus, onFlag }) {
           <img
             key={key}
             alt={cam.camera_id}
-            src={`${getPpeApiBase()}/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=${focused ? 12 : 6}&k=${key}`}
+            src={buildPpeUrl(`/api/cameras/${encodeURIComponent(cam.camera_id)}/stream.mjpg?fps=${focused ? 12 : 6}&k=${key}`)}
             style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }}
             onError={() => {
               setOk(false);
@@ -171,7 +171,7 @@ function AlertRow({ v, onStatus, onOpen }) {
         {v.has_image ? (
           <img
             alt=""
-            src={`${getPpeApiBase()}${v.image_url}`}
+            src={buildPpeUrl(v.image_url)}
             style={{ width: "100%", height: "100%", objectFit: "cover" }}
             loading="lazy"
           />
@@ -197,6 +197,25 @@ function AlertRow({ v, onStatus, onOpen }) {
           {v.camera_id} · {Math.round((v.confidence || 0) * 100)}%
           {v.status && v.status !== "open" ? ` · ${v.status.replace("_", " ")}` : ""}
         </div>
+        {/* Ownership, on the wall. Someone walking past needs to know whether a
+            violation has an owner and whether that owner is late — that is the
+            one fact a display across a shop floor can usefully carry. */}
+        {v.assigned_to ? (
+          <div style={{
+            fontSize: 10.5, marginBottom: 6, display: "flex", gap: 5,
+            alignItems: "center", flexWrap: "wrap",
+          }}>
+            <span style={{ color: "#c9d8e6", fontWeight: 700 }}>👤 {v.assigned_to}</span>
+            {v.overdue ? (
+              <span style={{
+                background: "#ff4d6a", color: "#fff", fontWeight: 800,
+                padding: "1px 5px", borderRadius: 4, letterSpacing: ".03em",
+              }}>
+                OVERDUE
+              </span>
+            ) : null}
+          </div>
+        ) : null}
         {!done ? (
           <div style={{ display: "flex", gap: 5 }}>
             <button
@@ -496,7 +515,7 @@ export default function PPEWallRoom({ onNavigate }) {
           >
             <img
               alt={lightbox.label}
-              src={`${getPpeApiBase()}${lightbox.image_url}`}
+              src={buildPpeUrl(lightbox.image_url)}
               style={{ width: "100%", maxHeight: "70vh", objectFit: "contain", background: "#05080c" }}
             />
             <div style={{ padding: 14, display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
