@@ -27,40 +27,73 @@ Requires, on the **build** machine:
 - Windows x64
 - CPython (the same minor version you want on the target - recorded into
   `PYTHON_VERSION` in the payload and checked at install time)
-- [Inno Setup 6](https://jrsoftware.org/isdl.php)
-- [`nssm.exe`](https://nssm.cc/download) (64-bit) placed in this folder
+- Node 20+ (only for `-IncludeConsole`)
+
+No installer compiler, and no third-party service wrapper.
 
 ```powershell
-# CPU-only, ~800 MB
-.\build.ps1
+# CPU-only, ~1.5 GB
+.\build.ps1 -IncludeWeights -IncludeConsole
 
-# CUDA 12.1 torch, ~2.5 GB - use this if the plant PC has an NVIDIA GPU
-.\build.ps1 -Gpu -IncludeWeights
-
-# ...plus the web console, so wall TVs and phones can use it (needs Node 20+)
+# CUDA 12.1 torch - use this if the plant PC has an NVIDIA GPU
 .\build.ps1 -Gpu -IncludeWeights -IncludeConsole
 
-# then
-iscc setup.iss        # -> Output\PPEAgent-Setup-0.2.0.exe
+# package it
+.\package.ps1         # -> dist\PPEAgent-0.2.0-cpu.zip (+ .sha256)
 ```
 
-Optionally drop `python-3.12.x-amd64.exe` into `redist\` so the target PC needs
-no internet access during installation.
+`build.ps1` also downloads the matching CPython installer into `redist\`, so
+the target PC needs no internet during installation.
 
-> **Why a bundled venv and not PyInstaller?** Freezing torch and ultralytics
-> means fighting hidden imports, CUDA DLL discovery and ultralytics' runtime
-> `importlib` calls, and the result breaks on the next ultralytics release. A
-> venv is larger but predictable. On a PC that is installed once, disk is the
-> cheap resource.
+### Why a ZIP and a script, not a setup.exe
+
+Inno Setup now ships **only** through GitHub releases, and NSIS only through
+SourceForge. Both hosts are blocked on many plant and corporate networks -
+including the one this was built on - so neither compiler can be obtained
+where it is needed. `setup.iss` is kept for anyone who does have Inno Setup
+(`iscc setup.iss`), but it is not the supported path.
+
+A script also has a real advantage here: an operator can **read** it before
+running something that registers a Windows service and opens a firewall port.
+
+### Other deliberate choices
+
+- **A bundled venv, not PyInstaller.** Freezing torch and ultralytics means
+  fighting hidden imports, CUDA DLL discovery and ultralytics' runtime
+  `importlib` calls, and the result breaks on the next ultralytics release. A
+  venv is larger but predictable; on a PC installed once, disk is cheap.
+- **A native service via pywin32, not NSSM or WinSW.** Both are binaries from
+  download hosts that plant networks block. pywin32 comes from PyPI, which
+  must already be reachable or nothing installs at all. See
+  `backend/app/service_win.py`.
 
 ## Installing
 
-The wizard asks for:
+Extract the ZIP on the plant PC, then in an **elevated** PowerShell:
+
+```powershell
+cd "<the extracted folder>"
+.\install.ps1
+```
+
+It asks a few questions; Enter accepts the defaults. For an unattended
+rollout:
+
+```powershell
+.\install.ps1 -CloudUrl https://ppe.example.com -JoinCode ABC123 `
+              -AgentName rsp-plant-01 -LanAccess -Unattended
+```
+
+If PowerShell refuses to run it, `Set-ExecutionPolicy -Scope Process -Bypass`
+once in the same window.
+
+It asks for:
 
 - **Cloud sync URL** - usually the hosted PPE backend, e.g.
   `https://your-app.onrender.com`
-- **Agent ID** and **token** - must match an entry in the cloud service's
-  `PPE_SYNC_AGENTS` (`agentid:token`, comma-separated)
+- **Join code** - the cloud service's `PPE_ENROLL_CODE`. This PC swaps it for
+  its own credentials on first start, so there is nothing to configure on the
+  server per machine
 - **Control room URL** - the Vercel web dashboard operators open in the
   browser; also added to the agent's allowed CORS origins, which the browser
   requires since an HTTPS page is calling `http://127.0.0.1`
@@ -75,7 +108,7 @@ values:
 
 ```text
 PPE_ROLE=cloud
-PPE_SYNC_AGENTS=rsp-plant-01:<same-token-you-type-into-the-installer>
+PPE_ENROLL_CODE=<the join code you type into the installer>
 PPE_DATABASE_URL=<Postgres URL>
 PPE_CORS_ORIGINS=https://<your-vercel-domain>
 ```
@@ -85,7 +118,8 @@ ephemeral and is wiped on deploy or restart.
 
 ## After installing
 
-- Service: `PPEAgent`, auto-start, restarts on crash
+- Services: `PPEAgent` (+ `PPEConsole` if wall/phone access is on),
+  auto-start, restart-on-crash
 - API: `http://127.0.0.1:8004` (`/docs` for the browsable API)
 - Config: `<install>\.env` - restart the service after editing
 - Data: `<install>\data\` - `ppe.db`, captures, recordings, weights, logs
@@ -190,6 +224,7 @@ curl http://127.0.0.1:8004/api/violations/workload    # who is sitting on what
   deliberately, separately.
 - **Upgrading** keeps your existing `.env` and writes the new template beside it
   as `.env.new`.
-- **Rotating a token:** update `PPE_SYNC_AGENTS` on the cloud and `.env` here,
-  then restart the service. Revoke without deleting history by setting
+- **Rotating the join code:** change `PPE_ENROLL_CODE` on the cloud and
+  redeploy. Agents already joined keep working - they hold their own tokens.
+  Revoke one agent without deleting its history by setting
   `sync_agents.enabled = false`.

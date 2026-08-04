@@ -1,5 +1,6 @@
 # Build output: a multi-GB venv with torch in it.
 build/
+dist/
 Output/
 
 # Third-party binaries, fetched by whoever builds the installer.

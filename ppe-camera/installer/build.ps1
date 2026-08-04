@@ -251,4 +251,4 @@ if (-not (Test-Path $redistExe)) {
 $size = (Get-ChildItem -Recurse $Payload | Measure-Object -Property Length -Sum).Sum / 1GB
 Write-Host ""
 Write-Host ("== payload ready: {0:N2} GB ==" -f $size) -ForegroundColor Green
-Write-Host "Next: compile installer\setup.iss with Inno Setup 6 (iscc setup.iss)"
+Write-Host "Next: .\package.ps1   ->  dist\PPEAgent-<version>-<flavour>.zip"

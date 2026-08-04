@@ -96,10 +96,16 @@ this installer, or re-run with -PythonHome pointing at an existing install.
 Write-Step "using CPython at $PythonHome"
 
 Write-Step "pointing venv at $PythonHome"
+# The parentheses around the concatenation are load-bearing: PowerShell's comma
+# operator binds tighter than +, so `@("a", "b", "c" + $x)` builds a FOUR-element
+# array -- which wrote pyvenv.cfg with "version =" and the number on separate
+# lines. Python tolerated it because only `home` actually matters, so this would
+# have sat there looking fine.
+$pyFullVer = (& (Join-Path $PythonHome "python.exe") -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
 $lines = @(
     "home = $PythonHome",
     "include-system-site-packages = false",
-    "version = " + (& (Join-Path $PythonHome "python.exe") -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
+    ("version = " + $pyFullVer)
 )
 Set-Content -Path $Cfg -Value $lines -Encoding ascii
 
@@ -269,6 +275,10 @@ if ($svc -and $svc.Status -eq "Running") {
     Write-Step "agent running on http://${bindHost}:$Port"
 } else {
     Write-Warning "service did not reach Running. Check $DataDir\agent.err.log"
+    # Capture sc query for support; install.ps1 will still try /health.
+    try {
+        & sc.exe query $ServiceName | Out-File (Join-Path $DataDir "service_query.txt") -Encoding ascii
+    } catch {}
 }
 
 # ------------------------------------------------------- 3b. join the cloud
