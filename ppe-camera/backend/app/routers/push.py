@@ -106,6 +106,23 @@ async def sync_push(payload: PushIn | None = None) -> dict:
     )
 
 
+class EnrollIn(BaseModel):
+    cloud_url: str
+    code: str
+    name: str = ""
+
+
+@router.post("/enroll")
+async def sync_enroll(payload: EnrollIn) -> dict:
+    """Join the cloud with one code. Writes .env and applies it immediately."""
+    from app.services import enroll_client
+
+    result = await enroll_client.enroll(payload.cloud_url, payload.code, payload.name)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error") or "enrollment failed")
+    return result
+
+
 class AutoIn(BaseModel):
     enabled: bool
 

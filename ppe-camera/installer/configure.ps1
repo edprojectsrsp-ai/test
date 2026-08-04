@@ -15,8 +15,12 @@ param(
     [Parameter(Mandatory = $true)][string]$InstallDir,
     [string]$PythonHome  = "",
     [string]$RedistDir   = "",
-    [string]$AgentId     = "",
-    [string]$AgentToken  = "",
+    # One code, swapped for this PC's own credentials on first start. Replaces
+    # inventing an agent id, generating a token, and adding the pair to a server
+    # environment variable -- four steps across two systems, any of which
+    # silently yields a 401 much later.
+    [string]$JoinCode    = "",
+    [string]$AgentName   = "",
     [string]$SyncUrl     = "",
     [string]$CorsOrigins = "",
     [string]$Port        = "8004",
@@ -116,15 +120,32 @@ New-Item -ItemType Directory -Force -Path $DataDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "weights") | Out-Null
 
 # Seed bundled weights only where none exist. Overwriting would replace a model
-# the site has actually fine-tuned with the generic one shipped in the box.
+# the site has actually fine-tuned with the generic one shipped in the box --
+# on an upgrade, that silently undoes however many weeks of plant-specific
+# training, and the only symptom is accuracy quietly getting worse.
 $BundledWeights = Join-Path $InstallDir "weights"
 if (Test-Path $BundledWeights) {
-    Get-ChildItem $BundledWeights -File | ForEach-Object {
-        $dst = Join-Path $DataDir "weights\$($_.Name)"
-        if (-not (Test-Path $dst)) {
-            Write-Step "seeding weight $($_.Name)"
+    New-Item -ItemType Directory -Force -Path (Join-Path $DataDir "weights\zoo") | Out-Null
+    $seeded = 0
+    $kept = 0
+    Get-ChildItem $BundledWeights -File -Recurse | ForEach-Object {
+        $rel = $_.FullName.Substring($BundledWeights.Length).TrimStart('\')
+        $dst = Join-Path $DataDir "weights\$rel"
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $dst) | Out-Null
+        if (Test-Path $dst) {
+            $kept++
+        } else {
             Copy-Item -Force $_.FullName $dst
+            $seeded++
         }
+    }
+    Write-Step "weights: seeded $seeded, kept $kept existing"
+
+    $active = Join-Path $DataDir "weights\ppe_active.pt"
+    if (Test-Path $active) {
+        Write-Step "trained model in place ($([math]::Round((Get-Item $active).Length/1MB)) MB)"
+    } else {
+        Write-Warning "no ppe_active.pt -- the agent will fall back to base weights and may try to download them"
     }
 }
 
@@ -178,9 +199,8 @@ $envLines = @(
     "PPE_LAN_TOKEN=$LanKey",
     "",
     "# --- cloud sync (outbound only) ---",
+    "# PPE_AGENT_ID / PPE_AGENT_TOKEN are written here by enrollment below.",
     "PPE_SYNC_URL=$SyncUrl",
-    "PPE_AGENT_ID=$AgentId",
-    "PPE_AGENT_TOKEN=$AgentToken",
     "",
     "# 0 = nothing leaves this PC until someone presses Push in the UI.",
     "PPE_AUTO_SYNC=$autoVal",
@@ -242,6 +262,44 @@ if ($svc -and $svc.Status -eq "Running") {
     Write-Step "agent running on http://${bindHost}:$Port"
 } else {
     Write-Warning "service did not reach Running. Check $DataDir\agent.err.log"
+}
+
+# ------------------------------------------------------- 3b. join the cloud
+# Done through the running agent rather than here, so there is one
+# implementation of "join" -- the same endpoint the control room's Join button
+# calls. A failure is reported and never fatal: an agent that cannot reach the
+# cloud must still come up and record violations locally, which is the whole
+# reason the queue is durable.
+if ($JoinCode -and $SyncUrl) {
+    Write-Step "joining $SyncUrl"
+    $body = @{ cloud_url = $SyncUrl; code = $JoinCode
+               name = $AgentName } | ConvertTo-Json -Compress
+    $joined = $false
+    foreach ($attempt in 1..5) {
+        try {
+            $r = Invoke-RestMethod -Method Post -TimeoutSec 30 `
+                -Uri "http://127.0.0.1:$Port/api/sync/enroll" `
+                -ContentType "application/json" -Body $body
+            Write-Step "joined as agent '$($r.agent_id)'"
+            $joined = $true
+            break
+        } catch {
+            # The service may still be starting; the model loads on boot and
+            # that can take a few seconds on a cold cache.
+            if ($attempt -lt 5) { Start-Sleep -Seconds 4 }
+            else {
+                Write-Warning "could not join: $($_.Exception.Message)"
+                Write-Warning "The agent works offline. Retry from the control room's Cloud panel."
+            }
+        }
+    }
+    if ($joined) {
+        # Enrollment rewrote .env; reload so the running process pushes with
+        # the new credentials rather than after the next restart.
+        try { Restart-Service -Name $ServiceName -Force -ErrorAction Stop } catch {}
+    }
+} elseif ($SyncUrl) {
+    Write-Step "no join code given -- agent runs offline until you join"
 }
 
 # ------------------------------------------------------- 4. console service

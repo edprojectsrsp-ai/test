@@ -61,7 +61,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut to the control room
 
 [Run]
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure.ps1"" -InstallDir ""{app}"" -RedistDir ""{tmp}"" -Port ""{code:GetPort}"" -ConsolePort ""{code:GetConsolePort}"" -AgentId ""{code:GetAgentId}"" -AgentToken ""{code:GetAgentToken}"" -SyncUrl ""{code:GetSyncUrl}"" -CorsOrigins ""{code:GetCorsOrigins}"" {code:GetAutoSyncFlag} {code:GetLanFlag}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\configure.ps1"" -InstallDir ""{app}"" -RedistDir ""{tmp}"" -Port ""{code:GetPort}"" -ConsolePort ""{code:GetConsolePort}"" -JoinCode ""{code:GetJoinCode}"" -AgentName ""{code:GetAgentName}"" -SyncUrl ""{code:GetSyncUrl}"" -CorsOrigins ""{code:GetCorsOrigins}"" {code:GetAutoSyncFlag} {code:GetLanFlag}"; \
   StatusMsg: "Configuring the agent and registering the service..."; \
   Flags: runhidden waituntilterminated
 
@@ -82,13 +82,14 @@ begin
   SyncPage := CreateInputQueryPage(wpSelectTasks,
     'Cloud connection',
     'Where should this plant PC send violations?',
-    'Leave these blank to run fully offline — the agent works standalone and ' +
-    'you can fill them in later by editing .env in the install folder.' + #13#10 +
-    'The Agent ID and token must match an entry in the cloud service''s ' +
-    'PPE_SYNC_AGENTS setting.');
+    'Leave these blank to run fully offline - the agent works standalone and ' +
+    'you can join later from the control room.' + #13#10 +
+    'The join code is the cloud service''s PPE_ENROLL_CODE. This PC swaps it ' +
+    'for its own credentials on first start, so there is nothing to configure ' +
+    'on the server per machine.');
   SyncPage.Add('Cloud sync URL (e.g. https://your-app.onrender.com):', False);
-  SyncPage.Add('Agent ID (e.g. rsp-plant-01):', False);
-  SyncPage.Add('Agent token:', True);
+  SyncPage.Add('Join code:', True);
+  SyncPage.Add('This PC''s name (optional, e.g. rsp-plant-01):', False);
   SyncPage.Add('Control room URL (Vercel web dashboard):', False);
   SyncPage.Add('Local port:', False);
 
@@ -152,12 +153,12 @@ begin
   Result := Trim(SyncPage.Values[0]);
 end;
 
-function GetAgentId(Param: String): String;
+function GetJoinCode(Param: String): String;
 begin
   Result := Trim(SyncPage.Values[1]);
 end;
 
-function GetAgentToken(Param: String): String;
+function GetAgentName(Param: String): String;
 begin
   Result := Trim(SyncPage.Values[2]);
 end;
@@ -211,19 +212,18 @@ end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;
 var
-  HasUrl, HasId, HasToken: Boolean;
+  HasUrl, HasCode: Boolean;
 begin
   Result := True;
   if CurPageID = SyncPage.ID then
   begin
-    HasUrl   := GetSyncUrl('') <> '';
-    HasId    := GetAgentId('') <> '';
-    HasToken := GetAgentToken('') <> '';
-    { All three or none. A half-filled form produces an agent that looks
-      configured in the UI and fails on the first push. }
-    if (HasUrl or HasId or HasToken) and not (HasUrl and HasId and HasToken) then
+    HasUrl  := GetSyncUrl('') <> '';
+    HasCode := GetJoinCode('') <> '';
+    { Both or neither. One without the other produces an agent that looks
+      configured and fails on the first push. }
+    if HasUrl <> HasCode then
     begin
-      MsgBox('Cloud URL, Agent ID and token must be filled in together, or all ' +
+      MsgBox('Cloud URL and join code must be filled in together, or both ' +
              'left blank to run offline.', mbError, MB_OK);
       Result := False;
     end;

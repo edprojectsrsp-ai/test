@@ -111,19 +111,55 @@ if (Test-Path (Join-Path $Backend "README.md")) {
 }
 
 # ---------------------------------------------------------------- weights
+# The whole point of shipping weights is that the plant PC works the moment it
+# is installed. Without them the agent tries to pull a base checkpoint from the
+# internet on first boot -- on a plant network that is often blocked, and the
+# result is a service that starts, looks healthy, and detects nothing.
 if ($IncludeWeights) {
     $WeightsSrc = Join-Path $Root "data\weights"
     if (Test-Path $WeightsSrc) {
         Write-Host "-- bundling weights" -ForegroundColor Yellow
         $WeightsDst = Join-Path $Payload "weights"
         New-Item -ItemType Directory -Force -Path $WeightsDst | Out-Null
-        Get-ChildItem -Path $WeightsSrc -Filter "*.pt" |
-            ForEach-Object {
-                Write-Host ("   + {0} ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB))
-                Copy-Item -Force $_.FullName $WeightsDst
-            }
+        $bytes = 0
+
+        # The fine-tuned checkpoint actually in service.
+        Get-ChildItem -Path $WeightsSrc -Filter "*.pt" | ForEach-Object {
+            Write-Host ("   + {0} ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB))
+            Copy-Item -Force $_.FullName $WeightsDst
+            $bytes += $_.Length
+        }
+
+        # registry.json is not optional: it records which version is active and
+        # what each checkpoint is. Ship the .pt files without it and the model
+        # picker is empty and nothing can be switched back to.
         $reg = Join-Path $WeightsSrc "registry.json"
-        if (Test-Path $reg) { Copy-Item -Force $reg $WeightsDst }
+        if (Test-Path $reg) {
+            Copy-Item -Force $reg $WeightsDst
+            Write-Host "   + registry.json"
+        } else {
+            Write-Warning "   registry.json missing -- the model picker will be empty"
+        }
+
+        # The zoo: every alternative model an operator can switch to from the
+        # dashboard. Skipping it leaves those entries listed but unusable.
+        $zooSrc = Join-Path $WeightsSrc "zoo"
+        if (Test-Path $zooSrc) {
+            $zooDst = Join-Path $WeightsDst "zoo"
+            New-Item -ItemType Directory -Force -Path $zooDst | Out-Null
+            Get-ChildItem -Path $zooSrc -Filter "*.pt" | ForEach-Object {
+                Write-Host ("   + zoo\{0} ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB))
+                Copy-Item -Force $_.FullName $zooDst
+                $bytes += $_.Length
+            }
+            Get-ChildItem -Path $zooSrc -Filter "*.json" -ErrorAction SilentlyContinue |
+                ForEach-Object { Copy-Item -Force $_.FullName $zooDst }
+        }
+
+        Write-Host ("-- weights bundled: {0:N0} MB" -f ($bytes / 1MB)) -ForegroundColor Yellow
+        if ($bytes -eq 0) {
+            Write-Warning "no .pt files found -- the agent will try to download on first run"
+        }
     } else {
         Write-Warning "no weights at $WeightsSrc -- the agent will download on first run"
     }

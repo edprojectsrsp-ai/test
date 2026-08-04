@@ -219,6 +219,17 @@ class Settings:
     # by flipping sync_agents.enabled.
     SYNC_AGENTS: str = os.getenv("PPE_SYNC_AGENTS", "").strip()
 
+    # A single join code an operator types into the installer. The agent calls
+    # /api/sync/enroll with it and is handed its own id and token, so nobody has
+    # to invent an agent id, keep two secrets in step, or edit a Render
+    # environment variable per plant PC.
+    #
+    # It is a shared bearer secret: anyone holding it can register an agent. It
+    # is therefore rotatable (change the variable, redeploy) and every agent it
+    # creates can be revoked individually via sync_agents.enabled. Enrollment
+    # only ever creates a pusher -- it grants no read access to anything.
+    ENROLL_CODE: str = os.getenv("PPE_ENROLL_CODE", "").strip()
+
     # ---- cloud-side retention --------------------------------------------
     # The cloud is a dashboard, not an archive: the agent holds the system of
     # record. Free Postgres is ~1 GB, which is ~20k thumbnails, so old cloud

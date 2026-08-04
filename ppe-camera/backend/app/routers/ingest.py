@@ -22,6 +22,8 @@ import base64
 import hashlib
 import hmac
 import logging
+import re
+import secrets
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Header, HTTPException
@@ -91,6 +93,58 @@ async def _require_agent(session: AsyncSession, agent_id: str | None,
     if not rec.enabled:
         raise HTTPException(403, "agent disabled")
     return rec
+
+
+class EnrollIn(BaseModel):
+    code: str
+    name: str = ""
+    hostname: str = ""
+
+
+@router.post("/enroll")
+async def enroll(payload: EnrollIn) -> dict:
+    """Exchange a join code for this agent's own credentials.
+
+    The alternative was making the operator invent an agent id, generate a
+    token, type both into the installer AND add the matching pair to a Render
+    environment variable before the first push would work. Four steps across two
+    systems, any one of which silently produces a 401 later. This is one code.
+
+    The returned token is shown exactly once -- only its hash is stored.
+    """
+    s = get_settings()
+    if not s.ENROLL_CODE:
+        raise HTTPException(
+            503, "enrollment is not enabled on this server (set PPE_ENROLL_CODE)")
+    if not hmac.compare_digest(payload.code.strip(), s.ENROLL_CODE):
+        raise HTTPException(401, "invalid join code")
+
+    name = (payload.name or payload.hostname or "plant-pc").strip()
+    slug = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")[:40] or "agent"
+
+    async with SessionLocal() as session:
+        # Re-enrolling the same machine rotates its token rather than
+        # accumulating a new agent per reinstall -- otherwise the fleet list
+        # fills with dead entries and nobody can tell which one is live.
+        existing = await session.get(AgentRecord, slug)
+        agent_id = slug
+        if existing is not None and existing.token_hash:
+            suffix = secrets.token_hex(3)
+            agent_id = f"{slug}-{suffix}"
+
+        token = secrets.token_urlsafe(32)
+        rec = await session.get(AgentRecord, agent_id)
+        if rec is None:
+            rec = AgentRecord(id=agent_id)
+            session.add(rec)
+        rec.name = name
+        rec.token_hash = _hash(token)
+        rec.enabled = True
+        await session.commit()
+
+    log.info("enrolled agent %s (%s)", agent_id, name)
+    return {"agent_id": agent_id, "agent_token": token,
+            "sync_url": "", "message": "store these; the token is not shown again"}
 
 
 class ViolationIn(BaseModel):
