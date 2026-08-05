@@ -40,7 +40,12 @@ param(
     [switch]$AutoSync,
     [switch]$Unattended,
     [switch]$NoLaunch,
-    [switch]$SkipCopy
+    [switch]$SkipCopy,
+    # Setup.exe registers its own Add/Remove Programs entry and calls
+    # uninstall.ps1 from it. Without this we add a second entry for the same
+    # product, and whichever one the customer picks orphans the other -- the
+    # survivor then points at a folder that no longer exists.
+    [switch]$NoUninstallEntry
 )
 
 $ErrorActionPreference = "Stop"
@@ -258,6 +263,8 @@ try {
 }
 
 # Register in Programs & Features so it uninstalls the way anything else does.
+# Skipped under Setup.exe, which has already made an entry of its own.
+if (-not $NoUninstallEntry) {
 try {
     $key = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PPEAgent"
     New-Item -Path $key -Force | Out-Null
@@ -271,6 +278,7 @@ try {
     Set-ItemProperty -Path $key -Name NoRepair -Value 1 -Type DWord
 } catch {
     Warn "could not register in Programs & Features: $_"
+}
 }
 
 # ------------------------------------------------------------------ health

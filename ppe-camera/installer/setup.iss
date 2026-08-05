@@ -6,6 +6,15 @@
 ; Then compile:
 ;   iscc setup.iss
 ;
+; Compile from a SHORT path. torch ships license files nested ~193 characters
+; deep (torch-*.dist-info\licenses\third_party\kineto\...\duktape-*\LICENSE.txt),
+; so from a normal checkout the absolute path crosses MAX_PATH and ISCC aborts
+; with only "The system cannot find the path specified" and no line number.
+; A junction is enough and costs nothing:
+;
+;   New-Item -ItemType Junction -Path C:\Users\<you>\pb -Target <this folder>
+;   cd C:\Users\<you>\pb ; iscc setup.iss
+;
 ; Product flow:
 ;   - install silently with hosted URLs baked in
 ;   - do NOT ask for join code during setup
@@ -69,12 +78,17 @@ Name: "{autodesktop}\PPE Dashboard"; Filename: "{#DefaultControlRoomUrl}"; Tasks
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut to the PPE dashboard"; GroupDescription: "Shortcuts:"
-Name: "lanaccess"; Description: "Allow wall TVs and phones on the plant network"; GroupDescription: "Network access:"
+; unchecked deliberately. An Inno task with no flags is ticked by default, and
+; this one opens the firewall and puts live camera feeds on the plant network.
+; Clicking straight through the wizard must not widen the trust boundary from
+; "this PC" to "anyone on the network" -- install.ps1's own prompt defaults to
+; No for the same reason, and a silent/unattended install inherits this default.
+Name: "lanaccess"; Description: "Allow wall TVs and phones on the plant network"; GroupDescription: "Network access:"; Flags: unchecked
 Name: "launchdashboard"; Description: "Open the PPE dashboard after setup"; GroupDescription: "After setup:"; Flags: checkedonce
 
 [Run]
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -Port ""{#DefaultPort}"" -ConsolePort ""{#DefaultConsolePort}"" -RedistDir ""{tmp}"" -CloudUrl """" -JoinCode """" -ControlRoom ""{#DefaultControlRoomUrl}"" -AgentName """" -Unattended -NoLaunch -SkipCopy {code:GetLanFlag}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -Port ""{#DefaultPort}"" -ConsolePort ""{#DefaultConsolePort}"" -RedistDir ""{tmp}"" -CloudUrl """" -JoinCode """" -ControlRoom ""{#DefaultControlRoomUrl}"" -AgentName """" -Unattended -NoLaunch -SkipCopy -NoUninstallEntry {code:GetLanFlag}"; \
   StatusMsg: "Installing services and local runtime..."; \
   Flags: runhidden waituntilterminated
 Filename: "{#DefaultControlRoomUrl}"; \
