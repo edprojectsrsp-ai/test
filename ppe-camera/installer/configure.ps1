@@ -38,6 +38,64 @@ $ServiceName = "PPEAgent"
 
 function Write-Step($m) { Write-Host "[ppe-agent] $m" }
 
+function Find-RegisteredPythonHome([string]$Version) {
+    # Emits every registered candidate rather than the first, because a broken
+    # install registers itself just as loudly as a good one. Find-PythonHome
+    # validates them.
+    foreach ($root in @(
+        "HKLM:\SOFTWARE\Python\PythonCore",
+        "HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore",
+        "HKCU:\SOFTWARE\Python\PythonCore"
+    )) {
+        $key = Join-Path $root $Version
+        $installKey = Join-Path $key "InstallPath"
+        try {
+            # NOT $home: that is a read-only automatic variable, so assigning to
+            # it throws, the catch below swallows it, and this whole registry
+            # lookup silently finds nothing on every machine.
+            $pyHome = (Get-ItemProperty -Path $installKey -ErrorAction Stop).'(default)'
+            if (-not $pyHome) {
+                $pyHome = (Get-ItemProperty -Path $installKey -ErrorAction Stop).ExecutablePath
+            }
+            if ($pyHome) {
+                if ($pyHome -like "*.exe") { $pyHome = Split-Path -Parent $pyHome }
+                if (Test-Path (Join-Path $pyHome "python.exe")) {
+                    $pyHome.TrimEnd('\')
+                }
+            }
+        } catch { }
+        $pathKey = Join-Path $key "PythonPath"
+        try {
+            $pythonPath = (Get-ItemProperty -Path $pathKey -ErrorAction Stop).'(default)'
+            foreach ($entry in ($pythonPath -split ';')) {
+                if (-not $entry) { continue }
+                $candidate = $entry.TrimEnd('\')
+                if ($candidate -like '*\Lib') { $candidate = Split-Path -Parent $candidate }
+                if (Test-Path (Join-Path $candidate "python.exe")) {
+                    $candidate.TrimEnd('\')
+                }
+            }
+        } catch { }
+    }
+}
+
+function Test-PythonHome([string]$PythonRoot) {
+    if (-not $PythonRoot) { return $false }
+    $py = Join-Path $PythonRoot "python.exe"
+    $stdlib = Join-Path $PythonRoot "Lib\os.py"
+    if (-not (Test-Path $py) -or -not (Test-Path $stdlib)) { return $false }
+    $oldNativePref = $PSNativeCommandUseErrorActionPreference
+    try {
+        $PSNativeCommandUseErrorActionPreference = $false
+        & $py -c "import encodings, sys; print(sys.base_prefix)" 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    } finally {
+        $PSNativeCommandUseErrorActionPreference = $oldNativePref
+    }
+}
+
 # ------------------------------------------------------------------ 1. venv
 $VenvDir = Join-Path $InstallDir "python"
 $Cfg     = Join-Path $VenvDir "pyvenv.cfg"
@@ -46,41 +104,80 @@ $WantVer = (Get-Content (Join-Path $InstallDir "PYTHON_VERSION") -ErrorAction Si
 if (-not $WantVer) { $WantVer = "3.12" }
 $WantVer = $WantVer.Trim()
 
-function Find-PythonHome([string]$Version) {
+function Get-PythonHomeCandidates([string]$Version) {
     # The launcher is the reliable way to ask for a specific minor version;
     # "python" on PATH may be any version, or the Store alias stub.
     if (Get-Command py -ErrorAction SilentlyContinue) {
-        $found = & py "-$Version" -c "import sys, os; print(os.path.dirname(sys.executable))" 2>$null
-        if ($LASTEXITCODE -eq 0 -and $found) { return $found.Trim() }
+        $oldNativePref = $PSNativeCommandUseErrorActionPreference
+        try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $found = & py "-$Version" -c "import sys, os; print(os.path.dirname(sys.executable))" 2>$null
+            if ($LASTEXITCODE -eq 0 -and $found) { $found.Trim() }
+        } catch { }
+        finally {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePref
+        }
     }
-    foreach ($base in @($env:LOCALAPPDATA, $env:ProgramFiles)) {
+    Find-RegisteredPythonHome $Version
+    $tag = "Python" + $Version.Replace(".", "")
+    foreach ($base in @($env:LOCALAPPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if (-not $base) { continue }
-        $c = Join-Path $base ("Programs\Python\Python" + $Version.Replace(".", "") + "\python.exe")
-        if (Test-Path $c) { return (Split-Path -Parent $c) }
-        $c = Join-Path $base ("Python" + $Version.Replace(".", "") + "\python.exe")
-        if (Test-Path $c) { return (Split-Path -Parent $c) }
+        Join-Path $base "Programs\Python\$tag"
+        Join-Path $base $tag
+    }
+    if ($env:SystemDrive) { Join-Path $env:SystemDrive $tag }
+}
+
+function Find-PythonHome([string]$Version) {
+    # Every candidate is verified before it is accepted, and a bad one only
+    # moves the search along. Returning the first hit unchecked is how this
+    # lands on a half-installed CPython -- a python.exe with no Lib\ next to it
+    # registers itself with the py launcher exactly like a working one, wins
+    # because the launcher is asked first, and then the venv gets repointed at
+    # an interpreter that cannot import encodings.
+    $seen = @{}
+    foreach ($cand in (Get-PythonHomeCandidates $Version)) {
+        if (-not $cand) { continue }
+        $c = $cand.TrimEnd('\')
+        if ($seen.ContainsKey($c.ToLower())) { continue }
+        $seen[$c.ToLower()] = $true
+        if (-not (Test-Path (Join-Path $c "python.exe"))) { continue }
+        if (Test-PythonHome $c) { return $c }
+        Write-Step "skipping incomplete CPython at $c"
     }
     return ""
 }
 
 if (-not $PythonHome) { $PythonHome = Find-PythonHome $WantVer }
+if ($PythonHome -and -not (Test-PythonHome $PythonHome)) {
+    Write-Warning "ignoring incomplete CPython at $PythonHome"
+    $PythonHome = ""
+}
 
 if (-not $PythonHome -and $RedistDir -and (Test-Path $RedistDir)) {
     # No suitable interpreter, but the installer bundled one.
     $redist = Get-ChildItem -Path $RedistDir -Filter "python-*-amd64.exe" -ErrorAction SilentlyContinue |
               Select-Object -First 1
     if ($redist) {
+        $targetDir = Join-Path $env:SystemDrive ("Python" + $WantVer.Replace(".", ""))
         Write-Step "installing CPython $WantVer from $($redist.Name)"
         # PrependPath=0 deliberately: this PC may already have a Python that
         # other software depends on, and silently taking over PATH during an
         # unattended install is not ours to do. The service uses an absolute path.
         $p = Start-Process -FilePath $redist.FullName -Wait -PassThru -ArgumentList @(
-            "/quiet", "InstallAllUsers=1", "PrependPath=0", "Include_launcher=1",
-            "Include_test=0", "SimpleInstall=1")
+            "/quiet", "InstallAllUsers=1", "PrependPath=0", "Include_launcher=0",
+            "AssociateFiles=0", "Shortcuts=0", "Include_core=1", "Include_exe=1",
+            "Include_lib=1", "Include_pip=0", "Include_tcltk=0", "Include_dev=0",
+            "Include_doc=0", "Include_test=0", "SimpleInstall=1",
+            "TargetDir=$targetDir")
         if ($p.ExitCode -ne 0) {
             Write-Warning "python installer exited with $($p.ExitCode)"
         }
         $PythonHome = Find-PythonHome $WantVer
+        if ($PythonHome -and -not (Test-PythonHome $PythonHome)) {
+            Write-Warning "CPython install at $PythonHome is still incomplete after repair"
+            $PythonHome = ""
+        }
     }
 }
 
@@ -114,6 +211,28 @@ Set-Content -Path $Cfg -Value $lines -Encoding ascii
 # loads the wrong python3xx.dll and dies with an unhelpful access violation.
 Copy-Item -Force (Join-Path $PythonHome "python.exe") (Join-Path $VenvDir "Scripts\python.exe")
 Copy-Item -Force (Join-Path $PythonHome "pythonw.exe") (Join-Path $VenvDir "Scripts\pythonw.exe") -ErrorAction SilentlyContinue
+
+# python.exe cannot start without python3xx.dll, and a venv's Scripts\ does not
+# contain one -- interactively it is found through the base install's entry on
+# the *user* PATH. The services run as LocalSystem, which has no user PATH, so
+# without this the process dies before it can reach the service dispatcher and
+# the SCM reports only "did not respond to the start request in a timely
+# fashion", with nothing written to any log.
+#
+# This is not an edge case: python.org's installer defaults to a per-user
+# install, so the DLL is almost always somewhere LocalSystem cannot see.
+$dllCopied = @()
+foreach ($pattern in @("python3*.dll", "vcruntime*.dll")) {
+    Get-ChildItem -Path $PythonHome -Filter $pattern -File -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item -Force $_.FullName (Join-Path $VenvDir "Scripts\$($_.Name)")
+        $dllCopied += $_.Name
+    }
+}
+if ($dllCopied) {
+    Write-Step "staged interpreter DLLs next to python.exe: $($dllCopied -join ', ')"
+} else {
+    Write-Warning "no python3*.dll found in $PythonHome -- the services may not start"
+}
 
 $VenvPy = Join-Path $VenvDir "Scripts\python.exe"
 Write-Step "verifying interpreter"
@@ -238,10 +357,16 @@ function Remove-ServiceIfPresent([string]$Name, [string]$RemoveCmd) {
     try {
         Stop-Service -Name $Name -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
-        & $VenvPy -m app.service_win $RemoveCmd 2>&1 | Out-Null
+        Push-Location $InstallDir
+        try {
+            & $VenvPy -m app.service_win $RemoveCmd 2>&1 | Out-Null
+        } finally {
+            Pop-Location
+        }
         Start-Sleep -Seconds 1
         if (Get-Service -Name $Name -ErrorAction SilentlyContinue) {
             & sc.exe delete $Name | Out-Null
+            Start-Sleep -Seconds 2
         }
     } catch { Write-Warning "could not remove ${Name}: $_" }
 }
@@ -254,8 +379,18 @@ if ($LASTEXITCODE -ne 0) {
     if ($LASTEXITCODE -ne 0) { & $VenvPy -m pip install pywin32 2>&1 | Out-Null }
     & $VenvPy -c "import win32serviceutil" 2>$null
     if ($LASTEXITCODE -ne 0) { throw "pywin32 is required to register the service" }
-    # pywin32 needs its post-install to register the DLLs it hosts services with.
-    & $VenvPy (Join-Path $VenvDir "Scripts\pywin32_postinstall.py") -install 2>&1 | Out-Null
+}
+
+# Even when pywin32 is already bundled in the payload, its post-install still
+# needs to run on the target machine so the service host DLLs are registered
+# against the Python that was just installed there rather than the build box.
+$PyWinPost = Join-Path $VenvDir "Scripts\pywin32_postinstall.py"
+if (Test-Path $PyWinPost) {
+    Write-Step "finalizing pywin32 service registration"
+    & $VenvPy $PyWinPost -install 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "pywin32 post-install failed ($LASTEXITCODE)"
+    }
 }
 
 Remove-ServiceIfPresent $ServiceName "remove-agent"

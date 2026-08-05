@@ -19,11 +19,16 @@ echo  --------------------------------
 echo  This window is elevated. Installing...
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" %*
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1" -Unattended %*
 set ERR=%ERRORLEVEL%
 
 echo.
-if %ERR% neq 0 (
+if %ERR% equ 2 (
+    echo  INSTALL FINISHED, BUT HEALTH CHECK IS STILL PENDING
+    echo  Open an elevated PowerShell and run:
+    echo    "%ProgramFiles%\PPEAgent\verify.ps1"
+    echo  Press any key to close.
+) else if %ERR% neq 0 (
     echo  INSTALL FAILED  exit code %ERR%
     echo  See messages above. Press any key to close.
 ) else (

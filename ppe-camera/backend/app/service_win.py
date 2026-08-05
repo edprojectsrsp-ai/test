@@ -69,11 +69,41 @@ class _Base(win32serviceutil.ServiceFramework if win32serviceutil else object):
         self.on_stop()
         win32event.SetEvent(self.stop_event)
 
+    def _redirect_streams(self):
+        """Give the process real stdout/stderr, as files under data\\.
+
+        A service has no console, so Python sets sys.stdout and sys.stderr to
+        None. uvicorn's default logging config points a handler at
+        `ext://sys.stdout`, and dictConfig on a None stream fails with the
+        thoroughly unhelpful "Unable to configure formatter 'default'" -- the
+        service then dies during start with nothing written anywhere, because
+        the very mechanism that would have written it is what failed.
+
+        These are also the agent.err.log / agent.out.log that install.ps1 and
+        the README tell operators to read.
+        """
+        if not self.root:
+            return
+        log_dir = os.path.join(self.root, "data")
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+            prefix = "console" if "console" in self._svc_name_.lower() else "agent"
+            # line-buffered, so a crash does not lose the lines explaining it
+            sys.stdout = open(os.path.join(log_dir, f"{prefix}.out.log"), "a",
+                              buffering=1, encoding="utf-8", errors="replace")
+            sys.stderr = open(os.path.join(log_dir, f"{prefix}.err.log"), "a",
+                              buffering=1, encoding="utf-8", errors="replace")
+        except Exception as exc:  # noqa: BLE001
+            servicemanager.LogErrorMsg(
+                f"{self._svc_name_}: could not open log files: {exc}")
+
     def SvcDoRun(self):  # noqa: N802 - pywin32 API
         servicemanager.LogMsg(
             servicemanager.EVENTLOG_INFORMATION_TYPE,
             servicemanager.PYS_SERVICE_STARTED,
             (self._svc_name_, ""))
+        # Before on_start: uvicorn configures logging while being constructed.
+        self._redirect_streams()
         try:
             self.on_start()
         except Exception as exc:  # noqa: BLE001

@@ -53,9 +53,18 @@ run_logs/
 uploads/
 project_brain.db
 *.db
+# SQLite WAL sidecars: regenerated on every run, and committing them ships a
+# half-written transaction log that does not match the .db anyone else has.
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 *.dump
+
+# Runtime detection output from a live agent, not source.
+ppe-camera/data/captures/
+ppe-camera/data/recordings/
+ppe-camera/data/exports/
 
 # --- Python tooling scripts output ---
 coverage/

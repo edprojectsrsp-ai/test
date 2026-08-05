@@ -45,6 +45,17 @@ New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Write-Host "-- staging $Flavour distribution" -ForegroundColor Yellow
 Copy-Item -Recurse -Force $Payload (Join-Path $stage "payload")
+
+# Anyone who runs the agent out of build\payload to test it leaves a data\
+# behind -- this build machine's ppe.db, its captured evidence, and a second
+# 270 MB copy of the weights. None of that is ours to ship to a customer.
+# install.ps1 refuses to overwrite an existing data\, so a stale one here would
+# also become the customer's permanent database.
+$stagedData = Join-Path $stage "payload\data"
+if (Test-Path $stagedData) {
+    Write-Host "-- dropping build-machine data\ from the payload" -ForegroundColor Yellow
+    Remove-Item -Recurse -Force $stagedData
+}
 foreach ($f in @("install.ps1", "configure.ps1", "uninstall.ps1", "verify.ps1", "Install.bat")) {
     $src = Join-Path $PSScriptRoot $f
     if (Test-Path $src) { Copy-Item -Force $src $stage }

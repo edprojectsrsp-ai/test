@@ -32,16 +32,54 @@ param(
     [string]$ControlRoom = "",
     [string]$Port        = "8004",
     [string]$ConsolePort = "3000",
+    # Setup.exe stages the CPython redist into its own {tmp}, not next to this
+    # script, so it has to be able to say where it put it. Defaults to the
+    # layout the ZIP has.
+    [string]$RedistDir   = "",
     [switch]$LanAccess,
     [switch]$AutoSync,
-    [switch]$Unattended
+    [switch]$Unattended,
+    [switch]$NoLaunch,
+    [switch]$SkipCopy
 )
 
 $ErrorActionPreference = "Stop"
 $Src = $PSScriptRoot
+$ManagedCloudUrl = "https://project-brain-ppe-lite.onrender.com"
+$ManagedControlRoom = "https://projectbrain-git-main-hitman007.vercel.app/ppe/"
+
+if (-not $CloudUrl) { $CloudUrl = $ManagedCloudUrl }
+if (-not $ControlRoom) { $ControlRoom = $ManagedControlRoom }
+if (-not $AgentName) { $AgentName = $env:COMPUTERNAME }
+
+# Customer installs link the PC later from the dashboard UI. Keep the hosted
+# dashboard URL, but do not pre-seed cloud enrollment unless a code was passed.
+if ($Unattended -and -not $JoinCode) {
+    $CloudUrl = ""
+}
 
 function Say($m)  { Write-Host "[ppe] $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "[ppe] $m" -ForegroundColor Yellow }
+
+function Copy-TreeRobust([string]$SourcePath, [string]$DestinationPath) {
+    $null = New-Item -ItemType Directory -Force -Path $DestinationPath
+    $args = @(
+        $SourcePath,
+        $DestinationPath,
+        "/E",
+        "/R:2",
+        "/W:2",
+        "/NFL",
+        "/NDL",
+        "/NJH",
+        "/NJS",
+        "/NP"
+    )
+    & robocopy @args | Out-Null
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy failed for $SourcePath -> $DestinationPath (exit $LASTEXITCODE)"
+    }
+}
 
 # ------------------------------------------------------------------ checks
 $admin = ([Security.Principal.WindowsPrincipal] `
@@ -50,11 +88,20 @@ $admin = ([Security.Principal.WindowsPrincipal] `
 if (-not $admin) {
     throw "Run this in an elevated PowerShell (right-click Start -> Terminal (Admin))."
 }
-if (-not (Test-Path (Join-Path $Src "payload\app\main.py"))) {
-    throw "payload\ not found next to this script. Extract the whole ZIP and run it from there."
-}
 if ([Environment]::Is64BitOperatingSystem -eq $false) {
     throw "64-bit Windows is required (torch ships no 32-bit build)."
+}
+
+$PayloadRoot = ""
+if (Test-Path (Join-Path $Src "payload\app\main.py")) {
+    $PayloadRoot = Join-Path $Src "payload"
+} elseif (Test-Path (Join-Path $Src "app\main.py")) {
+    # Setup.exe already stages the application directly into {app}, so there is
+    # no payload\ wrapper at runtime.
+    $PayloadRoot = $Src
+    $SkipCopy = $true
+} else {
+    throw "payload\ not found next to this script. Extract the whole ZIP and run it from there."
 }
 
 Write-Host ""
@@ -71,9 +118,9 @@ if (-not $Unattended) {
     if ($r) { $InstallDir = $r }
 
     Write-Host ""
-    Write-Host "  Cloud dashboard (optional)" -ForegroundColor White
-    Write-Host "  Leave blank to run fully offline; you can join later." -ForegroundColor DarkGray
-    if (-not $CloudUrl)  { $CloudUrl  = Read-Host "  Cloud URL" }
+    Write-Host "  Managed cloud connection" -ForegroundColor White
+    Write-Host "  Cloud URL is pre-configured for this installer." -ForegroundColor DarkGray
+    Write-Host "  Cloud URL: $CloudUrl" -ForegroundColor DarkGray
     if ($CloudUrl -and -not $JoinCode) {
         $JoinCode = Read-Host "  Join code"
     }
@@ -81,9 +128,7 @@ if (-not $Unattended) {
         $AgentName = Read-Host "  Name for this PC [$env:COMPUTERNAME]"
         if (-not $AgentName) { $AgentName = $env:COMPUTERNAME }
     }
-    if (-not $ControlRoom) {
-        $ControlRoom = Read-Host "  Control room (web dashboard) URL, optional"
-    }
+    Write-Host "  Control room URL: $ControlRoom" -ForegroundColor DarkGray
 
     Write-Host ""
     Write-Host "  Wall displays and phones" -ForegroundColor White
@@ -110,6 +155,12 @@ if (($CloudUrl -and -not $JoinCode) -or ($JoinCode -and -not $CloudUrl)) {
     throw "Cloud URL and join code must be given together, or both left blank."
 }
 
+if ($Unattended) {
+    Say "running in customer install mode"
+    Say "cloud dashboard is pre-configured; this PC can be linked later from the PPE UI"
+    Write-Host ""
+}
+
 # ------------------------------------------------------------------ copy
 Say "installing to $InstallDir"
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
@@ -124,25 +175,42 @@ foreach ($svc in @("PPEAgent", "PPEConsole")) {
     }
 }
 
-Say "copying files (this takes a minute)"
-foreach ($item in Get-ChildItem (Join-Path $Src "payload")) {
-    # Never clobber plant data on upgrade/reinstall: violations DB, evidence,
-    # recordings and fine-tuned weights live under data\.
-    if ($item.Name -eq "data" -and (Test-Path (Join-Path $InstallDir "data"))) {
-        Say "keeping existing data\ (violations, evidence, weights)"
-        continue
+if (-not $SkipCopy) {
+    Say "copying files (this takes a minute)"
+    foreach ($item in Get-ChildItem $PayloadRoot) {
+        # Never clobber plant data on upgrade/reinstall: violations DB, evidence,
+        # recordings and fine-tuned weights live under data\.
+        if ($item.Name -eq "data" -and (Test-Path (Join-Path $InstallDir "data"))) {
+            Say "keeping existing data\ (violations, evidence, weights)"
+            continue
+        }
+        $dst = Join-Path $InstallDir $item.Name
+        if ($item.PSIsContainer) {
+            Copy-TreeRobust $item.FullName $dst
+        } else {
+            Copy-Item -Force $item.FullName $dst
+        }
     }
-    Copy-Item -Recurse -Force $item.FullName $InstallDir
-}
-foreach ($f in @("configure.ps1", "uninstall.ps1", "verify.ps1", "Install.bat")) {
-    $p = Join-Path $Src $f
-    if (Test-Path $p) { Copy-Item -Force $p $InstallDir }
+    foreach ($f in @("configure.ps1", "uninstall.ps1", "verify.ps1", "Install.bat")) {
+        $p = Join-Path $Src $f
+        if (Test-Path $p) { Copy-Item -Force $p $InstallDir }
+    }
+} else {
+    Say "files already staged by Setup.exe"
 }
 
 # ------------------------------------------------------------------ configure
+if (-not $RedistDir) { $RedistDir = Join-Path $Src "redist" }
+if (-not (Test-Path $RedistDir)) {
+    # Not fatal: a PC that already has the right CPython never needs this. But
+    # it is the difference between "installs offline" and "fails on a plant PC
+    # with no internet", so it should be visible now rather than at that point.
+    Warn "no CPython redist at $RedistDir -- Python $((Get-Content (Join-Path $PayloadRoot 'PYTHON_VERSION') -EA SilentlyContinue)) must already be installed on this PC"
+}
+
 $cfgArgs = @{
     InstallDir  = $InstallDir
-    RedistDir   = (Join-Path $Src "redist")
+    RedistDir   = $RedistDir
     Port        = $Port
     ConsolePort = $ConsolePort
     JoinCode    = $JoinCode
@@ -255,4 +323,12 @@ Write-Host "  Verify     $InstallDir\verify.ps1"
 Write-Host ""
 Write-Host "  Get-Service PPEAgent, PPEConsole" -ForegroundColor DarkGray
 Write-Host ""
+if (-not $NoLaunch) {
+    try {
+        Say "opening the PPE dashboard"
+        Start-Process $ControlRoom | Out-Null
+    } catch {
+        Warn "could not open the PPE dashboard automatically: $_"
+    }
+}
 if (-not $healthy) { exit 2 }
