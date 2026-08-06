@@ -49,7 +49,10 @@ WizardStyle=modern
 UsePreviousAppDir=yes
 DisableWelcomePage=no
 DisableDirPage=no
-UninstallDisplayIcon={app}\python\Scripts\python.exe
+SetupIconFile=branding\ppe.ico
+; Was python.exe, which put the Python logo against this product in Add/Remove
+; Programs and in every "are you sure" dialog.
+UninstallDisplayIcon={app}\ppe.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -63,6 +66,9 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; file is not already there.
 Source: "build\payload\*"; DestDir: "{app}"; Excludes: "data,data\*"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "redist\python-*-amd64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall skipifsourcedoesntexist
+; PpeConsole.exe and ppe.ico arrive via build\payload\* above -- build.ps1
+; stages them there so the ZIP install gets them too. Listing them again here
+; would just copy the same two files twice.
 Source: "install.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "configure.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "uninstall.ps1"; DestDir: "{app}"; Flags: ignoreversion
@@ -70,11 +76,22 @@ Source: "verify.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Install.bat"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\PPE Dashboard"; Filename: "{#DefaultControlRoomUrl}"
+; The primary icon opens the console THIS PC serves, in a browser app window --
+; no address bar, its own taskbar button and icon. It used to point straight at
+; the hosted dashboard URL, which opened a browser tab against the cloud: that
+; needs internet on a product sold as working offline, and it showed the fleet
+; dashboard rather than this machine's agent.
+Name: "{group}\PPE Control Room"; Filename: "{app}\PpeConsole.exe"; \
+  Parameters: "{#DefaultConsolePort} /ppe/"; IconFilename: "{app}\ppe.ico"; \
+  Comment: "Open the PPE control room running on this PC"
+Name: "{autodesktop}\PPE Control Room"; Filename: "{app}\PpeConsole.exe"; \
+  Parameters: "{#DefaultConsolePort} /ppe/"; IconFilename: "{app}\ppe.ico"; \
+  Comment: "Open the PPE control room running on this PC"; Tasks: desktopicon
+; The hosted fleet view stays reachable, just not as the thing you land on.
+Name: "{group}\PPE Cloud Dashboard"; Filename: "{#DefaultControlRoomUrl}"
 Name: "{group}\Agent API (local)"; Filename: "http://127.0.0.1:{#DefaultPort}/docs"
 Name: "{group}\Agent Logs"; Filename: "{app}\data"
 Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\PPE Dashboard"; Filename: "{#DefaultControlRoomUrl}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut to the PPE dashboard"; GroupDescription: "Shortcuts:"
@@ -88,7 +105,7 @@ Name: "launchdashboard"; Description: "Open the PPE dashboard after setup"; Grou
 
 [Run]
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -Port ""{#DefaultPort}"" -ConsolePort ""{#DefaultConsolePort}"" -RedistDir ""{tmp}"" -CloudUrl """" -JoinCode """" -ControlRoom ""{#DefaultControlRoomUrl}"" -AgentName """" -Unattended -NoLaunch -SkipCopy -NoUninstallEntry {code:GetLanFlag}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -InstallDir ""{app}"" -Port ""{#DefaultPort}"" -ConsolePort ""{#DefaultConsolePort}"" -RedistDir ""{tmp}"" -CloudUrl """" -JoinCode """" -ControlRoom ""{#DefaultControlRoomUrl}"" -AgentName """" -Unattended -NoLaunch -SkipCopy -NoUninstallEntry -NoShortcuts {code:GetLanFlag}"; \
   StatusMsg: "Installing services and local runtime..."; \
   Flags: runhidden waituntilterminated
 Filename: "{#DefaultControlRoomUrl}"; \

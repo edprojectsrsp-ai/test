@@ -45,7 +45,11 @@ param(
     # uninstall.ps1 from it. Without this we add a second entry for the same
     # product, and whichever one the customer picks orphans the other -- the
     # survivor then points at a folder that no longer exists.
-    [switch]$NoUninstallEntry
+    [switch]$NoUninstallEntry,
+    # Same story for shortcuts: Setup.exe makes its own, pointing at the local
+    # console launcher. Letting both run produced two desktop icons for the same
+    # thing and two Start Menu folders for one product.
+    [switch]$NoShortcuts
 )
 
 $ErrorActionPreference = "Stop"
@@ -239,20 +243,43 @@ Say "configuring"
 & (Join-Path $InstallDir "configure.ps1") @cfgArgs
 
 # ------------------------------------------------------------------ shortcuts
+if (-not $NoShortcuts) {
 try {
-    $room = if ($ControlRoom) { $ControlRoom } else { "http://127.0.0.1:$Port/docs" }
     $sh = New-Object -ComObject WScript.Shell
-    $desktop = [Environment]::GetFolderPath("CommonDesktopDirectory")
-    $lnk = $sh.CreateShortcut((Join-Path $desktop "PPE Control Room.url"))
-    $lnk.TargetPath = $room
-    $lnk.Save()
-
+    $desktop   = [Environment]::GetFolderPath("CommonDesktopDirectory")
     $startMenu = Join-Path ([Environment]::GetFolderPath("CommonPrograms")) "PPE Agent"
     New-Item -ItemType Directory -Force -Path $startMenu | Out-Null
+
+    $launcher = Join-Path $InstallDir "PpeConsole.exe"
+    $icon     = Join-Path $InstallDir "ppe.ico"
+
+    if (Test-Path $launcher) {
+        # Point at the console THIS PC serves, not the hosted dashboard. The
+        # old shortcut opened a browser tab against the cloud URL, so the
+        # product needed internet to show its own machine's cameras.
+        foreach ($dir in @($desktop, $startMenu)) {
+            $l = $sh.CreateShortcut((Join-Path $dir "PPE Control Room.lnk"))
+            $l.TargetPath       = $launcher
+            $l.Arguments        = "$ConsolePort /ppe/"
+            $l.WorkingDirectory = $InstallDir
+            $l.Description      = "Open the PPE control room running on this PC"
+            if (Test-Path $icon) { $l.IconLocation = $icon }
+            $l.Save()
+        }
+        # A .url from an earlier version, pointing at the cloud.
+        Remove-Item (Join-Path $desktop "PPE Control Room.url") -Force -ErrorAction SilentlyContinue
+    } else {
+        Warn "PpeConsole.exe not in the payload -- falling back to a browser shortcut"
+        $l = $sh.CreateShortcut((Join-Path $desktop "PPE Control Room.url"))
+        $l.TargetPath = "http://127.0.0.1:$ConsolePort/ppe/"
+        $l.Save()
+    }
+
     foreach ($s in @(
-        @{ n = "PPE Control Room"; t = $room },
-        @{ n = "Agent API";        t = "http://127.0.0.1:$Port/docs" }
+        @{ n = "Agent API";          t = "http://127.0.0.1:$Port/docs" },
+        @{ n = "PPE Cloud Dashboard"; t = $ControlRoom }
     )) {
+        if (-not $s.t) { continue }
         $l = $sh.CreateShortcut((Join-Path $startMenu "$($s.n).url"))
         $l.TargetPath = $s.t
         $l.Save()
@@ -260,6 +287,7 @@ try {
     Say "shortcuts created"
 } catch {
     Warn "could not create shortcuts: $_"
+}
 }
 
 # Register in Programs & Features so it uninstalls the way anything else does.

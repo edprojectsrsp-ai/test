@@ -228,6 +228,43 @@ if ($IncludeConsole) {
     }
 }
 
+# ------------------------------------------------------------- desktop launcher
+# A small windowless exe that opens the console this PC serves, in a browser
+# app window. Ships in the payload so the ZIP and the Setup.exe both get it.
+# csc.exe is part of the .NET Framework that is already on every supported
+# Windows, so this adds no build dependency.
+Write-Host "-- building desktop launcher" -ForegroundColor Yellow
+$Branding = Join-Path $PSScriptRoot "branding"
+New-Item -ItemType Directory -Force -Path $Branding | Out-Null
+$IconOut = Join-Path $Branding "ppe.ico"
+$IconSrc = Join-Path $Payload "console\public\icon-192.png"
+if (-not (Test-Path $IconSrc)) {
+    $IconSrc = Join-Path (Split-Path -Parent $Root) "Project-brain\public\icon-192.png"
+}
+if (Test-Path $IconSrc) {
+    & (Join-Path $PSScriptRoot "make_icon.ps1") -Source $IconSrc -OutFile $IconOut
+} else {
+    Write-Warning "no icon-192.png found -- shortcuts will use the default icon"
+}
+
+$csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+$LauncherExe = Join-Path $Branding "PpeConsole.exe"
+if (Test-Path $csc) {
+    $cscArgs = @("/nologo", "/target:winexe", "/optimize+",
+                 "/out:$LauncherExe",
+                 "/reference:System.dll", "/reference:System.Windows.Forms.dll",
+                 "/reference:System.Drawing.dll",
+                 (Join-Path $PSScriptRoot "launcher\PpeConsole.cs"))
+    if (Test-Path $IconOut) { $cscArgs = @("/win32icon:$IconOut") + $cscArgs }
+    & $csc @cscArgs
+    if ($LASTEXITCODE -ne 0) { throw "launcher compile failed ($LASTEXITCODE)" }
+    Copy-Item -Force $LauncherExe $Payload
+    if (Test-Path $IconOut) { Copy-Item -Force $IconOut $Payload }
+    Write-Host ("   + PpeConsole.exe ({0:N0} KB)" -f ((Get-Item $LauncherExe).Length / 1KB))
+} else {
+    Write-Warning "csc.exe not found -- no desktop launcher; shortcuts fall back to a browser tab"
+}
+
 # ------------------------------------------------------------- service host
 # No third-party service wrapper is bundled. The agent registers itself as a
 # native Windows service through pywin32 (app/service_win.py), which comes from
