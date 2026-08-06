@@ -54,11 +54,33 @@ def _save(reg: dict) -> None:
         json.dump(reg, f, indent=2)
 
 
+def _resolve_weights(entry: dict) -> Path:
+    """Find a registry entry's checkpoint on THIS machine.
+
+    The recorded path is absolute and was written wherever the model was
+    registered -- for anything shipped in the box, that is a path on the build
+    machine, which no customer PC has. The files themselves are seeded into
+    WEIGHTS_DIR by the installer, so match on filename there before calling a
+    model missing. Without this every entry in the picker reads "not on disk"
+    and activating one 409s, on every machine except the one that built it.
+    """
+    s = get_settings()
+    recorded = Path(entry.get("weights", ""))
+    if recorded.is_file():
+        return recorded
+    name = recorded.name
+    if name:
+        for cand in (s.WEIGHTS_DIR / "zoo" / name, s.WEIGHTS_DIR / name):
+            if cand.is_file():
+                return cand
+    return recorded
+
+
 def _activate(reg: dict, version: int) -> dict:
     entry = next((v for v in reg["versions"] if v["version"] == version), None)
     if entry is None:
         raise HTTPException(404, f"unknown version {version}")
-    weights = Path(entry["weights"])
+    weights = _resolve_weights(entry)
     if not weights.exists():
         raise HTTPException(409, f"weights file missing on disk: {weights}")
     s = get_settings()
@@ -99,12 +121,14 @@ async def list_models() -> dict:
         "versions": [
             {
                 "version": v["version"],
-                "weights": v["weights"],
+                # The resolved path, not the recorded one: the UI shows this,
+                # and pointing at the build machine helps nobody.
+                "weights": str(_resolve_weights(v)),
                 "note": v.get("note", ""),
                 "metrics": v.get("metrics", {}),
                 "created": time.strftime("%Y-%m-%d %H:%M", time.localtime(v.get("ts", 0))),
                 "is_active": v["version"] == reg["active"],
-                "on_disk": Path(v["weights"]).exists(),
+                "on_disk": _resolve_weights(v).is_file(),
             }
             for v in sorted(reg["versions"], key=lambda x: -x["version"])
         ],

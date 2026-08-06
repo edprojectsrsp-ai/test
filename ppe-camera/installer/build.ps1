@@ -124,8 +124,15 @@ if ($IncludeWeights) {
         New-Item -ItemType Directory -Force -Path $WeightsDst | Out-Null
         $bytes = 0
 
+        # Every format the model picker can actually activate. Filtering to
+        # *.pt alone silently dropped nduka1999.onnx, which the registry lists
+        # four times -- so four entries in the picker pointed at a file that
+        # was never in the box.
+        $ckptExt = @(".pt", ".onnx", ".engine", ".torchscript")
+
         # The fine-tuned checkpoint actually in service.
-        Get-ChildItem -Path $WeightsSrc -Filter "*.pt" | ForEach-Object {
+        Get-ChildItem -Path $WeightsSrc -File |
+            Where-Object { $ckptExt -contains $_.Extension.ToLower() } | ForEach-Object {
             Write-Host ("   + {0} ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB))
             Copy-Item -Force $_.FullName $WeightsDst
             $bytes += $_.Length
@@ -148,7 +155,8 @@ if ($IncludeWeights) {
         if (Test-Path $zooSrc) {
             $zooDst = Join-Path $WeightsDst "zoo"
             New-Item -ItemType Directory -Force -Path $zooDst | Out-Null
-            Get-ChildItem -Path $zooSrc -Filter "*.pt" | ForEach-Object {
+            Get-ChildItem -Path $zooSrc -File |
+                Where-Object { $ckptExt -contains $_.Extension.ToLower() } | ForEach-Object {
                 Write-Host ("   + zoo\{0} ({1:N0} MB)" -f $_.Name, ($_.Length / 1MB))
                 Copy-Item -Force $_.FullName $zooDst
                 $bytes += $_.Length

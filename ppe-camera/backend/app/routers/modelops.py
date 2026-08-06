@@ -200,13 +200,15 @@ def _resolve_weights(model: str) -> tuple[str, str, int | None]:
                 return str(p), "live model", None
         raise HTTPException(404, "no live .pt checkpoint on disk")
     if model.isdigit():
-        from app.routers.models import _load
+        from app.routers.models import _load, _resolve_weights
 
         entry = next((v for v in _load()["versions"]
                       if v["version"] == int(model)), None)
         if entry is None:
             raise HTTPException(404, f"unknown model version {model}")
-        return entry["weights"], f"v{model}", int(model)
+        # Registry paths are absolute and machine-specific; resolve against
+        # this install's weights dir so evaluation works off the build box.
+        return str(_resolve_weights(entry)), f"v{model}", int(model)
     zoo = s.WEIGHTS_DIR / "zoo" / f"{model}.pt"
     if zoo.exists():
         return str(zoo), model, None
@@ -519,6 +521,119 @@ async def reset_baseline(camera_id: str) -> dict:
     ok = shadow.get_drift().reset_baseline(camera_id)
     return {"camera_id": camera_id, "reset": ok,
             "note": "the next completed window becomes the new baseline"}
+
+
+# ==================================================================== harvest
+class HarvestStartIn(BaseModel):
+    target: int = Field(400, ge=20, le=5000)
+    min_interval_s: float = Field(8.0, ge=0.0, le=300.0)
+
+
+@router.post("/harvest/start")
+async def harvest_start(body: HarvestStartIn) -> dict:
+    """Begin collecting golden-set candidates from every running camera.
+
+    Deliberately NOT the uncertainty sampler that feeds training. That one picks
+    frames the model is unsure about, which is right for learning and wrong for
+    measuring: a test set drawn from a model's own weak spots gives a number
+    that is pessimistic, unstable, and not comparable across versions. This
+    stratifies by condition instead — time of day, scene brightness, occupancy,
+    camera — so the set resembles the plant rather than the model's blind spots.
+    """
+    from app.services import harvest
+
+    return harvest.start(target=body.target, min_interval_s=body.min_interval_s)
+
+
+@router.post("/harvest/stop")
+async def harvest_stop() -> dict:
+    from app.services import harvest
+
+    return harvest.stop()
+
+
+@router.get("/harvest/status")
+async def harvest_status() -> dict:
+    """Progress, coverage, and — most usefully — what the set still cannot measure."""
+    from app.services import harvest
+
+    s = harvest.get_session()
+    if s is None:
+        async with SessionLocal() as session:
+            pending = int(await session.scalar(
+                select(func.count()).select_from(CaptureItem)
+                .where(CaptureItem.harvest_tag == "golden-candidate")
+                .where(CaptureItem.status == CaptureStatus.pending)) or 0)
+        return {"running": False, "awaiting_labels": pending,
+                "hint": ("Start a harvest, or sweep existing recordings — a "
+                         "month of footage already contains the night shifts "
+                         "and weather you would otherwise wait a month to see.")}
+    out = s.snapshot()
+    out["running"] = True
+    return out
+
+
+class SweepIn(BaseModel):
+    camera_id: str = ""
+    start: str = ""
+    end: str = ""
+    target: int = Field(200, ge=10, le=2000)
+    per_segment: int = Field(3, ge=1, le=20)
+
+
+@router.post("/harvest/sweep")
+async def harvest_sweep(body: SweepIn) -> dict:
+    """Pull golden candidates out of recordings already on disk.
+
+    The fast path to coverage. Collecting live means waiting for night, for
+    rain, for a crowded shift; the recordings already contain all of it.
+    """
+    from app.services import harvest
+
+    return await harvest.sweep_recordings(
+        camera_id=body.camera_id, start_iso=body.start, end_iso=body.end,
+        target=body.target, per_segment=body.per_segment)
+
+
+@router.get("/harvest/queue")
+async def harvest_queue(limit: int = Query(50, ge=1, le=500)) -> dict:
+    """Harvested frames waiting to be labelled, rarest classes first.
+
+    Ordering matters: another hundred helmet frames add nothing once helmet is
+    covered, while one harness frame may be the difference between a gate that
+    can see the class and one that cannot.
+    """
+    from sqlalchemy.orm import selectinload
+
+    async with SessionLocal() as session:
+        rows = list((await session.execute(
+            select(CaptureItem)
+            .where(CaptureItem.harvest_tag == "golden-candidate")
+            .where(CaptureItem.status == CaptureStatus.pending)
+            .options(selectinload(CaptureItem.labels))
+            .order_by(CaptureItem.created_at.desc())
+            .limit(400))).scalars())
+        golden = await evaluation.build_golden_set(session)
+
+    support = golden.class_support
+    items = []
+    for it in rows:
+        predicted = sorted({(p or {}).get("cls") for p in (it.predictions or [])
+                            if (p or {}).get("cls")})
+        need = max((max(0, evaluation.MIN_SUPPORT_TO_GATE * 3 - support.get(c, 0))
+                    for c in predicted), default=0)
+        items.append({
+            "capture_id": it.id, "camera_id": it.camera_id,
+            "created_at": it.created_at.isoformat() if it.created_at else None,
+            "note": it.note, "predicted_classes": predicted, "value": need,
+            "image_url": f"/api/review/image/{it.id}",
+        })
+    items.sort(key=lambda x: (-x["value"], x["capture_id"]))
+    return {"queue": items[:limit], "total_pending": len(rows),
+            "golden_support": support,
+            "next_step": ("Label these in Review, then mark them golden in "
+                          "Model Ops -> Golden set. They are excluded from "
+                          "training the moment they are marked.")}
 
 
 # ==================================================================== summary
