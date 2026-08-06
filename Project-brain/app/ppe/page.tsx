@@ -12,6 +12,7 @@ import PPENVR from "../../components/ppe/PPENVR";
 import PPEModelOps from "../../components/ppe/PPEModelOps";
 import PpeShell from "../../components/ppe/PpeShell";
 import CloudPushPanel from "../../components/ppe/CloudPushPanel";
+import ActivationBanner from "../../components/ppe/ActivationBanner";
 import { buildPpeUrl } from "../../lib/ppeApi";
 import { ensureAgent, subscribeAgent } from "../../lib/ppeAgent";
 import type { ModuleNavEntry } from "../../components/layout/ModuleNav";
@@ -123,6 +124,9 @@ export default function PPEPage() {
         subtitle="Ministry · industrial ops"
         showContext
       >
+        {/* Above the tab content, so it is visible whichever tab the operator
+            happens to be on rather than only on Settings. */}
+        <ActivationBanner />
         {tab === "live" ? (
           <PPEControlRoom embedded onNavigate={(t) => setTab(t as Tab)} />
         ) : tab === "nvr" ? (

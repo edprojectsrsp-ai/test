@@ -61,11 +61,12 @@ if (-not $CloudUrl) { $CloudUrl = $ManagedCloudUrl }
 if (-not $ControlRoom) { $ControlRoom = $ManagedControlRoom }
 if (-not $AgentName) { $AgentName = $env:COMPUTERNAME }
 
-# Customer installs link the PC later from the dashboard UI. Keep the hosted
-# dashboard URL, but do not pre-seed cloud enrollment unless a code was passed.
-if ($Unattended -and -not $JoinCode) {
-    $CloudUrl = ""
-}
+# A customer install registers later, from the console's own banner, so no join
+# code is asked for here. The cloud URL is still written to .env: it is not a
+# secret, it is where this product's cloud lives, and blanking it meant the
+# operator had to know and type our hostname before Register could work.
+# Registration remains gated on the code, which is the part that is actually
+# a credential.
 
 function Say($m)  { Write-Host "[ppe] $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "[ppe] $m" -ForegroundColor Yellow }
@@ -158,10 +159,11 @@ if (-not $Unattended) {
     Write-Host ""
 }
 
-# Both or neither: a half-configured agent looks joined in the UI and fails on
-# the first push, long after anyone is watching the installer.
-if (($CloudUrl -and -not $JoinCode) -or ($JoinCode -and -not $CloudUrl)) {
-    throw "Cloud URL and join code must be given together, or both left blank."
+# A code with nowhere to send it is the broken combination. The reverse is the
+# normal customer state: the PC knows where the cloud is and has simply not been
+# registered yet, which the console's banner then prompts for.
+if ($JoinCode -and -not $CloudUrl) {
+    throw "A join code was given with no cloud URL to redeem it against."
 }
 
 if ($Unattended) {

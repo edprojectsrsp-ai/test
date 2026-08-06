@@ -6,6 +6,7 @@ import "../theme/tokens.css";
 import "../theme/presets.css";
 import "../theme/advanced-ui.css";
 import "../theme/ppe-industrial.css";
+import "../theme/module-shell.css";
 import AppSidebar from "../components/layout/AppSidebar";
 import ContextBar from "../components/layout/ContextBar";
 import AmbientFx from "../components/layout/AmbientFx";
@@ -37,10 +38,19 @@ const jetbrains = JetBrains_Mono({
   display: "swap",
 });
 
-export const metadata: Metadata = {
-  title: "Project Brain",
-  description: "Intelligent Project Monitoring System",
-};
+// The plant-PC build is a PPE product sold on its own. Naming it after the
+// internal monitoring suite it was carved out of puts the wrong product name in
+// the customer's title bar, taskbar and browser history.
+export const metadata: Metadata =
+  process.env.PPE_LOCKDOWN === "1"
+    ? {
+        title: "PPE Detection",
+        description: "PPE compliance monitoring for this site",
+      }
+    : {
+        title: "Project Brain",
+        description: "Intelligent Project Monitoring System",
+      };
 
 /** Runs before paint so Ministry is the default even if old localStorage had dark skins. */
 const MINISTRY_BOOT =
@@ -69,16 +79,30 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           {MINISTRY_BOOT}
         </Script>
       </head>
-      <body className={`${dmSans.className} overflow-hidden ministry-shell`} style={{ background: "#ffffff", color: "#0a0a0a" }}>
+      <body
+        className={`${dmSans.className} overflow-hidden ministry-shell`}
+        style={{ background: "#ffffff", color: "#0a0a0a", ["--sidebar-w" as string]: "20rem" }}
+      >
         <ThemeProvider defaultTheme="light">
           <AuthFetchBridge />
           <MosProvider>
             <AmbientFx />
             <div className="relative z-[1] flex h-screen w-full" style={{ background: "#ffffff" }}>
               <AppSidebar />
-              <main className="ml-80 flex h-full flex-1 flex-col overflow-hidden" style={{ background: "#ffffff", color: "#0a0a0a" }}>
+              <main
+                className="flex h-full flex-1 flex-col overflow-hidden pb-main"
+                style={{
+                  marginLeft: "var(--sidebar-w, 20rem)",
+                  background: "#ffffff",
+                  color: "#0a0a0a",
+                  transition: "margin-left .22s cubic-bezier(.22,1,.36,1)",
+                }}
+              >
                 <ContextBar />
-                <div className="flex-1 overflow-y-auto p-6 md:p-8" style={{ background: "#ffffff", color: "#0a0a0a" }}>
+                <div
+                  className="flex-1 overflow-y-auto p-4 md:p-6"
+                  style={{ background: "#f8fafc", color: "#0a0a0a" }}
+                >
                   <ProtectedRoute>{children}</ProtectedRoute>
                 </div>
               </main>

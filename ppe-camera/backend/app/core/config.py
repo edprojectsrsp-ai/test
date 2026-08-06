@@ -6,6 +6,7 @@ image runs on a Jetson, a GPU server, or a plain laptop.
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -229,6 +230,36 @@ class Settings:
     # creates can be revoked individually via sync_agents.enabled. Enrollment
     # only ever creates a pusher -- it grants no read access to anything.
     ENROLL_CODE: str = os.getenv("PPE_ENROLL_CODE", "").strip()
+
+    # Per-customer codes: "customer:code" pairs, comma or whitespace separated.
+    #
+    #     PPE_ENROLL_CODES="rsp:7Kd2-xQ91, tatasteel:Bf44-mL07"
+    #
+    # One code per customer rather than one for everybody, so a leak is contained
+    # to a single site and can be rotated without breaking every other customer's
+    # future installs. The matched customer is recorded on the agent, which is
+    # what makes "revoke this customer" a query instead of an eyeball exercise.
+    # ENROLL_CODE stays supported so existing deployments keep working.
+    ENROLL_CODES: str = os.getenv("PPE_ENROLL_CODES", "").strip()
+
+    def enroll_codes(self) -> list[tuple[str, str]]:
+        """(customer, code) pairs from both settings. Never logged."""
+        pairs: list[tuple[str, str]] = []
+        for chunk in re.split(r"[,\s]+", self.ENROLL_CODES or ""):
+            chunk = chunk.strip()
+            if not chunk:
+                continue
+            customer, sep, code = chunk.partition(":")
+            # No separator means somebody wrote a bare code here. Honour it
+            # rather than silently ignoring a code the operator believes is live.
+            if not sep:
+                customer, code = "", chunk
+            code = code.strip()
+            if code:
+                pairs.append((customer.strip().lower(), code))
+        if self.ENROLL_CODE:
+            pairs.append(("", self.ENROLL_CODE))
+        return pairs
 
     # ---- cloud-side retention --------------------------------------------
     # The cloud is a dashboard, not an archive: the agent holds the system of

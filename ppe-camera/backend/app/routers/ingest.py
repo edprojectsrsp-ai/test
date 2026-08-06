@@ -113,10 +113,20 @@ async def enroll(payload: EnrollIn) -> dict:
     The returned token is shown exactly once -- only its hash is stored.
     """
     s = get_settings()
-    if not s.ENROLL_CODE:
+    configured = s.enroll_codes()
+    if not configured:
         raise HTTPException(
-            503, "enrollment is not enabled on this server (set PPE_ENROLL_CODE)")
-    if not hmac.compare_digest(payload.code.strip(), s.ENROLL_CODE):
+            503, "enrollment is not enabled on this server "
+                 "(set PPE_ENROLL_CODES or PPE_ENROLL_CODE)")
+
+    supplied = payload.code.strip()
+    customer = None
+    for cust, code in configured:
+        # compare_digest against every configured code, and no early break, so
+        # the time taken does not reveal how many codes exist or which matched.
+        if hmac.compare_digest(supplied, code):
+            customer = cust
+    if customer is None:
         raise HTTPException(401, "invalid join code")
 
     name = (payload.name or payload.hostname or "plant-pc").strip()
@@ -140,9 +150,10 @@ async def enroll(payload: EnrollIn) -> dict:
         rec.name = name
         rec.token_hash = _hash(token)
         rec.enabled = True
+        rec.customer = customer or ""
         await session.commit()
 
-    log.info("enrolled agent %s (%s)", agent_id, name)
+    log.info("enrolled agent %s (%s) for customer %r", agent_id, name, customer or "-")
     return {"agent_id": agent_id, "agent_token": token,
             "sync_url": "", "message": "store these; the token is not shown again"}
 

@@ -280,6 +280,10 @@ class AgentRecord(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)  # agent_id
     name: Mapped[str] = mapped_column(String(128), default="")
     token_hash: Mapped[str] = mapped_column(String(64), default="")
+    # Which customer's code enrolled this PC. Without it a fleet of agents is a
+    # flat list of hostnames with no way to tell whose site a machine is on, so
+    # revoking one customer means identifying their PCs by eye.
+    customer: Mapped[str] = mapped_column(String(64), default="")
     # Revocation without deletion: turning an agent off must not orphan the
     # violations it already pushed, which are part of the safety record.
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

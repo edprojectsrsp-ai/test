@@ -15,6 +15,13 @@
 // Left undefined on Vercel, which does its own thing with the standard build.
 const nextConfig = {
   output: process.env.PPE_STANDALONE === "1" ? "standalone" : undefined,
+  // Inlined at build time for middleware.ts, which confines the plant-PC build
+  // to /ppe. It cannot read PPE_STANDALONE at request time: the PPEConsole
+  // service starts node with only HOSTNAME/PORT/NODE_ENV/NEXT_PUBLIC_*, so the
+  // flag has to be baked into the bundle or the lockdown silently does nothing.
+  env: {
+    PPE_LOCKDOWN: process.env.PPE_STANDALONE === "1" ? "1" : "",
+  },
   // Without this, Next infers the workspace root from the nearest node_modules
   // — which is the repo root, one level up — and emits
   // .next/standalone/pkntest/Project-brain/server.js instead of

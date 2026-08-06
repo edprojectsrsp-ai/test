@@ -622,3 +622,95 @@
   .ppe-brand__sub { display: none; }
   .ppe-meta .ppe-chip:nth-child(n+3) { display: none; }
 }
+
+/* --- activation banner -------------------------------------------------
+   Shown on the plant PC until the agent has exchanged a registration code
+   for its own credentials. Amber rather than red: an unregistered PC is
+   still detecting and recording, so this is a prompt, not a fault. */
+.ppe-activate {
+  border: 1px solid rgba(234, 179, 8, 0.45);
+  background: rgba(234, 179, 8, 0.08);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin: 0 18px 12px;
+  font-size: 13px;
+}
+.ppe-activate__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ppe-activate__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #eab308;
+  flex: none;
+}
+.ppe-activate__text {
+  flex: 1 1 320px;
+  line-height: 1.45;
+}
+.ppe-activate__btn {
+  border: 1px solid rgba(234, 179, 8, 0.55);
+  background: transparent;
+  color: inherit;
+  border-radius: 7px;
+  padding: 5px 12px;
+  cursor: pointer;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.ppe-activate__btn:hover {
+  background: rgba(234, 179, 8, 0.14);
+}
+.ppe-activate__btn--go {
+  border-color: rgba(34, 197, 94, 0.6);
+}
+.ppe-activate__btn--go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ppe-activate__form {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(234, 179, 8, 0.25);
+}
+.ppe-activate__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 200px;
+}
+.ppe-activate__field span {
+  font-size: 11.5px;
+  opacity: 0.75;
+}
+.ppe-activate__field input {
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: rgba(127, 127, 127, 0.08);
+  color: inherit;
+  font-size: 13px;
+}
+.ppe-activate__err {
+  flex: 1 1 100%;
+  color: #ef4444;
+  font-size: 12.5px;
+}
+.ppe-activate__ok {
+  flex: 1 1 100%;
+  color: #22c55e;
+  font-size: 12.5px;
+}
+.ppe-activate__hint {
+  flex: 1 1 100%;
+  opacity: 0.65;
+  font-size: 11.5px;
+}
