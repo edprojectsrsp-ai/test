@@ -66,6 +66,14 @@ ppe-camera/data/captures/
 ppe-camera/data/recordings/
 ppe-camera/data/exports/
 
+# SH17 YOLOv9-e ("most accurate" in the model picker) is 112 MB, over GitHub's
+# hard 100 MB per-file limit, so it cannot be pushed without Git LFS. It is NOT
+# obsolete -- keep your local copy at ppe-camera/data/weights/zoo/, because
+# build.ps1 bundles whatever is there and the installer ships it. A fresh clone
+# will build an installer without this one model; the other six still work.
+# To include it in the repo instead: git lfs track "*.pt" and re-add it.
+ppe-camera/data/weights/zoo/sh17-yolo9e.pt
+
 # --- Python tooling scripts output ---
 coverage/
 .coverage
