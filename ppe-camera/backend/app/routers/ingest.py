@@ -33,7 +33,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
-from app.models.domain import AgentRecord, ViolationEvent, ViolationStatus
+from app.models.domain import (
+    AgentRecord, LicenceCode, ViolationEvent, ViolationStatus)
 
 log = logging.getLogger(__name__)
 
@@ -113,21 +114,37 @@ async def enroll(payload: EnrollIn) -> dict:
     The returned token is shown exactly once -- only its hash is stored.
     """
     s = get_settings()
-    configured = s.enroll_codes()
-    if not configured:
-        raise HTTPException(
-            503, "enrollment is not enabled on this server "
-                 "(set PPE_ENROLL_CODES or PPE_ENROLL_CODE)")
-
     supplied = payload.code.strip()
     customer = None
-    for cust, code in configured:
-        # compare_digest against every configured code, and no early break, so
-        # the time taken does not reveal how many codes exist or which matched.
+    matched_row: LicenceCode | None = None
+
+    # Issued codes live in the database so they can be created and revoked
+    # without a redeploy. Environment codes remain valid so existing deployments
+    # and the bootstrap case (no admin has issued anything yet) keep working.
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(LicenceCode))).scalars().all()
+
+    for row in rows:
+        # No early break, here or below: a loop that stops on the first match
+        # takes measurably longer for a code near the end of the list, which
+        # leaks how many codes exist and roughly where a guess landed.
+        if hmac.compare_digest(supplied, row.code) and row.active:
+            customer = row.customer
+            matched_row = row
+    for cust, code in s.enroll_codes():
         if hmac.compare_digest(supplied, code):
-            customer = cust
+            if customer is None:
+                customer = cust
+
     if customer is None:
-        raise HTTPException(401, "invalid join code")
+        # Deliberately the same message whether the code was never valid or has
+        # been switched off. Distinguishing them tells whoever is guessing which
+        # codes used to be real.
+        if not rows and not s.enroll_codes():
+            raise HTTPException(
+                503, "enrollment is not enabled on this server "
+                     "(issue a code from the admin page, or set PPE_ENROLL_CODES)")
+        raise HTTPException(401, "invalid or inactive registration code")
 
     name = (payload.name or payload.hostname or "plant-pc").strip()
     slug = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")[:40] or "agent"
@@ -151,6 +168,14 @@ async def enroll(payload: EnrollIn) -> dict:
         rec.token_hash = _hash(token)
         rec.enabled = True
         rec.customer = customer or ""
+
+        if matched_row is not None:
+            # Counted here rather than in the admin page, so "3 PCs used this
+            # code" reflects enrolments that actually succeeded.
+            live = await session.get(LicenceCode, matched_row.code)
+            if live is not None:
+                live.activations = (live.activations or 0) + 1
+                live.last_used_at = datetime.utcnow()
         await session.commit()
 
     log.info("enrolled agent %s (%s) for customer %r", agent_id, name, customer or "-")

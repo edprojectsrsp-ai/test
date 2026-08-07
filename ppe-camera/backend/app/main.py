@@ -213,11 +213,15 @@ def create_app() -> FastAPI:
         # models, training, nvr, modelops, review, alerts -- all of them reach
         # for the detector, the recorder or the local filesystem, none of which
         # exist here.
-        from app.routers import analytics, ingest, violations
+        from app.routers import admin_codes, analytics, ingest, violations
 
         app.include_router(violations.router)
         app.include_router(analytics.router)
         app.include_router(ingest.router)
+        # Licence administration. Cloud only, and never on an edge agent: a
+        # plant PC that could issue its own registration codes would not need
+        # one.
+        app.include_router(admin_codes.router)
     else:
         from app.routers import (alerts, analytics, cameras, modelops, models,
                                  nvr, push, review, stream, training,

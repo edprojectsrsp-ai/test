@@ -293,6 +293,38 @@ class AgentRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
 
 
+class LicenceCode(Base):
+    """A registration code issued to a customer. Cloud-side only.
+
+    Codes used to live in the PPE_ENROLL_CODES environment variable, which meant
+    issuing one to a new customer required editing a Render setting and
+    redeploying, and revoking one did the same -- so in practice nobody revoked
+    anything. A row can be created and switched off while the service keeps
+    running, which is what makes issuing and revoking an ordinary operation
+    rather than a deployment.
+
+    Stored in the clear, unlike agent tokens. A code is a short-lived invitation
+    that is exchanged once for a real credential, and it has to be readable to be
+    read out over the phone or pasted into a message. The credential it produces
+    is the thing that is hashed.
+    """
+
+    __tablename__ = "licence_codes"
+
+    code: Mapped[str] = mapped_column(String(64), primary_key=True)
+    customer: Mapped[str] = mapped_column(String(64), default="")
+    label: Mapped[str] = mapped_column(String(128), default="")
+    # Revocation without deletion, for the same reason as AgentRecord.enabled:
+    # the agents this code already enrolled keep working and keep their history.
+    # Switching it off only stops it enrolling anything further.
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    activations: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
 # --------------------------------------------------------------------- settings
 class Setting(Base):
     __tablename__ = "settings"
